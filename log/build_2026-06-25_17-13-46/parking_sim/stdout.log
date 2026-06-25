@@ -1,0 +1,25 @@
+running egg_info
+writing ../../build/parking_sim/parking_sim.egg-info/PKG-INFO
+writing dependency_links to ../../build/parking_sim/parking_sim.egg-info/dependency_links.txt
+writing entry points to ../../build/parking_sim/parking_sim.egg-info/entry_points.txt
+writing requirements to ../../build/parking_sim/parking_sim.egg-info/requires.txt
+writing top-level names to ../../build/parking_sim/parking_sim.egg-info/top_level.txt
+reading manifest file '../../build/parking_sim/parking_sim.egg-info/SOURCES.txt'
+writing manifest file '../../build/parking_sim/parking_sim.egg-info/SOURCES.txt'
+running build
+running build_py
+copying parking_sim/sim_robot.py -> /home/shiha/ros2_ws/build/parking_sim/build/lib/parking_sim
+running install
+running install_lib
+copying /home/shiha/ros2_ws/build/parking_sim/build/lib/parking_sim/sim_robot.py -> /home/shiha/ros2_ws/install/parking_sim/lib/python3.12/site-packages/parking_sim
+byte-compiling /home/shiha/ros2_ws/install/parking_sim/lib/python3.12/site-packages/parking_sim/sim_robot.py to sim_robot.cpython-312.pyc
+running install_data
+running install_egg_info
+removing '/home/shiha/ros2_ws/install/parking_sim/lib/python3.12/site-packages/parking_sim-1.0.0-py3.12.egg-info' (and everything under it)
+Copying ../../build/parking_sim/parking_sim.egg-info to /home/shiha/ros2_ws/install/parking_sim/lib/python3.12/site-packages/parking_sim-1.0.0-py3.12.egg-info
+running install_scripts
+Installing cctv script to /home/shiha/ros2_ws/install/parking_sim/lib/parking_sim
+Installing controller script to /home/shiha/ros2_ws/install/parking_sim/lib/parking_sim
+Installing robot script to /home/shiha/ros2_ws/install/parking_sim/lib/parking_sim
+Installing visualizer script to /home/shiha/ros2_ws/install/parking_sim/lib/parking_sim
+writing list of installed files to '/home/shiha/ros2_ws/build/parking_sim/install.log'

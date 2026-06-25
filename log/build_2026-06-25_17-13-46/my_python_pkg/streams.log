@@ -1,0 +1,31 @@
+[1.231s] Invoking command in '/home/shiha/ros2_ws/src/my_python_pkg': CONDA_PROMPT_MODIFIER=(base) PYTHONPATH=/home/shiha/ros2_ws/build/my_python_pkg/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/my_python_pkg build --build-base /home/shiha/ros2_ws/build/my_python_pkg/build install --record /home/shiha/ros2_ws/build/my_python_pkg/install.log --single-version-externally-managed install_data
+[1.433s] running egg_info
+[1.445s] writing ../../build/my_python_pkg/my_python_pkg.egg-info/PKG-INFO
+[1.447s] writing dependency_links to ../../build/my_python_pkg/my_python_pkg.egg-info/dependency_links.txt
+[1.447s] writing entry points to ../../build/my_python_pkg/my_python_pkg.egg-info/entry_points.txt
+[1.448s] writing requirements to ../../build/my_python_pkg/my_python_pkg.egg-info/requires.txt
+[1.448s] writing top-level names to ../../build/my_python_pkg/my_python_pkg.egg-info/top_level.txt
+[1.475s] reading manifest file '../../build/my_python_pkg/my_python_pkg.egg-info/SOURCES.txt'
+[1.476s] writing manifest file '../../build/my_python_pkg/my_python_pkg.egg-info/SOURCES.txt'
+[1.477s] running build
+[1.477s] running build_py
+[1.477s] copying my_python_pkg/sync_controller_aruco.py -> /home/shiha/ros2_ws/build/my_python_pkg/build/lib/my_python_pkg
+[1.478s] copying my_python_pkg/sim_aruco_sync.py -> /home/shiha/ros2_ws/build/my_python_pkg/build/lib/my_python_pkg
+[1.478s] copying my_python_pkg/aruco_relative_pose.py -> /home/shiha/ros2_ws/build/my_python_pkg/build/lib/my_python_pkg
+[1.479s] running install
+[1.483s] running install_lib
+[1.497s] copying /home/shiha/ros2_ws/build/my_python_pkg/build/lib/my_python_pkg/sync_controller_aruco.py -> /home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages/my_python_pkg
+[1.497s] copying /home/shiha/ros2_ws/build/my_python_pkg/build/lib/my_python_pkg/sim_aruco_sync.py -> /home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages/my_python_pkg
+[1.498s] copying /home/shiha/ros2_ws/build/my_python_pkg/build/lib/my_python_pkg/aruco_relative_pose.py -> /home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages/my_python_pkg
+[1.498s] byte-compiling /home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages/my_python_pkg/sync_controller_aruco.py to sync_controller_aruco.cpython-312.pyc
+[1.500s] byte-compiling /home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages/my_python_pkg/sim_aruco_sync.py to sim_aruco_sync.cpython-312.pyc
+[1.502s] byte-compiling /home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages/my_python_pkg/aruco_relative_pose.py to aruco_relative_pose.cpython-312.pyc
+[1.503s] running install_data
+[1.503s] running install_egg_info
+[1.517s] removing '/home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages/my_python_pkg-0.0.0-py3.12.egg-info' (and everything under it)
+[1.518s] Copying ../../build/my_python_pkg/my_python_pkg.egg-info to /home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages/my_python_pkg-0.0.0-py3.12.egg-info
+[1.520s] running install_scripts
+[1.610s] Installing my_node script to /home/shiha/ros2_ws/install/my_python_pkg/lib/my_python_pkg
+[1.610s] Installing sync_controller script to /home/shiha/ros2_ws/install/my_python_pkg/lib/my_python_pkg
+[1.612s] writing list of installed files to '/home/shiha/ros2_ws/build/my_python_pkg/install.log'
+[1.642s] Invoked command in '/home/shiha/ros2_ws/src/my_python_pkg' returned '0': CONDA_PROMPT_MODIFIER=(base) PYTHONPATH=/home/shiha/ros2_ws/build/my_python_pkg/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/my_python_pkg build --build-base /home/shiha/ros2_ws/build/my_python_pkg/build install --record /home/shiha/ros2_ws/build/my_python_pkg/install.log --single-version-externally-managed install_data

@@ -1,0 +1,39 @@
+running egg_info
+creating ../../build/cctv_perception/cctv_perception.egg-info
+writing ../../build/cctv_perception/cctv_perception.egg-info/PKG-INFO
+writing dependency_links to ../../build/cctv_perception/cctv_perception.egg-info/dependency_links.txt
+writing entry points to ../../build/cctv_perception/cctv_perception.egg-info/entry_points.txt
+writing requirements to ../../build/cctv_perception/cctv_perception.egg-info/requires.txt
+writing top-level names to ../../build/cctv_perception/cctv_perception.egg-info/top_level.txt
+writing manifest file '../../build/cctv_perception/cctv_perception.egg-info/SOURCES.txt'
+reading manifest file '../../build/cctv_perception/cctv_perception.egg-info/SOURCES.txt'
+writing manifest file '../../build/cctv_perception/cctv_perception.egg-info/SOURCES.txt'
+running build
+running build_py
+creating /home/shiha/ros2_ws/build/cctv_perception/build
+creating /home/shiha/ros2_ws/build/cctv_perception/build/lib
+creating /home/shiha/ros2_ws/build/cctv_perception/build/lib/cctv_perception
+copying cctv_perception/__init__.py -> /home/shiha/ros2_ws/build/cctv_perception/build/lib/cctv_perception
+copying cctv_perception/cctv_fusion_node.py -> /home/shiha/ros2_ws/build/cctv_perception/build/lib/cctv_perception
+copying cctv_perception/calibrate.py -> /home/shiha/ros2_ws/build/cctv_perception/build/lib/cctv_perception
+running install
+running install_lib
+creating /home/shiha/ros2_ws/install/cctv_perception/lib/python3.12/site-packages/cctv_perception
+copying /home/shiha/ros2_ws/build/cctv_perception/build/lib/cctv_perception/__init__.py -> /home/shiha/ros2_ws/install/cctv_perception/lib/python3.12/site-packages/cctv_perception
+copying /home/shiha/ros2_ws/build/cctv_perception/build/lib/cctv_perception/cctv_fusion_node.py -> /home/shiha/ros2_ws/install/cctv_perception/lib/python3.12/site-packages/cctv_perception
+copying /home/shiha/ros2_ws/build/cctv_perception/build/lib/cctv_perception/calibrate.py -> /home/shiha/ros2_ws/install/cctv_perception/lib/python3.12/site-packages/cctv_perception
+byte-compiling /home/shiha/ros2_ws/install/cctv_perception/lib/python3.12/site-packages/cctv_perception/__init__.py to __init__.cpython-312.pyc
+byte-compiling /home/shiha/ros2_ws/install/cctv_perception/lib/python3.12/site-packages/cctv_perception/cctv_fusion_node.py to cctv_fusion_node.cpython-312.pyc
+byte-compiling /home/shiha/ros2_ws/install/cctv_perception/lib/python3.12/site-packages/cctv_perception/calibrate.py to calibrate.cpython-312.pyc
+running install_data
+creating /home/shiha/ros2_ws/install/cctv_perception/share/ament_index
+creating /home/shiha/ros2_ws/install/cctv_perception/share/ament_index/resource_index
+creating /home/shiha/ros2_ws/install/cctv_perception/share/ament_index/resource_index/packages
+copying resource/cctv_perception -> /home/shiha/ros2_ws/install/cctv_perception/share/ament_index/resource_index/packages
+copying package.xml -> /home/shiha/ros2_ws/install/cctv_perception/share/cctv_perception
+running install_egg_info
+Copying ../../build/cctv_perception/cctv_perception.egg-info to /home/shiha/ros2_ws/install/cctv_perception/lib/python3.12/site-packages/cctv_perception-0.0.0-py3.12.egg-info
+running install_scripts
+Installing calibrate script to /home/shiha/ros2_ws/install/cctv_perception/lib/cctv_perception
+Installing cctv_fusion_node script to /home/shiha/ros2_ws/install/cctv_perception/lib/cctv_perception
+writing list of installed files to '/home/shiha/ros2_ws/build/cctv_perception/install.log'

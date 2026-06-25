@@ -1,0 +1,26 @@
+[1.625s] Invoking command in '/home/shiha/ros2_ws/build/my_python_pkg': CONDA_PROMPT_MODIFIER=(base) PYTHONPATH=/home/shiha/ros2_ws/build/my_python_pkg/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/shiha/ros2_ws/build/my_python_pkg/build --no-deps symlink_data
+[2.020s] running develop
+[2.324s] running egg_info
+[2.324s] creating my_python_pkg.egg-info
+[2.349s] writing my_python_pkg.egg-info/PKG-INFO
+[2.349s] writing dependency_links to my_python_pkg.egg-info/dependency_links.txt
+[2.350s] writing entry points to my_python_pkg.egg-info/entry_points.txt
+[2.350s] writing requirements to my_python_pkg.egg-info/requires.txt
+[2.350s] writing top-level names to my_python_pkg.egg-info/top_level.txt
+[2.350s] writing manifest file 'my_python_pkg.egg-info/SOURCES.txt'
+[2.392s] reading manifest file 'my_python_pkg.egg-info/SOURCES.txt'
+[2.392s] writing manifest file 'my_python_pkg.egg-info/SOURCES.txt'
+[2.418s] running build_ext
+[2.418s] Creating /home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages/my-python-pkg.egg-link (link to .)
+[2.419s] Installing my_node script to /home/shiha/ros2_ws/install/my_python_pkg/lib/my_python_pkg
+[2.419s] 
+[2.419s] Installed /home/shiha/ros2_ws/build/my_python_pkg
+[2.419s] running symlink_data
+[2.420s] creating /home/shiha/ros2_ws/install/my_python_pkg/share
+[2.420s] creating /home/shiha/ros2_ws/install/my_python_pkg/share/ament_index
+[2.420s] creating /home/shiha/ros2_ws/install/my_python_pkg/share/ament_index/resource_index
+[2.420s] creating /home/shiha/ros2_ws/install/my_python_pkg/share/ament_index/resource_index/packages
+[2.420s] symbolically linking /home/shiha/ros2_ws/build/my_python_pkg/resource/my_python_pkg -> /home/shiha/ros2_ws/install/my_python_pkg/share/ament_index/resource_index/packages
+[2.421s] creating /home/shiha/ros2_ws/install/my_python_pkg/share/my_python_pkg
+[2.421s] symbolically linking /home/shiha/ros2_ws/build/my_python_pkg/package.xml -> /home/shiha/ros2_ws/install/my_python_pkg/share/my_python_pkg
+[2.460s] Invoked command in '/home/shiha/ros2_ws/build/my_python_pkg' returned '0': CONDA_PROMPT_MODIFIER=(base) PYTHONPATH=/home/shiha/ros2_ws/build/my_python_pkg/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/shiha/ros2_ws/build/my_python_pkg/build --no-deps symlink_data

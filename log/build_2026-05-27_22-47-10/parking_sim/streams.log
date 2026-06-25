@@ -1,0 +1,47 @@
+[0.977s] Invoking command in '/home/shiha/ros2_ws/src/parking_sim': CONDA_PROMPT_MODIFIER=(base) PYTHONPATH=/home/shiha/ros2_ws/build/parking_sim/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/shiha/ros2_ws/install/parking_sim/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/parking_sim build --build-base /home/shiha/ros2_ws/build/parking_sim/build install --record /home/shiha/ros2_ws/build/parking_sim/install.log --single-version-externally-managed install_data
+[1.305s] running egg_info
+[1.305s] creating ../../build/parking_sim/parking_sim.egg-info
+[1.331s] writing ../../build/parking_sim/parking_sim.egg-info/PKG-INFO
+[1.332s] writing dependency_links to ../../build/parking_sim/parking_sim.egg-info/dependency_links.txt
+[1.332s] writing entry points to ../../build/parking_sim/parking_sim.egg-info/entry_points.txt
+[1.332s] writing requirements to ../../build/parking_sim/parking_sim.egg-info/requires.txt
+[1.333s] writing top-level names to ../../build/parking_sim/parking_sim.egg-info/top_level.txt
+[1.333s] writing manifest file '../../build/parking_sim/parking_sim.egg-info/SOURCES.txt'
+[1.374s] reading manifest file '../../build/parking_sim/parking_sim.egg-info/SOURCES.txt'
+[1.376s] writing manifest file '../../build/parking_sim/parking_sim.egg-info/SOURCES.txt'
+[1.376s] running build
+[1.376s] running build_py
+[1.377s] creating /home/shiha/ros2_ws/build/parking_sim/build
+[1.378s] creating /home/shiha/ros2_ws/build/parking_sim/build/lib
+[1.378s] creating /home/shiha/ros2_ws/build/parking_sim/build/lib/parking_sim
+[1.379s] copying parking_sim/visualizer.py -> /home/shiha/ros2_ws/build/parking_sim/build/lib/parking_sim
+[1.380s] copying parking_sim/__init__.py -> /home/shiha/ros2_ws/build/parking_sim/build/lib/parking_sim
+[1.380s] copying parking_sim/sim_robot.py -> /home/shiha/ros2_ws/build/parking_sim/build/lib/parking_sim
+[1.380s] copying parking_sim/nav_controller.py -> /home/shiha/ros2_ws/build/parking_sim/build/lib/parking_sim
+[1.380s] copying parking_sim/sim_cctv.py -> /home/shiha/ros2_ws/build/parking_sim/build/lib/parking_sim
+[1.380s] running install
+[1.389s] running install_lib
+[1.415s] creating /home/shiha/ros2_ws/install/parking_sim/lib/python3.12/site-packages/parking_sim
+[1.415s] copying /home/shiha/ros2_ws/build/parking_sim/build/lib/parking_sim/visualizer.py -> /home/shiha/ros2_ws/install/parking_sim/lib/python3.12/site-packages/parking_sim
+[1.415s] copying /home/shiha/ros2_ws/build/parking_sim/build/lib/parking_sim/__init__.py -> /home/shiha/ros2_ws/install/parking_sim/lib/python3.12/site-packages/parking_sim
+[1.416s] copying /home/shiha/ros2_ws/build/parking_sim/build/lib/parking_sim/sim_robot.py -> /home/shiha/ros2_ws/install/parking_sim/lib/python3.12/site-packages/parking_sim
+[1.417s] copying /home/shiha/ros2_ws/build/parking_sim/build/lib/parking_sim/nav_controller.py -> /home/shiha/ros2_ws/install/parking_sim/lib/python3.12/site-packages/parking_sim
+[1.417s] copying /home/shiha/ros2_ws/build/parking_sim/build/lib/parking_sim/sim_cctv.py -> /home/shiha/ros2_ws/install/parking_sim/lib/python3.12/site-packages/parking_sim
+[1.418s] byte-compiling /home/shiha/ros2_ws/install/parking_sim/lib/python3.12/site-packages/parking_sim/visualizer.py to visualizer.cpython-312.pyc
+[1.422s] byte-compiling /home/shiha/ros2_ws/install/parking_sim/lib/python3.12/site-packages/parking_sim/__init__.py to __init__.cpython-312.pyc
+[1.422s] byte-compiling /home/shiha/ros2_ws/install/parking_sim/lib/python3.12/site-packages/parking_sim/sim_robot.py to sim_robot.cpython-312.pyc
+[1.424s] byte-compiling /home/shiha/ros2_ws/install/parking_sim/lib/python3.12/site-packages/parking_sim/nav_controller.py to nav_controller.cpython-312.pyc
+[1.426s] byte-compiling /home/shiha/ros2_ws/install/parking_sim/lib/python3.12/site-packages/parking_sim/sim_cctv.py to sim_cctv.cpython-312.pyc
+[1.427s] running install_data
+[1.427s] copying package.xml -> /home/shiha/ros2_ws/install/parking_sim/share/parking_sim
+[1.427s] creating /home/shiha/ros2_ws/install/parking_sim/share/parking_sim/launch
+[1.427s] copying launch/sim_launch.py -> /home/shiha/ros2_ws/install/parking_sim/share/parking_sim/launch
+[1.428s] running install_egg_info
+[1.452s] Copying ../../build/parking_sim/parking_sim.egg-info to /home/shiha/ros2_ws/install/parking_sim/lib/python3.12/site-packages/parking_sim-1.0.0-py3.12.egg-info
+[1.453s] running install_scripts
+[1.623s] Installing cctv script to /home/shiha/ros2_ws/install/parking_sim/lib/parking_sim
+[1.624s] Installing controller script to /home/shiha/ros2_ws/install/parking_sim/lib/parking_sim
+[1.624s] Installing robot script to /home/shiha/ros2_ws/install/parking_sim/lib/parking_sim
+[1.625s] Installing visualizer script to /home/shiha/ros2_ws/install/parking_sim/lib/parking_sim
+[1.625s] writing list of installed files to '/home/shiha/ros2_ws/build/parking_sim/install.log'
+[1.661s] Invoked command in '/home/shiha/ros2_ws/src/parking_sim' returned '0': CONDA_PROMPT_MODIFIER=(base) PYTHONPATH=/home/shiha/ros2_ws/build/parking_sim/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/shiha/ros2_ws/install/parking_sim/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/parking_sim build --build-base /home/shiha/ros2_ws/build/parking_sim/build install --record /home/shiha/ros2_ws/build/parking_sim/install.log --single-version-externally-managed install_data

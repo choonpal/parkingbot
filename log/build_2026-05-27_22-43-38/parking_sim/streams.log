@@ -1,0 +1,10 @@
+[0.016s] Invoking command in '/home/shiha/ros2_ws/build/parking_sim': CONDA_PROMPT_MODIFIER=(base) /usr/bin/cmake /home/shiha/ros2_ws/src/parking_sim -DCATKIN_INSTALL_INTO_PREFIX_ROOT=0 -DCMAKE_INSTALL_PREFIX=/home/shiha/ros2_ws/install/parking_sim
+[0.031s] [33mCMake Warning:
+[0.032s]   Ignoring extra path from command line:
+[0.032s] 
+[0.032s]    "/home/shiha/ros2_ws/src/parking_sim"
+[0.032s] 
+[0.032s] [0m
+[0.032s] [0mCMake Error: The source directory "/home/shiha/ros2_ws/src/parking_sim" does not appear to contain CMakeLists.txt.
+[0.032s] Specify --help for usage, or press the help button on the CMake GUI.[0m
+[0.036s] Invoked command in '/home/shiha/ros2_ws/build/parking_sim' returned '1': CONDA_PROMPT_MODIFIER=(base) /usr/bin/cmake /home/shiha/ros2_ws/src/parking_sim -DCATKIN_INSTALL_INTO_PREFIX_ROOT=0 -DCMAKE_INSTALL_PREFIX=/home/shiha/ros2_ws/install/parking_sim

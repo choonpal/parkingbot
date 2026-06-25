@@ -1,0 +1,3 @@
+[console_scripts]
+calibrate = cctv_perception.calibrate:main
+cctv_fusion_node = cctv_perception.cctv_fusion_node:main

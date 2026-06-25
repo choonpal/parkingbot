@@ -1,0 +1,28 @@
+[1.112s] Invoking command in '/home/shiha/ros2_ws/src/parking_sim': CONDA_PROMPT_MODIFIER=(base) PYTHONPATH=/home/shiha/ros2_ws/build/parking_sim/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/shiha/ros2_ws/install/parking_sim/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/parking_sim build --build-base /home/shiha/ros2_ws/build/parking_sim/build install --record /home/shiha/ros2_ws/build/parking_sim/install.log --single-version-externally-managed install_data
+[1.320s] running egg_info
+[1.333s] writing ../../build/parking_sim/parking_sim.egg-info/PKG-INFO
+[1.335s] writing dependency_links to ../../build/parking_sim/parking_sim.egg-info/dependency_links.txt
+[1.335s] writing entry points to ../../build/parking_sim/parking_sim.egg-info/entry_points.txt
+[1.335s] writing requirements to ../../build/parking_sim/parking_sim.egg-info/requires.txt
+[1.336s] writing top-level names to ../../build/parking_sim/parking_sim.egg-info/top_level.txt
+[1.362s] reading manifest file '../../build/parking_sim/parking_sim.egg-info/SOURCES.txt'
+[1.363s] writing manifest file '../../build/parking_sim/parking_sim.egg-info/SOURCES.txt'
+[1.364s] running build
+[1.364s] running build_py
+[1.364s] copying parking_sim/sim_aruco_sync.py -> /home/shiha/ros2_ws/build/parking_sim/build/lib/parking_sim
+[1.364s] running install
+[1.369s] running install_lib
+[1.384s] copying /home/shiha/ros2_ws/build/parking_sim/build/lib/parking_sim/sim_aruco_sync.py -> /home/shiha/ros2_ws/install/parking_sim/lib/python3.12/site-packages/parking_sim
+[1.385s] byte-compiling /home/shiha/ros2_ws/install/parking_sim/lib/python3.12/site-packages/parking_sim/sim_aruco_sync.py to sim_aruco_sync.cpython-312.pyc
+[1.388s] running install_data
+[1.388s] running install_egg_info
+[1.403s] removing '/home/shiha/ros2_ws/install/parking_sim/lib/python3.12/site-packages/parking_sim-1.0.0-py3.12.egg-info' (and everything under it)
+[1.404s] Copying ../../build/parking_sim/parking_sim.egg-info to /home/shiha/ros2_ws/install/parking_sim/lib/python3.12/site-packages/parking_sim-1.0.0-py3.12.egg-info
+[1.406s] running install_scripts
+[1.507s] Installing cctv script to /home/shiha/ros2_ws/install/parking_sim/lib/parking_sim
+[1.508s] Installing controller script to /home/shiha/ros2_ws/install/parking_sim/lib/parking_sim
+[1.508s] Installing robot script to /home/shiha/ros2_ws/install/parking_sim/lib/parking_sim
+[1.508s] Installing sim_aruco_sync script to /home/shiha/ros2_ws/install/parking_sim/lib/parking_sim
+[1.508s] Installing visualizer script to /home/shiha/ros2_ws/install/parking_sim/lib/parking_sim
+[1.509s] writing list of installed files to '/home/shiha/ros2_ws/build/parking_sim/install.log'
+[1.550s] Invoked command in '/home/shiha/ros2_ws/src/parking_sim' returned '0': CONDA_PROMPT_MODIFIER=(base) PYTHONPATH=/home/shiha/ros2_ws/build/parking_sim/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/shiha/ros2_ws/install/parking_sim/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/parking_sim build --build-base /home/shiha/ros2_ws/build/parking_sim/build install --record /home/shiha/ros2_ws/build/parking_sim/install.log --single-version-externally-managed install_data

@@ -1,0 +1,48 @@
+[0.996s] Invoking command in '/home/shiha/ros2_ws/build/my_python_pkg': CONDA_PROMPT_MODIFIER=(base) PYTHONPATH=/home/shiha/ros2_ws/build/my_python_pkg/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --uninstall --editable --build-directory /home/shiha/ros2_ws/build/my_python_pkg/build
+[1.363s] running develop
+[1.586s] Removing /home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages/my-python-pkg.egg-link (link to .)
+[1.623s] Invoked command in '/home/shiha/ros2_ws/build/my_python_pkg' returned '0': CONDA_PROMPT_MODIFIER=(base) PYTHONPATH=/home/shiha/ros2_ws/build/my_python_pkg/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --uninstall --editable --build-directory /home/shiha/ros2_ws/build/my_python_pkg/build
+[1.625s] Invoking command in '/home/shiha/ros2_ws/src/my_python_pkg': CONDA_PROMPT_MODIFIER=(base) PYTHONPATH=/home/shiha/ros2_ws/build/my_python_pkg/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/my_python_pkg build --build-base /home/shiha/ros2_ws/build/my_python_pkg/build install --record /home/shiha/ros2_ws/build/my_python_pkg/install.log --single-version-externally-managed install_data --force
+[1.942s] running egg_info
+[1.964s] writing ../../build/my_python_pkg/my_python_pkg.egg-info/PKG-INFO
+[1.965s] writing dependency_links to ../../build/my_python_pkg/my_python_pkg.egg-info/dependency_links.txt
+[1.965s] writing entry points to ../../build/my_python_pkg/my_python_pkg.egg-info/entry_points.txt
+[1.965s] writing requirements to ../../build/my_python_pkg/my_python_pkg.egg-info/requires.txt
+[1.965s] writing top-level names to ../../build/my_python_pkg/my_python_pkg.egg-info/top_level.txt
+[2.008s] reading manifest file '../../build/my_python_pkg/my_python_pkg.egg-info/SOURCES.txt'
+[2.009s] writing manifest file '../../build/my_python_pkg/my_python_pkg.egg-info/SOURCES.txt'
+[2.010s] running build
+[2.010s] running build_py
+[2.011s] creating /home/shiha/ros2_ws/build/my_python_pkg/build
+[2.011s] creating /home/shiha/ros2_ws/build/my_python_pkg/build/lib
+[2.012s] creating /home/shiha/ros2_ws/build/my_python_pkg/build/lib/my_python_pkg
+[2.012s] copying my_python_pkg/sim_launch.py -> /home/shiha/ros2_ws/build/my_python_pkg/build/lib/my_python_pkg
+[2.012s] copying my_python_pkg/visualizer.py -> /home/shiha/ros2_ws/build/my_python_pkg/build/lib/my_python_pkg
+[2.012s] copying my_python_pkg/__init__.py -> /home/shiha/ros2_ws/build/my_python_pkg/build/lib/my_python_pkg
+[2.012s] copying my_python_pkg/sim_robot.py -> /home/shiha/ros2_ws/build/my_python_pkg/build/lib/my_python_pkg
+[2.012s] copying my_python_pkg/nav_controller.py -> /home/shiha/ros2_ws/build/my_python_pkg/build/lib/my_python_pkg
+[2.013s] copying my_python_pkg/sim_cctv.py -> /home/shiha/ros2_ws/build/my_python_pkg/build/lib/my_python_pkg
+[2.013s] running install
+[2.019s] running install_lib
+[2.041s] creating /home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages/my_python_pkg
+[2.042s] copying /home/shiha/ros2_ws/build/my_python_pkg/build/lib/my_python_pkg/sim_launch.py -> /home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages/my_python_pkg
+[2.043s] copying /home/shiha/ros2_ws/build/my_python_pkg/build/lib/my_python_pkg/visualizer.py -> /home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages/my_python_pkg
+[2.043s] copying /home/shiha/ros2_ws/build/my_python_pkg/build/lib/my_python_pkg/__init__.py -> /home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages/my_python_pkg
+[2.044s] copying /home/shiha/ros2_ws/build/my_python_pkg/build/lib/my_python_pkg/sim_robot.py -> /home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages/my_python_pkg
+[2.044s] copying /home/shiha/ros2_ws/build/my_python_pkg/build/lib/my_python_pkg/nav_controller.py -> /home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages/my_python_pkg
+[2.044s] copying /home/shiha/ros2_ws/build/my_python_pkg/build/lib/my_python_pkg/sim_cctv.py -> /home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages/my_python_pkg
+[2.045s] byte-compiling /home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages/my_python_pkg/sim_launch.py to sim_launch.cpython-312.pyc
+[2.048s] byte-compiling /home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages/my_python_pkg/visualizer.py to visualizer.cpython-312.pyc
+[2.052s] byte-compiling /home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages/my_python_pkg/__init__.py to __init__.cpython-312.pyc
+[2.052s] byte-compiling /home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages/my_python_pkg/sim_robot.py to sim_robot.cpython-312.pyc
+[2.052s] byte-compiling /home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages/my_python_pkg/nav_controller.py to nav_controller.cpython-312.pyc
+[2.053s] byte-compiling /home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages/my_python_pkg/sim_cctv.py to sim_cctv.cpython-312.pyc
+[2.055s] running install_data
+[2.055s] copying resource/my_python_pkg -> /home/shiha/ros2_ws/install/my_python_pkg/share/ament_index/resource_index/packages
+[2.055s] copying package.xml -> /home/shiha/ros2_ws/install/my_python_pkg/share/my_python_pkg
+[2.055s] running install_egg_info
+[2.076s] Copying ../../build/my_python_pkg/my_python_pkg.egg-info to /home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages/my_python_pkg-0.0.0-py3.12.egg-info
+[2.078s] running install_scripts
+[2.234s] Installing my_node script to /home/shiha/ros2_ws/install/my_python_pkg/lib/my_python_pkg
+[2.235s] writing list of installed files to '/home/shiha/ros2_ws/build/my_python_pkg/install.log'
+[2.278s] Invoked command in '/home/shiha/ros2_ws/src/my_python_pkg' returned '0': CONDA_PROMPT_MODIFIER=(base) PYTHONPATH=/home/shiha/ros2_ws/build/my_python_pkg/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/shiha/ros2_ws/install/my_python_pkg/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/my_python_pkg build --build-base /home/shiha/ros2_ws/build/my_python_pkg/build install --record /home/shiha/ros2_ws/build/my_python_pkg/install.log --single-version-externally-managed install_data --force

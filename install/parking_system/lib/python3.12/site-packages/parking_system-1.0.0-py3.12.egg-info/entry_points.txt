@@ -1,0 +1,4 @@
+[console_scripts]
+cctv = parking_system.cctv_node:main
+orchestrator = parking_system.orchestrator:main
+robot = parking_system.robot_node:main

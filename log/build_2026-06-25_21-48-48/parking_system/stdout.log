@@ -1,0 +1,41 @@
+running egg_info
+creating ../build/parking_system/parking_system.egg-info
+writing ../build/parking_system/parking_system.egg-info/PKG-INFO
+writing dependency_links to ../build/parking_system/parking_system.egg-info/dependency_links.txt
+writing entry points to ../build/parking_system/parking_system.egg-info/entry_points.txt
+writing requirements to ../build/parking_system/parking_system.egg-info/requires.txt
+writing top-level names to ../build/parking_system/parking_system.egg-info/top_level.txt
+writing manifest file '../build/parking_system/parking_system.egg-info/SOURCES.txt'
+reading manifest file '../build/parking_system/parking_system.egg-info/SOURCES.txt'
+writing manifest file '../build/parking_system/parking_system.egg-info/SOURCES.txt'
+running build
+running build_py
+creating /home/shiha/ros2_ws/build/parking_system/build
+creating /home/shiha/ros2_ws/build/parking_system/build/lib
+creating /home/shiha/ros2_ws/build/parking_system/build/lib/parking_system
+copying parking_system/cctv_node.py -> /home/shiha/ros2_ws/build/parking_system/build/lib/parking_system
+copying parking_system/__init__.py -> /home/shiha/ros2_ws/build/parking_system/build/lib/parking_system
+copying parking_system/orchestrator.py -> /home/shiha/ros2_ws/build/parking_system/build/lib/parking_system
+copying parking_system/robot_node.py -> /home/shiha/ros2_ws/build/parking_system/build/lib/parking_system
+running install
+running install_lib
+creating /home/shiha/ros2_ws/install/parking_system/lib/python3.12/site-packages/parking_system
+copying /home/shiha/ros2_ws/build/parking_system/build/lib/parking_system/cctv_node.py -> /home/shiha/ros2_ws/install/parking_system/lib/python3.12/site-packages/parking_system
+copying /home/shiha/ros2_ws/build/parking_system/build/lib/parking_system/__init__.py -> /home/shiha/ros2_ws/install/parking_system/lib/python3.12/site-packages/parking_system
+copying /home/shiha/ros2_ws/build/parking_system/build/lib/parking_system/orchestrator.py -> /home/shiha/ros2_ws/install/parking_system/lib/python3.12/site-packages/parking_system
+copying /home/shiha/ros2_ws/build/parking_system/build/lib/parking_system/robot_node.py -> /home/shiha/ros2_ws/install/parking_system/lib/python3.12/site-packages/parking_system
+byte-compiling /home/shiha/ros2_ws/install/parking_system/lib/python3.12/site-packages/parking_system/cctv_node.py to cctv_node.cpython-312.pyc
+byte-compiling /home/shiha/ros2_ws/install/parking_system/lib/python3.12/site-packages/parking_system/__init__.py to __init__.cpython-312.pyc
+byte-compiling /home/shiha/ros2_ws/install/parking_system/lib/python3.12/site-packages/parking_system/orchestrator.py to orchestrator.cpython-312.pyc
+byte-compiling /home/shiha/ros2_ws/install/parking_system/lib/python3.12/site-packages/parking_system/robot_node.py to robot_node.cpython-312.pyc
+running install_data
+copying package.xml -> /home/shiha/ros2_ws/install/parking_system/share/parking_system
+creating /home/shiha/ros2_ws/install/parking_system/share/parking_system/launch
+copying launch/system_launch.py -> /home/shiha/ros2_ws/install/parking_system/share/parking_system/launch
+running install_egg_info
+Copying ../build/parking_system/parking_system.egg-info to /home/shiha/ros2_ws/install/parking_system/lib/python3.12/site-packages/parking_system-1.0.0-py3.12.egg-info
+running install_scripts
+Installing cctv script to /home/shiha/ros2_ws/install/parking_system/lib/parking_system
+Installing orchestrator script to /home/shiha/ros2_ws/install/parking_system/lib/parking_system
+Installing robot script to /home/shiha/ros2_ws/install/parking_system/lib/parking_system
+writing list of installed files to '/home/shiha/ros2_ws/build/parking_system/install.log'

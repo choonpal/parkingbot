@@ -1,0 +1,49 @@
+rigid_body_sync_node:
+  ros__parameters:
+    # 한 종류 모형차 실증: 모든 노드와 같은 고정값 사용
+    wheelbase: 0.70
+    max_speed: 0.08
+    max_omega: 0.30
+    lookahead: 0.15
+    path_goal_tolerance: 0.01
+
+    # 메카넘 평행이동: 목표 방향을 보려고 돌지 않고 인양 직후 yaw 유지
+    hold_initial_yaw: true
+    yaw_hold_kp: 1.0
+
+    # 상대 거리/yaw 안전 한계
+    dist_error_limit: 0.03
+    dist_stop_limit: 0.08
+    dist_error_timeout_s: 2.0
+    yaw_error_limit: 0.15
+    odom_timeout_s: 0.50
+    marker_slowdown_s: 1.0
+    marker_stop_s: 2.0
+
+    # Front 후면 ID0와 Rear 전면 카메라가 각 로봇 끝면에 있다고 본 기본값.
+    # 중심거리 = raw camera-to-marker 거리 + 0.565m. 장착 후 실측 보정한다.
+    aruco_distance_offset_m: 0.565
+    use_aruco_distance: true
+    aruco_min_distance_m: 0.05
+    aruco_max_distance_m: 1.50
+    aruco_timeout_s: 0.30
+    cctv_marker_timeout_s: 0.50
+    robot_length_m: 0.565
+    minimum_inter_robot_gap_m: 0.10
+
+    # 차량 중심과 로봇 두 대 중점의 고정 장착 오프셋 초기화/보정
+    initialize_offset_from_target_pose: true
+    initial_target_offset_gate_m: 0.50
+    cctv_feedback_gate_m: 0.25
+    cctv_offset_alpha: 0.30
+    cctv_feedback_timeout_s: 0.50
+
+    # A* 마지막 점은 슬롯 밖 staging point다. 2cm 안에 도착한 뒤
+    # 선속도 0으로 슬롯 Yaw 정렬 -> 저속 직선 삽입 순으로 진행한다.
+    final_approach_dist: 0.02
+    final_pos_tol: 0.02
+    final_yaw_tol: 0.052
+    final_lateral_tol: 0.01
+    final_speed_ratio: 0.30
+    align_to_slot_yaw: true
+    slot_pose_wait_timeout_s: 1.0

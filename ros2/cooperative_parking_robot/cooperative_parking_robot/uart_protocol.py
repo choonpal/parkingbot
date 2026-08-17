@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""RPi와 STM32 사이의 줄 단위 UART 프로토콜.
+
+RPi → STM32
+  V,vx,vy,w
+  S,grip | S,release
+  HB,timestamp
+  ESTOP
+
+STM32 → RPi
+  E,fl,fr,rl,rr
+  U,L,distance_mm | U,R,distance_mm
+  U,L,TIMEOUT    | U,R,TIMEOUT
+  LIFT,status
+  ACK,value
+  ERR,code
+
+초음파 거리는 STM32에서 마이크로초 펄스 폭으로 측정해 mm 정수로 보낸다.
+RPi는 이 프레임을 sensor_msgs/Range로 변환하고, 바퀴 에지·중심 판단은
+ultrasonic_edge_node에서 수행한다.
+"""
+
+
+class UartProtocol:
+    ULTRASONIC_SIDE = {'L': 'left', 'R': 'right'}
+
+    def encode_velocity(self, vx, vy, w):
+        return f"V,{vx:.3f},{vy:.3f},{w:.3f}\n"
+
+    def encode_servo(self, action):
+        if action not in ('grip', 'release'):
+            raise ValueError("servo action must be 'grip' or 'release'")
+        return f"S,{action}\n"
+
+    def encode_heartbeat(self, timestamp):
+        return f"HB,{timestamp:.3f}\n"
+
+    def parse(self, line):
+        """STM32 → RPi 응답을 엄격하게 파싱한다."""
+        if not isinstance(line, str):
+            return None
+        parts = [part.strip() for part in line.strip().split(',')]
+        if not parts or not parts[0]:
+            return None
+        tag = parts[0]
+        if tag == 'E' and len(parts) == 5:
+            try:
+                return {
+                    'type': 'encoder',
+                    'values': [int(parts[i]) for i in range(1, 5)],
+                }
+            except ValueError:
+                return None
+        if tag == 'U' and len(parts) == 3:
+            side = self.ULTRASONIC_SIDE.get(parts[1])
+            if side is None:
+                return None
+            if parts[2] == 'TIMEOUT':
+                return {
+                    'type': 'ultrasonic',
+                    'side': side,
+                    'valid': False,
+                    'status': 'TIMEOUT',
+                    'distance_mm': None,
+                    'distance_m': float('inf'),
+                }
+            try:
+                distance_mm = int(parts[2])
+            except ValueError:
+                return None
+            # UART 파손·단위 실수를 조기에 막는다. 실제 HC-SR04 운용 범위는
+            # 펌웨어에서 20~4000 mm로 제한하지만 parser는 약간의 여유를 둔다.
+            if not 1 <= distance_mm <= 10000:
+                return None
+            return {
+                'type': 'ultrasonic',
+                'side': side,
+                'valid': True,
+                'status': 'OK',
+                'distance_mm': distance_mm,
+                'distance_m': distance_mm / 1000.0,
+            }
+        if tag == 'LIFT' and len(parts) == 2 and parts[1]:
+            return {'type': 'lift', 'status': parts[1]}
+        if tag == 'ACK':
+            return {
+                'type': 'ack',
+                'value': parts[1] if len(parts) > 1 else '',
+            }
+        if tag == 'ERR':
+            return {
+                'type': 'error',
+                'code': ','.join(parts[1:]) if len(parts) > 1 else '?',
+            }
+        return None

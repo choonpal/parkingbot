@@ -1,0 +1,837 @@
+#!/usr/bin/env python3
+"""
+==================================================
+fleet_manager_node.py (Jetson Orin Nano)
+==================================================
+중앙 관제탑. 빈자리 선정 + A* 경로계획 + waypoint 발행.
+(Nav2 미사용 — 자체 A* 사용)
+
+입력:
+  /parking/target_pose, /parking/empty_slots
+  /parking/map (OccupancyGrid)
+  /robot/lifted
+출력:
+  /virtual_robot/waypoints (nav_msgs/Path)
+  /fleet/state
+"""
+
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from geometry_msgs.msg import PoseStamped, PoseArray, PoseStamped as PS
+from nav_msgs.msg import OccupancyGrid, Odometry, Path
+from std_msgs.msg import Bool, String
+import math
+import json
+import time
+
+from cooperative_parking_robot.astar_planner import AStarPlanner
+from cooperative_parking_robot.freshness import StampGate, stamp_to_ns
+from cooperative_parking_robot.loaded_footprint import (
+    compute_loaded_footprint,
+)
+from cooperative_parking_robot.vehicle_entry import (
+    MIN_INTER_ROBOT_GAP_M, validate_wheelbase_clearance,
+)
+from cooperative_parking_robot.parking_geometry import (
+    Pose2D,
+    check_slot_fit,
+    footprint_extents_in_slot_axes,
+    make_approach_candidates,
+    parse_registered_slots,
+)
+
+
+class FleetManagerNode(Node):
+    def __init__(self):
+        super().__init__('fleet_manager_node')
+
+        self.declare_parameter('waiting_x', 2.3)
+        self.declare_parameter('waiting_y', 0.6)
+        self.declare_parameter('map_resolution', 0.05)
+        self.declare_parameter('target_timeout_s', 2.0)
+        self.declare_parameter('vehicle_spec_timeout_s', 10.0)
+        self.declare_parameter('odom_timeout_s', 0.5)
+        self.declare_parameter('future_tolerance_s', 0.10)
+        # 실측된 로봇 외곽. 길이(+x)는 차량 앞뒤, 폭(+y)은 차량 좌우.
+        self.declare_parameter('robot_length_m', 0.565)
+        self.declare_parameter('robot_width_m', 0.275)
+        self.declare_parameter(
+            'minimum_inter_robot_gap_m', MIN_INTER_ROBOT_GAP_M)
+        self.declare_parameter('default_wheelbase_m', 0.70)
+        # 차량 외곽은 아직 실측 전 placeholder이며 config에서 교체한다.
+        self.declare_parameter('default_vehicle_length_m', 0.90)
+        self.declare_parameter('default_vehicle_width_m', 0.35)
+        self.declare_parameter('footprint_safety_margin_m', 0.06)
+        self.declare_parameter('unknown_is_occupied', True)
+        self.declare_parameter('layout_registered', False)
+        self.declare_parameter('require_registered_layout', False)
+        # 브라우저 등록 결과. 같은 index가 하나의 슬롯을 나타낸다.
+        self.declare_parameter('slot_ids', ['P1', 'P2', 'P3', 'P4'])
+        self.declare_parameter(
+            'slot_coords',
+            [1.5, 3.5, 2.5, 3.5, 3.5, 3.5, 4.5, 3.5])
+        self.declare_parameter(
+            'slot_sizes',
+            [1.80, 0.70, 1.80, 0.70, 1.80, 0.70, 1.80, 0.70])
+        self.declare_parameter('slot_yaws_deg', [90.0, 90.0, 90.0, 90.0])
+        self.declare_parameter('slot_match_tolerance_m', 0.10)
+        # 최종 주차는 슬롯 앞 정렬점까지 평행이동한 뒤 회전하고 직선 삽입한다.
+        self.declare_parameter('use_staged_slot_entry', True)
+        self.declare_parameter('parking_direction', 'minimum_rotation')
+        # staging 전환 오차(2cm) + 지역화/외곽 오차를 흡수할 양쪽 여유.
+        self.declare_parameter('slot_fit_longitudinal_margin_m', 0.06)
+        self.declare_parameter('slot_fit_lateral_margin_m', 0.06)
+        self.declare_parameter('slot_staging_gap_m', 0.10)
+        # 인양 직후에는 차량이 아직 대기위치에 있다. CCTV 차량 중심과
+        # 로봇 두 대 중점의 고정 offset을 계획 시작점에도 반영해,
+        # Fleet A* 좌표계와 rigid_body_sync의 차량 중심 좌표계를 맞춘다.
+        self.declare_parameter('initial_target_offset_gate_m', 0.50)
+        # P2: 터치 UI 승인 게이트. false면 v1.9와 동일하게 target 인식 즉시 시작한다.
+        self.declare_parameter('require_ui_confirmation', True)
+        self.declare_parameter('ui_request_timeout_s', 10.0)
+        self.wait_x = self.get_parameter('waiting_x').value
+        self.wait_y = self.get_parameter('waiting_y').value
+        self.resolution = float(self.get_parameter('map_resolution').value)
+        self.odom_timeout = float(
+            self.get_parameter('odom_timeout_s').value)
+        self.future_tolerance = float(
+            self.get_parameter('future_tolerance_s').value)
+        if self.odom_timeout <= 0.0 or self.future_tolerance < 0.0:
+            raise ValueError('invalid odom/future timeout')
+
+        self.robot_length = float(
+            self.get_parameter('robot_length_m').value)
+        self.robot_width = float(
+            self.get_parameter('robot_width_m').value)
+        self.minimum_inter_robot_gap = float(
+            self.get_parameter('minimum_inter_robot_gap_m').value)
+        self.current_wheelbase = float(
+            self.get_parameter('default_wheelbase_m').value)
+        self.vehicle_length = float(
+            self.get_parameter('default_vehicle_length_m').value)
+        self.vehicle_width = float(
+            self.get_parameter('default_vehicle_width_m').value)
+        self.footprint_margin = float(
+            self.get_parameter('footprint_safety_margin_m').value)
+        self.vehicle_center_offset_body = [0.0, 0.0]
+        self.unknown_is_occupied = bool(
+            self.get_parameter('unknown_is_occupied').value)
+        if (bool(self.get_parameter('require_registered_layout').value) and
+                not bool(self.get_parameter('layout_registered').value)):
+            raise RuntimeError(
+                '현장 등록 layout이 아닙니다; '
+                'BEV 등록 도구로 생성한 YAML을 사용하세요')
+        self.registered_slots = parse_registered_slots(
+            self.get_parameter('slot_ids').value,
+            self.get_parameter('slot_coords').value,
+            self.get_parameter('slot_sizes').value,
+            self.get_parameter('slot_yaws_deg').value)
+        self.slot_match_tolerance = float(
+            self.get_parameter('slot_match_tolerance_m').value)
+        self.use_staged_slot_entry = bool(
+            self.get_parameter('use_staged_slot_entry').value)
+        self.parking_direction = str(
+            self.get_parameter('parking_direction').value).strip().lower()
+        self.slot_fit_long_margin = float(
+            self.get_parameter('slot_fit_longitudinal_margin_m').value)
+        self.slot_fit_lat_margin = float(
+            self.get_parameter('slot_fit_lateral_margin_m').value)
+        self.slot_staging_gap = float(
+            self.get_parameter('slot_staging_gap_m').value)
+        self.initial_target_offset_gate = float(
+            self.get_parameter('initial_target_offset_gate_m').value)
+        if (not self.registered_slots or self.slot_match_tolerance <= 0.0 or
+                min(self.slot_fit_long_margin, self.slot_fit_lat_margin,
+                    self.slot_staging_gap) < 0.0 or
+                self.initial_target_offset_gate <= 0.0):
+            raise ValueError('invalid registered-slot parameters')
+        if self.parking_direction not in (
+                'minimum_rotation', 'forward', 'reverse'):
+            raise ValueError(
+                'parking_direction must be minimum_rotation, forward, or reverse')
+
+        self.require_ui_confirmation = bool(
+            self.get_parameter('require_ui_confirmation').value)
+        self.ui_request_timeout = float(
+            self.get_parameter('ui_request_timeout_s').value)
+        if self.ui_request_timeout <= 0.0:
+            raise ValueError('ui_request_timeout_s must be positive')
+        self.ui_park_approved = False
+        self.ui_approved_time = 0.0
+        self.ui_request_id = ''
+        self.ui_request_sequence = -1
+        self.loaded_footprint = compute_loaded_footprint(
+            self.current_wheelbase,
+            self.robot_length,
+            self.robot_width,
+            self.vehicle_length,
+            self.vehicle_width,
+            self.footprint_margin,
+            self.vehicle_center_offset_body[0],
+            self.vehicle_center_offset_body[1],
+        )
+
+        # 경로와 최종 슬롯은 임무당 한 번만 발행될 수 있다. 늦게 연결된
+        # Front 제어기도 마지막 임무를 받을 수 있도록 latch 성격의 QoS를 쓴다.
+        self.mission_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+
+        # A* 플래너: 운반 중 yaw를 고정하므로 결합 직사각형을 사용한다.
+        self.planner = AStarPlanner(
+            resolution=self.resolution,
+            footprint_half_length_m=self.loaded_footprint.half_length_m,
+            footprint_half_width_m=self.loaded_footprint.half_width_m,
+            unknown_is_occupied=bool(
+                self.unknown_is_occupied),
+        )
+
+        # 상태
+        self.target_pose = None
+        self.empty_slots = []
+        self.grid = None
+        self.grid_w = 0
+        self.grid_h = 0
+        self.car_lifted = False
+        self.state = 'WAIT_TARGET'
+        self.path_published = False
+        self.mission_id = ''
+        self.status_sequence = 0
+        self.front_odom = None
+        self.rear_odom = None
+        self.target_gate = StampGate(
+            self.get_parameter('target_timeout_s').value,
+            self.future_tolerance)
+        self.spec_gate = StampGate(
+            self.get_parameter('vehicle_spec_timeout_s').value,
+            self.future_tolerance)
+        self.odom_gates = {
+            'front': StampGate(self.odom_timeout, self.future_tolerance),
+            'rear': StampGate(self.odom_timeout, self.future_tolerance),
+        }
+
+        # 구독
+        self.create_subscription(PoseStamped, '/parking/target_pose',
+                                 self.target_cb, 10)
+        self.create_subscription(PoseArray, '/parking/empty_slots',
+                                 self.slots_cb, 10)
+        self.create_subscription(OccupancyGrid, '/parking/map',
+                                 self.map_cb, 10)
+        self.create_subscription(Bool, '/robot/lifted',
+                                 self.lifted_cb, 10)
+        self.create_subscription(
+            String, '/parking/vehicle_spec', self.vehicle_spec_cb,
+            self.mission_qos)
+        self.create_subscription(
+            String, '/ui/mission_request', self.ui_request_cb, 10)
+        self.create_subscription(
+            String, '/mission/complete', self.mission_complete_cb, 10)
+        self.create_subscription(
+            Odometry, '/front/odom', self.front_odom_cb, 10)
+        self.create_subscription(
+            Odometry, '/rear/odom', self.rear_odom_cb, 10)
+
+        # 발행
+        self.pub_waypoints = self.create_publisher(
+            Path, '/virtual_robot/waypoints', self.mission_qos)
+        self.pub_state = self.create_publisher(String, '/fleet/state', 10)
+        self.pub_slot_pose = self.create_publisher(
+            PoseStamped, '/parking/slot_pose', self.mission_qos)
+
+        self.create_timer(0.5, self.manage_loop)
+        self.create_timer(1.0, self.publish_state)
+        self.get_logger().info(
+            'fleet_manager_node 시작 (fixed-yaw rectangular-footprint A*) | '
+            f'footprint={self.loaded_footprint.length_m:.3f}x'
+            f'{self.loaded_footprint.width_m:.3f}m')
+
+    # ===== 콜백 =====
+    def target_cb(self, msg):
+        accepted, reason = self.target_gate.accept(
+            stamp_to_ns(msg.header.stamp),
+            self.get_clock().now().nanoseconds)
+        if not accepted:
+            self.get_logger().warn(
+                f'target_pose rejected: {reason}',
+                throttle_duration_sec=2.0)
+            return
+        if msg.header.frame_id not in ('', 'map'):
+            self.get_logger().warn('target_pose frame must be map')
+            return
+        if self.state == 'WAIT_TARGET' and not self.mission_id:
+            self.mission_id = (
+                f'mission-{self.get_clock().now().nanoseconds}')
+            self.get_logger().info(f'new mission: {self.mission_id}')
+        self.target_pose = msg
+
+    def slots_cb(self, msg):
+        """빈 Pose를 등록 슬롯과 다시 연결해 크기와 진입 Yaw를 보존한다."""
+        matched = []
+        for pose in msg.poses:
+            x_m = float(pose.position.x)
+            y_m = float(pose.position.y)
+            candidate = min(
+                self.registered_slots,
+                key=lambda slot: math.hypot(
+                    slot.center_x_m - x_m, slot.center_y_m - y_m))
+            error = math.hypot(
+                candidate.center_x_m - x_m,
+                candidate.center_y_m - y_m)
+            if error > self.slot_match_tolerance:
+                self.get_logger().warn(
+                    f'미등록 empty-slot pose ({x_m:.2f},{y_m:.2f}) 무시',
+                    throttle_duration_sec=2.0)
+                continue
+            if candidate not in matched:
+                matched.append(candidate)
+        self.empty_slots = matched
+
+    def map_cb(self, msg):
+        width = int(msg.info.width)
+        height = int(msg.info.height)
+        resolution = float(msg.info.resolution)
+        if width <= 0 or height <= 0 or resolution <= 0.0:
+            self.get_logger().warn('잘못된 OccupancyGrid 메타데이터 무시')
+            return
+        if len(msg.data) != width * height:
+            self.get_logger().warn(
+                f'OccupancyGrid 크기 불일치: data={len(msg.data)}, '
+                f'expected={width * height}')
+            return
+
+        self.grid = list(msg.data)
+        self.grid_w = width
+        self.grid_h = height
+        self.resolution = resolution
+        # AStarPlanner는 생성 시 해상도를 보관하므로 수신 맵과 동기화해야 한다.
+        self.planner.resolution = resolution
+
+    def ui_request_cb(self, msg):
+        """터치 UI의 입차 승인. 판단 권한은 UI가 아니라 이 노드에 있다."""
+        try:
+            payload = json.loads(msg.data)
+            request_type = str(payload['type'])
+            request_id = str(payload.get('request_id', ''))
+            sequence = int(payload['sequence'])
+            stamp_ns = int(payload['stamp_ns'])
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            self.get_logger().warn(
+                f'invalid ui/mission_request ignored: {exc}',
+                throttle_duration_sec=2.0)
+            return
+        if request_type != 'park':
+            # retrieve/cancel은 아직 미구현이다. 조용히 무시하지 않고 남긴다.
+            self.get_logger().warn(
+                f'unsupported ui mission type ignored: {request_type}')
+            return
+        if sequence <= self.ui_request_sequence:
+            return
+        age_s = (self.get_clock().now().nanoseconds - stamp_ns) * 1e-9
+        if not -0.5 <= age_s <= self.ui_request_timeout:
+            self.get_logger().warn(
+                f'stale/future ui request rejected (age={age_s:.2f}s)')
+            return
+        if self.state != 'WAIT_TARGET':
+            self.get_logger().warn(
+                f'ui park request ignored in state {self.state}')
+            return
+        self.ui_request_sequence = sequence
+        self.ui_park_approved = True
+        self.ui_approved_time = time.monotonic()
+        self.ui_request_id = request_id
+        self.get_logger().info(f'UI 입차 승인 수신: {request_id}')
+
+    def mission_complete_cb(self, msg):
+        """P3: 임무 종료 시 다음 임무를 받을 수 있는 상태로 되돌린다.
+
+        v1.9까지는 NAVIGATING에서 영구히 머물렀기 때문에 두 번째 임무가
+        아예 불가능했다.
+        """
+        try:
+            payload = json.loads(msg.data)
+            mission_id = str(payload['mission_id'])
+            stamp_ns = int(payload['stamp_ns'])
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            self.get_logger().warn('invalid mission/complete envelope')
+            return
+        age_s = (self.get_clock().now().nanoseconds - stamp_ns) * 1e-9
+        if not -0.5 <= age_s <= 10.0:
+            self.get_logger().warn(
+                f'stale mission/complete ignored (age={age_s:.2f}s)')
+            return
+        if not self.mission_id or mission_id != self.mission_id:
+            self.get_logger().warn(
+                f'다른 임무의 완료 통지 무시: {mission_id}')
+            return
+        if self.state not in ('NAVIGATING', 'PLAN_PATH'):
+            self.get_logger().warn(
+                f'{self.state} 상태의 완료 통지 무시')
+            return
+
+        self.state = 'WAIT_TARGET'
+        self.mission_id = ''
+        self.car_lifted = False
+        self.target_pose = None
+        self.empty_slots = []
+        self.path_published = False
+        self.ui_park_approved = False
+        self.ui_request_id = ''
+        # 차량 중심 offset은 임무별로 다시 잡는다. 남겨 두면 다음 A* 시작점이
+        # 지난 임무의 offset만큼 틀어진다.
+        self.vehicle_center_offset_body = [0.0, 0.0]
+        self.loaded_footprint = compute_loaded_footprint(
+            self.current_wheelbase,
+            self.robot_length,
+            self.robot_width,
+            self.vehicle_length,
+            self.vehicle_width,
+            self.footprint_margin,
+            0.0,
+            0.0,
+        )
+        self.planner.set_footprint(
+            self.loaded_footprint.half_length_m,
+            self.loaded_footprint.half_width_m)
+        # StampGate는 마지막 stamp를 기억하므로 새 임무 target을 받으려면
+        # 반드시 함께 초기화해야 한다.
+        self.target_gate.reset()
+        self.get_logger().info(
+            f'임무 {mission_id} 완료 — WAIT_TARGET 복귀')
+
+    def lifted_cb(self, msg):
+        if msg.data and not self.car_lifted:
+            self.car_lifted = True
+            self.get_logger().info('차량 들림 신호 수신')
+
+    @staticmethod
+    def _optional_dimension(payload, keys, default):
+        for key in keys:
+            if key in payload:
+                return float(payload[key])
+        return default
+
+    def vehicle_spec_cb(self, msg):
+        try:
+            payload = json.loads(msg.data)
+            accepted, reason = self.spec_gate.accept(
+                int(payload['stamp_ns']),
+                self.get_clock().now().nanoseconds)
+            if not accepted:
+                raise ValueError(f'vehicle_spec {reason}')
+            wheelbase = float(payload['wheelbase'])
+            validate_wheelbase_clearance(
+                wheelbase, self.robot_length,
+                self.minimum_inter_robot_gap)
+            vehicle_length = self._optional_dimension(
+                payload,
+                ('vehicle_length_m', 'length_m', 'vehicle_length'),
+                self.vehicle_length)
+            vehicle_width = self._optional_dimension(
+                payload,
+                ('vehicle_width_m', 'width_m', 'vehicle_width'),
+                self.vehicle_width)
+            footprint = compute_loaded_footprint(
+                wheelbase,
+                self.robot_length,
+                self.robot_width,
+                vehicle_length,
+                vehicle_width,
+                self.footprint_margin,
+                self.vehicle_center_offset_body[0],
+                self.vehicle_center_offset_body[1],
+            )
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            self.get_logger().warn(
+                f'invalid vehicle_spec ignored: {exc}',
+                throttle_duration_sec=2.0)
+            return
+
+        if self.car_lifted or self.state in ('PLAN_PATH', 'NAVIGATING'):
+            changed = (
+                abs(wheelbase - self.current_wheelbase) > 1e-6 or
+                abs(vehicle_length - self.vehicle_length) > 1e-6 or
+                abs(vehicle_width - self.vehicle_width) > 1e-6)
+            if changed:
+                self.get_logger().error(
+                    'vehicle geometry changed after lift; ignored for safety')
+            return
+
+        self.current_wheelbase = wheelbase
+        self.vehicle_length = vehicle_length
+        self.vehicle_width = vehicle_width
+        self.loaded_footprint = footprint
+        self.planner.set_footprint(
+            footprint.half_length_m, footprint.half_width_m)
+        cells = footprint.half_extent_cells(self.resolution)
+        self.get_logger().info(
+            f'mission footprint={footprint.length_m:.3f}x'
+            f'{footprint.width_m:.3f}m, half_cells={cells}, '
+            f'wheelbase={wheelbase:.3f}m')
+
+    def front_odom_cb(self, msg):
+        self._odom_cb('front', msg)
+
+    def rear_odom_cb(self, msg):
+        self._odom_cb('rear', msg)
+
+    def _odom_cb(self, role, msg):
+        if msg.header.frame_id not in ('', 'map'):
+            return
+        accepted, _ = self.odom_gates[role].accept(
+            stamp_to_ns(msg.header.stamp),
+            self.get_clock().now().nanoseconds)
+        if not accepted:
+            return
+        x = float(msg.pose.pose.position.x)
+        y = float(msg.pose.pose.position.y)
+        q = msg.pose.pose.orientation
+        yaw = math.atan2(
+            2.0 * (q.w * q.z + q.x * q.y),
+            1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        if not all(math.isfinite(value) for value in (x, y, yaw)):
+            return
+        value = {'x': x, 'y': y, 'yaw': yaw, 'receipt': time.monotonic()}
+        if role == 'front':
+            self.front_odom = value
+        else:
+            self.rear_odom = value
+
+    def current_virtual_start(self):
+        """Front/Rear 중점과 두 yaw의 원형 평균으로 현재 강체 Pose를 만든다."""
+        if self.front_odom is None or self.rear_odom is None:
+            return None
+        now = time.monotonic()
+        if (now - self.front_odom['receipt'] > self.odom_timeout or
+                now - self.rear_odom['receipt'] > self.odom_timeout):
+            return None
+        yaw = math.atan2(
+            math.sin(self.front_odom['yaw']) + math.sin(self.rear_odom['yaw']),
+            math.cos(self.front_odom['yaw']) + math.cos(self.rear_odom['yaw']))
+        return Pose2D(
+            (self.front_odom['x'] + self.rear_odom['x']) / 2.0,
+            (self.front_odom['y'] + self.rear_odom['y']) / 2.0,
+            yaw)
+
+    def _grid_occupied(self, gx, gy):
+        """맵 밖과 설정상 unknown을 점유로 포함하는 단일 셀 판정."""
+        if gx < 0 or gy < 0 or gx >= self.grid_w or gy >= self.grid_h:
+            return True
+        value = int(self.grid[gy * self.grid_w + gx])
+        return value >= 50 or (value < 0 and self.unknown_is_occupied)
+
+    def _oriented_footprint_free(self, x_m, y_m, yaw_rad):
+        """한 자세에서 회전된 loaded rectangle가 점유 셀과 겹치는지 검사."""
+        half_length = (
+            self.loaded_footprint.half_length_m + self.slot_fit_long_margin)
+        half_width = (
+            self.loaded_footprint.half_width_m + self.slot_fit_lat_margin)
+        radius = math.hypot(half_length, half_width)
+        min_gx = int(math.floor((x_m - radius) / self.resolution))
+        max_gx = int(math.floor((x_m + radius) / self.resolution))
+        min_gy = int(math.floor((y_m - radius) / self.resolution))
+        max_gy = int(math.floor((y_m + radius) / self.resolution))
+        c, s = math.cos(yaw_rad), math.sin(yaw_rad)
+        # 셀 중심만 검사할 때 모서리 접촉을 놓치지 않도록 셀 반대각을 더한다.
+        cell_padding = self.resolution / math.sqrt(2.0)
+        for gy in range(min_gy, max_gy + 1):
+            for gx in range(min_gx, max_gx + 1):
+                if not self._grid_occupied(gx, gy):
+                    continue
+                cell_x = (gx + 0.5) * self.resolution
+                cell_y = (gy + 0.5) * self.resolution
+                dx, dy = cell_x - x_m, cell_y - y_m
+                local_x = dx * c + dy * s
+                local_y = -dx * s + dy * c
+                if (abs(local_x) <= half_length + cell_padding and
+                        abs(local_y) <= half_width + cell_padding):
+                    return False
+        return True
+
+    def _rotation_space_free(self, x_m, y_m):
+        """정렬점에서 어떤 중간 Yaw로 돌아도 되는 반대각 원 공간 검사."""
+        radius = 0.5 * math.hypot(
+            self.loaded_footprint.length_m + 2.0 * self.slot_fit_long_margin,
+            self.loaded_footprint.width_m + 2.0 * self.slot_fit_lat_margin)
+        cell_padding = self.resolution / math.sqrt(2.0)
+        min_gx = int(math.floor((x_m - radius) / self.resolution))
+        max_gx = int(math.floor((x_m + radius) / self.resolution))
+        min_gy = int(math.floor((y_m - radius) / self.resolution))
+        max_gy = int(math.floor((y_m + radius) / self.resolution))
+        for gy in range(min_gy, max_gy + 1):
+            for gx in range(min_gx, max_gx + 1):
+                cell_x = (gx + 0.5) * self.resolution
+                cell_y = (gy + 0.5) * self.resolution
+                if (math.hypot(cell_x - x_m, cell_y - y_m) <=
+                        radius + cell_padding and self._grid_occupied(gx, gy)):
+                    return False
+        return True
+
+    def _insertion_corridor_free(self, start, goal):
+        """정렬점부터 슬롯 중심까지 목표 Yaw 직사각형을 일정 간격으로 검사."""
+        dx = goal.x_m - start.x_m
+        dy = goal.y_m - start.y_m
+        distance = math.hypot(dx, dy)
+        sample_count = max(1, int(math.ceil(
+            distance / max(self.resolution * 0.5, 1e-3))))
+        for index in range(sample_count + 1):
+            ratio = index / sample_count
+            if not self._oriented_footprint_free(
+                    start.x_m + ratio * dx,
+                    start.y_m + ratio * dy,
+                    goal.yaw_rad):
+                return False
+        return True
+
+    # ===== 관제 로직 =====
+    def manage_loop(self):
+        if self.state == 'WAIT_TARGET':
+            # 차가 아직 없는데 버튼이 먼저 눌린 경우, 승인이 무기한 남아 있으면
+            # 한참 뒤에 들어온 차가 예고 없이 실려 나간다. 반드시 만료시킨다.
+            if (self.ui_park_approved and
+                    time.monotonic() - self.ui_approved_time >
+                    self.ui_request_timeout):
+                self.ui_park_approved = False
+                self.get_logger().warn('UI 입차 승인 만료 — 다시 눌러야 합니다')
+            if self.target_pose is not None:
+                if not self.require_ui_confirmation:
+                    self.state = 'WAIT_LIFT'
+                elif self.ui_park_approved:
+                    # 승인은 1회성이다. 진입 순간 즉시 소비해야 다음 임무가
+                    # 버튼 없이 자동 시작되는 일을 막을 수 있다.
+                    self.ui_park_approved = False
+                    self.state = 'WAIT_LIFT'
+                    self.get_logger().info(
+                        f'UI 승인으로 임무 시작 ({self.ui_request_id})')
+
+        elif self.state == 'WAIT_LIFT':
+            if self.car_lifted:
+                self.state = 'PLAN_PATH'
+
+        elif self.state == 'PLAN_PATH':
+            if self.plan_and_publish():
+                self.state = 'NAVIGATING'
+
+        elif self.state == 'NAVIGATING':
+            pass  # rigid_body_sync가 주행
+
+    def plan_and_publish(self):
+        """크기가 맞는 빈자리 선택 -> 정렬점 A* -> 슬롯 목표 자세 발행."""
+        if self.grid is None:
+            self.get_logger().warn('맵 미수신 — 대기', throttle_duration_sec=2.0)
+            return False
+        if not self.empty_slots:
+            self.get_logger().warn('빈자리 없음', throttle_duration_sec=2.0)
+            return False
+
+        raw_start = self.current_virtual_start()
+        if raw_start is None:
+            self.get_logger().warn(
+                'Front/Rear 최신 odom 없음 — 실제 base_virtual 시작점 대기',
+                throttle_duration_sec=2.0)
+            return False
+        start = raw_start
+
+        # rigid_body_sync는 인양 직후 target_pose로 차량중심 offset을 초기화한다.
+        # Fleet도 같은 기준으로 A* 시작점을 잡아야 계획과 추종 좌표가
+        # 서로 어긋나지 않는다. gate 밖이면 오인식으로 보고 odom 중점을 쓴다.
+        if self.target_pose is not None:
+            target_x = float(self.target_pose.pose.position.x)
+            target_y = float(self.target_pose.pose.position.y)
+            world_dx = target_x - raw_start.x_m
+            world_dy = target_y - raw_start.y_m
+            offset = math.hypot(world_dx, world_dy)
+            if offset <= self.initial_target_offset_gate:
+                c, s = math.cos(raw_start.yaw_rad), math.sin(raw_start.yaw_rad)
+                self.vehicle_center_offset_body = [
+                    c * world_dx + s * world_dy,
+                    -s * world_dx + c * world_dy,
+                ]
+                start = Pose2D(target_x, target_y, raw_start.yaw_rad)
+                self.get_logger().info(
+                    f'A* 시작점에 CCTV 차량중심 body-offset '
+                    f'({self.vehicle_center_offset_body[0]:+.3f},'
+                    f'{self.vehicle_center_offset_body[1]:+.3f})m 반영')
+            else:
+                self.vehicle_center_offset_body = [0.0, 0.0]
+                self.get_logger().warn(
+                    f'CCTV 차량중심 offset gate 초과({offset:.3f}m) — '
+                    'odom 중점 사용')
+
+        # 차량 중심을 기준으로 회전하므로, 로봇 중점과의 body offset까지
+        # 포함한 대칭 외접 footprint로 fit/A*/sweep를 다시 설정한다.
+        self.loaded_footprint = compute_loaded_footprint(
+            self.current_wheelbase,
+            self.robot_length,
+            self.robot_width,
+            self.vehicle_length,
+            self.vehicle_width,
+            self.footprint_margin,
+            self.vehicle_center_offset_body[0],
+            self.vehicle_center_offset_body[1],
+        )
+
+        # A* 구간에서는 초기 yaw를 유지한다. 해당 yaw의 직사각형을 map x/y축에
+        # 투영한 envelope를 사용해야 0도가 아닌 차량도 작게 취급하지 않는다.
+        path_length, path_width = footprint_extents_in_slot_axes(
+            self.loaded_footprint.length_m,
+            self.loaded_footprint.width_m,
+            start.yaw_rad)
+        self.planner.set_footprint(path_length / 2.0, path_width / 2.0)
+
+        # 차량만이 아니라 Front+차량+Rear loaded footprint가 들어가는 슬롯만 남긴다.
+        compatible = []
+        for slot in self.empty_slots:
+            fit = check_slot_fit(
+                slot,
+                self.loaded_footprint.length_m,
+                self.loaded_footprint.width_m,
+                self.slot_fit_long_margin,
+                self.slot_fit_lat_margin)
+            if fit.fits:
+                compatible.append((slot, fit))
+            else:
+                self.get_logger().warn(
+                    f'슬롯 {slot.slot_id} 제외: {fit.reason} | '
+                    f'clearance L={fit.length_clearance_m:+.3f}m '
+                    f'W={fit.width_clearance_m:+.3f}m',
+                    throttle_duration_sec=2.0)
+        if not compatible:
+            self.get_logger().warn(
+                '빈 슬롯은 있지만 loaded footprint가 들어갈 슬롯이 없음',
+                throttle_duration_sec=2.0)
+            return False
+
+        compatible.sort(key=lambda item: math.hypot(
+            item[0].center_x_m - start.x_m,
+            item[0].center_y_m - start.y_m))
+        selected_slot = None
+        selected_fit = None
+        selected_approach = None
+        waypoints = None
+        for slot, fit in compatible:
+            if self.use_staged_slot_entry:
+                approach_candidates = make_approach_candidates(
+                    slot,
+                    self.loaded_footprint.length_m,
+                    self.slot_staging_gap,
+                    start.yaw_rad)
+                if self.parking_direction in ('forward', 'reverse'):
+                    approach_candidates = [
+                        candidate for candidate in approach_candidates
+                        if candidate.parking_direction == self.parking_direction]
+            else:
+                # 레거시 모드도 슬롯 yaw는 보존하지만 A* 목표가 바로 중심이다.
+                approach_candidates = make_approach_candidates(
+                    slot, self.loaded_footprint.length_m, 0.0, start.yaw_rad)
+
+            for approach in approach_candidates:
+                path_goal = (approach.staging_pose.position
+                             if self.use_staged_slot_entry else slot.center)
+                candidate_path = self.planner.plan(
+                    self.grid, self.grid_w, self.grid_h,
+                    start.position, path_goal)
+                if candidate_path is None:
+                    continue
+                if self.use_staged_slot_entry:
+                    # 2D A*는 회전/삽입을 모른다. 정렬점 회전 원과 슬롯 축
+                    # 직선 삽입 corridor를 별도로 검사한 후보만 선택한다.
+                    if not self._rotation_space_free(*approach.staging_pose.position):
+                        continue
+                    if not self._insertion_corridor_free(
+                            approach.staging_pose, approach.target_pose):
+                        continue
+                    if math.hypot(
+                            candidate_path[-1][0] - path_goal[0],
+                            candidate_path[-1][1] - path_goal[1]) > 1e-6:
+                        candidate_path.append(path_goal)
+                selected_slot = slot
+                selected_fit = fit
+                selected_approach = approach
+                waypoints = candidate_path
+                break
+            if waypoints is not None:
+                break
+
+        if selected_slot is None or selected_approach is None or waypoints is None:
+            self.get_logger().error(
+                '모든 적합 슬롯의 A*/회전공간/삽입경로 검사 실패 — 재계획')
+            return False
+
+        # waypoint 발행
+        path = Path()
+        mission_stamp = self.get_clock().now().to_msg()
+        path.header.stamp = mission_stamp
+        path.header.frame_id = 'map'
+        for wx, wy in waypoints:
+            ps = PoseStamped()
+            ps.header.stamp = mission_stamp
+            ps.header.frame_id = 'map'
+            ps.pose.position.x = wx
+            ps.pose.position.y = wy
+            ps.pose.orientation.w = 1.0
+            path.poses.append(ps)
+        self.pub_waypoints.publish(path)
+
+        # 목표 주차칸 자세 발행 (FINAL_APPROACH 정밀정렬용)
+        sp = PoseStamped()
+        sp.header.stamp = mission_stamp
+        sp.header.frame_id = 'map'
+        sp.pose.position.x = selected_approach.target_pose.x_m
+        sp.pose.position.y = selected_approach.target_pose.y_m
+        slot_yaw = selected_approach.target_pose.yaw_rad
+        sp.pose.orientation.z = math.sin(slot_yaw / 2.0)
+        sp.pose.orientation.w = math.cos(slot_yaw / 2.0)
+        self.pub_slot_pose.publish(sp)
+
+        self.get_logger().info(
+            f'A* 경로 생성: start={start.position}, '
+            f'footprint={self.loaded_footprint.length_m:.3f}x'
+            f'{self.loaded_footprint.width_m:.3f}m, '
+            f'{len(waypoints)}개 waypoint → stage='
+            f'{selected_approach.staging_pose.position} → '
+            f'슬롯 {selected_slot.slot_id} '
+            f'({selected_approach.parking_direction}, '
+            f'yaw={math.degrees(slot_yaw):.1f}deg, '
+            f'clearance={selected_fit.length_clearance_m:.3f}/'
+            f'{selected_fit.width_clearance_m:.3f}m)')
+        return True
+
+    def publish_state(self):
+        self.status_sequence += 1
+        msg = String()
+        msg.data = json.dumps({
+            'state': self.state,
+            'mission_id': self.mission_id,
+            'sequence': self.status_sequence,
+            'stamp_ns': self.get_clock().now().nanoseconds,
+            'empty_count': len(self.empty_slots),
+            'lifted': self.car_lifted,
+            'has_map': self.grid is not None,
+            'has_target': self.target_pose is not None,
+            'require_ui_confirmation': self.require_ui_confirmation,
+            'ui_approved': self.ui_park_approved,
+            'ui_request_id': self.ui_request_id,
+            'footprint_length_m': round(
+                self.loaded_footprint.length_m, 4),
+            'footprint_width_m': round(
+                self.loaded_footprint.width_m, 4),
+        })
+        self.pub_state.publish(msg)
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = FleetManagerNode()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,11 @@
+build/
+install/
+log/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Runtime calibration/model artifacts are ignored unless intentionally shipped.
+config/*calibration*.npz
+!config/cctv_camera_calibration.npz
+models/*.pt

@@ -44,7 +44,7 @@ from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
 from launch.substitutions import (
     EnvironmentVariable, LaunchConfiguration, PathJoinSubstitution,
-    TextSubstitution,
+    PythonExpression, TextSubstitution,
 )
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -72,7 +72,12 @@ def _float_array(name):
 def generate_launch_description():
     enable_cameras = LaunchConfiguration('enable_opencv_camera')
     enable_markers = LaunchConfiguration('enable_cctv_robot_markers')
-    enable_web = LaunchConfiguration('enable_debug_web')
+    enable_web = PythonExpression([
+        "'", LaunchConfiguration('enable_operator_ui'),
+        "'.lower() in ('true', '1', 'yes', 'on') or '",
+        LaunchConfiguration('enable_debug_overlay'),
+        "'.lower() in ('true', '1', 'yes', 'on')",
+    ])
 
     share = FindPackageShare('cooperative_parking_robot')
     runtime_config_dir = PathJoinSubstitution([
@@ -227,7 +232,9 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_operator_ui', default_value='true'),
         DeclareLaunchArgument('ui_status_stale_s', default_value='3.0'),
         DeclareLaunchArgument('ui_button_cooldown_s', default_value='2.0'),
-        DeclareLaunchArgument('enable_debug_web', default_value='false'),
+        DeclareLaunchArgument(
+            'enable_debug_overlay', default_value='false',
+            description='진단 YOLO/ArUco/FPS overlay 및 annotated topic 활성'),
         DeclareLaunchArgument(
             'debug_image_topic', default_value='/cctv0/image_rect',
             description='kiosk/진단 화면에 표시할 카메라'),
@@ -456,6 +463,7 @@ def generate_launch_description():
                 'web_host': LaunchConfiguration('debug_web_host'),
                 'web_port': _int('debug_web_port'),
                 'enable_operator_ui': _bool('enable_operator_ui'),
+                'enable_debug_overlay': _bool('enable_debug_overlay'),
                 'status_stale_s': _float('ui_status_stale_s'),
                 'ui_button_cooldown_s': _float('ui_button_cooldown_s'),
             }],

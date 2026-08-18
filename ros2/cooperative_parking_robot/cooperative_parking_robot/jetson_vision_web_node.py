@@ -57,11 +57,15 @@ try:
     import numpy as np
     from cv_bridge import CvBridge
     from flask import Flask, Response, jsonify, request
-    from ultralytics import YOLO
     from werkzeug.serving import make_server
-    DEPS_OK = True
+    WEB_DEPS_OK = True
 except ImportError:
-    DEPS_OK = False
+    WEB_DEPS_OK = False
+
+try:
+    from ultralytics import YOLO
+except ImportError:
+    YOLO = None
 
 
 # 1024x600 Waveshare 7" Display-C 고정 레이아웃.
@@ -260,21 +264,33 @@ class JetsonVisionWebNode(Node):
         self.declare_parameter('web_port', 5000)
         # ===== 터치 UI =====
         self.declare_parameter('enable_operator_ui', True)
+        self.declare_parameter('enable_debug_overlay', False)
         # WiFi 너머 RPi 토픽이므로 오래된 값을 현재 상태로 표시하면 안 된다.
         self.declare_parameter('status_stale_s', 3.0)
         self.declare_parameter('ui_button_cooldown_s', 2.0)
         self.declare_parameter('localization_warning_streak', 5)
 
-        if not DEPS_OK:
+        if not WEB_DEPS_OK:
             raise RuntimeError(
                 'Jetson web monitor dependencies missing: cv2, numpy, '
-                'cv_bridge, flask, ultralytics, werkzeug')
+                'cv_bridge, flask, werkzeug')
 
         self.image_topic = str(self.get_parameter('image_topic').value)
         self.annotated_topic = str(
             self.get_parameter('annotated_topic').value)
-        self.enable_yolo = bool(self.get_parameter('enable_yolo').value)
-        self.enable_aruco = bool(self.get_parameter('enable_aruco').value)
+        self.enable_debug_overlay = bool(
+            self.get_parameter('enable_debug_overlay').value)
+        requested_enable_yolo = bool(
+            self.get_parameter('enable_yolo').value)
+        requested_enable_aruco = bool(
+            self.get_parameter('enable_aruco').value)
+        self.enable_yolo = (
+            self.enable_debug_overlay and requested_enable_yolo)
+        self.enable_aruco = (
+            self.enable_debug_overlay and requested_enable_aruco)
+        if self.enable_yolo and YOLO is None:
+            raise RuntimeError(
+                'debug overlay requires ultralytics when YOLO is enabled')
         self.confidence = float(self.get_parameter('confidence').value)
         self.imgsz = int(self.get_parameter('imgsz').value)
         self.process_every_n = int(
@@ -370,8 +386,10 @@ class JetsonVisionWebNode(Node):
             [-half, -half, 0.0],
         ], dtype=np.float32)
 
-        self.annotated_publisher = self.create_publisher(
-            Image, self.annotated_topic, qos_profile_sensor_data)
+        self.annotated_publisher = None
+        if self.enable_debug_overlay:
+            self.annotated_publisher = self.create_publisher(
+                Image, self.annotated_topic, qos_profile_sensor_data)
         self.create_subscription(
             Image, self.image_topic, self.image_cb, qos_profile_sensor_data)
 
@@ -420,8 +438,12 @@ class JetsonVisionWebNode(Node):
         )
         self._web_thread.start()
 
+        mode = ('operator UI + debug overlay' if self.enable_debug_overlay
+                and self.enable_operator_ui else
+                'debug overlay' if self.enable_debug_overlay else
+                'operator UI')
         self.get_logger().warn(
-            f'debug MJPEG stream listening on http://{self.web_host}:'
+            f'{mode} web listening on http://{self.web_host}:'
             f'{self.web_port}/ without authentication; trusted LAN only')
         self.get_logger().info(
             f'Jetson vision web monitor: {self.image_topic} -> '
@@ -723,6 +745,10 @@ class JetsonVisionWebNode(Node):
 
         @app.route('/')
         def index():
+            if not self.enable_debug_overlay:
+                if self.enable_operator_ui:
+                    return Response(KIOSK_PAGE, mimetype='text/html')
+                return ('debug overlay disabled', 404)
             return (
                 '<html><head><title>Jetson Vision</title></head>'
                 '<body style="background:#2c3e50;text-align:center;color:white">'
@@ -794,6 +820,7 @@ class JetsonVisionWebNode(Node):
                 'ready': ready,
                 'sequence': sequence,
                 'image_topic': self.image_topic,
+                'debug_overlay': self.enable_debug_overlay,
                 'yolo': self.enable_yolo,
                 'aruco': self.enable_aruco,
             })
@@ -853,19 +880,23 @@ class JetsonVisionWebNode(Node):
             self._last_process_time = now
 
             display = frame.copy()
-            if self.enable_yolo and frame_number % self.process_every_n == 0:
-                self._last_boxes = self._run_yolo(frame)
-            self._draw_yolo(display, self._last_boxes)
-            if self.enable_aruco:
-                self._draw_aruco(display)
+            if self.enable_debug_overlay:
+                if (self.enable_yolo and
+                        frame_number % self.process_every_n == 0):
+                    self._last_boxes = self._run_yolo(frame)
+                self._draw_yolo(display, self._last_boxes)
+                if self.enable_aruco:
+                    self._draw_aruco(display)
 
-            cv2.putText(
-                display, f'PROC FPS: {fps:.1f}', (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
+                cv2.putText(
+                    display, f'PROC FPS: {fps:.1f}', (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
 
-            output = self.bridge.cv2_to_imgmsg(display, encoding='bgr8')
-            output.header = header
-            self.annotated_publisher.publish(output)
+            if self.annotated_publisher is not None:
+                output = self.bridge.cv2_to_imgmsg(
+                    display, encoding='bgr8')
+                output.header = header
+                self.annotated_publisher.publish(output)
 
             ok, buffer = cv2.imencode(
                 '.jpg', display,

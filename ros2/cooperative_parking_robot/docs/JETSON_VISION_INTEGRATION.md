@@ -59,7 +59,8 @@
 Mission 실행 시 웹 YOLO는 끄고 ArUco/영상 모니터만 사용한다.
 
 ```text
-enable_debug_web=true
+enable_operator_ui=false
+enable_debug_overlay=true
 debug_enable_yolo=false
 debug_enable_aruco=true
 ```

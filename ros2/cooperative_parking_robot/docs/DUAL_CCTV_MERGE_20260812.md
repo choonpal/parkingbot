@@ -409,7 +409,8 @@ ros2 launch cooperative_parking_robot cctv_server_dual.launch.py \
   homography_cam2_file:=$HOME/.ros/adaptive_valet_bot/homography_cam2_rectified.npy \
   layout_config:=$HOME/.ros/adaptive_valet_bot/parking_layout.yaml \
   model_path:=$HOME/yolov8n.pt \
-  enable_debug_web:=true
+  enable_operator_ui:=true \
+  enable_debug_overlay:=false
 ```
 
 ### 6-1. 확인 명령

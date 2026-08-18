@@ -89,11 +89,13 @@ def test_full_system_defaults_to_safe_smoke_mode():
     source = (ROOT / 'launch/full_system.launch.py').read_text()
     for name in (
             'enable_opencv_camera', 'enable_cctv_rectify', 'enable_vision',
-            'enable_cctv_robot_markers', 'enable_debug_web',
+            'enable_cctv_robot_markers', 'enable_debug_overlay',
             'enable_rear_aruco', 'enable_serial', 'require_serial',
             'require_hardware_ready', 'require_ultrasonic_for_ready'):
         pattern = rf"'{name}', default_value='false'"
         assert re.search(pattern, source), name
+    assert re.search(
+        r"'enable_operator_ui', default_value='true'", source)
 
 
 def test_humble_scripts_are_executable():

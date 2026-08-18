@@ -290,6 +290,12 @@ Robot FSM은 기존처럼 `error`만 읽으므로 호환된다. Fleet만 plan st
   - 민감값을 제외한 mission request 로그
   - request status reason 표시와 completion-sequence 단발 toast
   - Fleet snapshot만 UI 운영 상태의 source로 사용
+  - `enable_operator_ui=true` 기본 운용에서는 raw CCTV kiosk/API를 실행하고,
+    `enable_debug_overlay=false`이면 YOLO/ArUco/FPS overlay와 annotated topic을 끔
+
+- `launch/cctv_server*.launch.py`, `launch/full_system.launch.py`
+  - operator UI 실행 조건을 debug overlay flag와 분리
+  - Fleet가 UI 승인을 요구하는 single/dual 실차 기본값에서는 kiosk가 자동 실행됨
 
 ### 설정/등록
 

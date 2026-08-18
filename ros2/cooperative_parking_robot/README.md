@@ -64,7 +64,7 @@ Jetson에 연결한 7인치 LCD로 입차를 승인한다. `jetson_vision_web_no
 
 ```bash
 ros2 launch cooperative_parking_robot cctv_server.launch.py \
-  enable_debug_web:=true debug_enable_yolo:=false enable_operator_ui:=true
+  enable_operator_ui:=true enable_debug_overlay:=false
 
 chromium-browser --kiosk --incognito --noerrdialogs \
   http://localhost:5000/kiosk
@@ -273,7 +273,9 @@ hardware_preflight --role jetson \
   --homography-file /absolute/homography_rectified.npy
 ```
 
-웹 모니터도 사용할 경우 `--enable-debug-web`을 추가한다.
+운용 UI 의존성은 기본 검사 대상이다. UI 없는 headless 검사에는
+`--disable-operator-ui`, 진단 overlay 구성까지 검사할 때는
+`--enable-debug-overlay`를 사용한다.
 
 ## Jetson 실행
 
@@ -311,13 +313,17 @@ ros2 launch cooperative_parking_robot cctv_server.launch.py \
 
 ```bash
 ros2 launch cooperative_parking_robot cctv_server.launch.py \
-  enable_debug_web:=true \
+  enable_operator_ui:=false \
+  enable_debug_overlay:=true \
   debug_enable_yolo:=false \
   debug_enable_aruco:=true \
   ...
 ```
 
-브라우저에서 `http://<JETSON-IP>:5000/`을 연다. 인증 기능이 없으므로 신뢰할 수 있는 내부망에서만 사용한다.
+브라우저에서 `http://<JETSON-IP>:5000/`을 연다. 운용 kiosk는
+`enable_operator_ui:=true`가 기본값이어서 debug overlay를 켜지 않아도
+`http://<JETSON-IP>:5000/kiosk`에서 열린다. 인증 기능이 없으므로 신뢰할 수 있는
+내부망에서만 사용한다.
 
 `debug_enable_yolo:=true`로 설정하면 사용자 원본처럼 웹 화면에도 YOLO 박스를 그리지만, Mission YOLO와 별도로 한 번 더 추론하므로 Jetson GPU 사용량이 증가한다.
 

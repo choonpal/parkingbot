@@ -257,8 +257,12 @@ ros2 launch cooperative_parking_robot cctv_server_dual.launch.py \
   homography_cam2_file:=<cam2.npy> \
   layout_config:=<parking_layout.yaml> \
   model_path:=<vehicle_seg.engine> \
-  enable_debug_web:=true
+  enable_operator_ui:=true \
+  enable_debug_overlay:=false
 ~~~
+
+`enable_operator_ui=true`가 Fleet 승인용 kiosk/API를 실행한다. 진단용
+YOLO/ArUco/FPS overlay가 필요한 경우에만 `enable_debug_overlay:=true`를 준다.
 
 겹침 영역에 차량을 두고 /cctv/merge_status에서
 multi_camera_detections≥1, duplicates_removed≥1인지 확인한다.

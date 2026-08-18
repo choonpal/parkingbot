@@ -83,11 +83,41 @@ def test_cctv_launch_exposes_camera_model_marker_and_web_controls():
     for token in (
             "'enable_opencv_camera'", "'model_mode'",
             "'allow_model_download'", "'homography_scale_to_m'",
-            "'min_marker_area_px'", "'enable_debug_web'",
+            "'min_marker_area_px'", "'enable_operator_ui'",
+            "'enable_debug_overlay'",
             "executable='opencv_camera'", "executable='jetson_vision_web'"):
         assert token in source
     assert "default_value='coco'" in source
     assert "default_value='false'" in source  # optional camera/web are opt-in
+
+
+def test_operator_ui_launch_is_independent_from_debug_overlay():
+    launch_dir = ROOT / 'launch'
+    for name in (
+            'cctv_server.launch.py',
+            'cctv_server_dual.launch.py',
+            'full_system.launch.py'):
+        source = (launch_dir / name).read_text()
+        assert re.search(
+            r"'enable_operator_ui',\s*default_value='true'", source)
+        assert re.search(
+            r"'enable_debug_overlay',\s*default_value='false'", source)
+        assert "'enable_debug_web'" not in source
+        assert 'PythonExpression' in source
+        assert "'enable_operator_ui': _bool('enable_operator_ui')" in source
+        assert "'enable_debug_overlay': _bool('enable_debug_overlay')" in source
+
+
+def test_web_node_keeps_operator_ui_raw_video_without_debug_overlay():
+    source = (PKG / 'jetson_vision_web_node.py').read_text()
+    assert "declare_parameter('enable_debug_overlay', False)" in source
+    assert 'self.enable_debug_overlay = bool(' in source
+    assert 'self.enable_debug_overlay and requested_enable_yolo' in source
+    assert 'self.enable_debug_overlay and requested_enable_aruco' in source
+    assert 'if self.enable_debug_overlay:' in source
+    assert 'if self.annotated_publisher is not None:' in source
+    assert 'YOLO = None' in source
+    assert 'debug overlay requires ultralytics' in source
 
 
 def test_web_monitor_is_diagnostic_not_a_mission_output_publisher():

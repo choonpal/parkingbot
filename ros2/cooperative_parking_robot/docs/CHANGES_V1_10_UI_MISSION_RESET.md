@@ -124,8 +124,8 @@ localization 경고(`CCTV_REJECTED_GATE` 연속 5회)는 배너에 표시 — P1
 ### launch (`cctv_server.launch.py`)
 `require_ui_confirmation`, `ui_request_timeout_s`, `enable_operator_ui`,
 `ui_status_stale_s`, `ui_button_cooldown_s` 노출.
-**kiosk 운용 시 `enable_debug_web:=true` + `debug_enable_yolo:=false`**
-(YOLO 이중 추론 금지 — 미션 노드가 이미 수행).
+후속 통합본에서는 kiosk를 `enable_operator_ui:=true` 기본값으로 독립 실행하고
+`enable_debug_overlay:=false`를 유지한다(미션 노드와 YOLO 이중 추론 금지).
 
 ---
 

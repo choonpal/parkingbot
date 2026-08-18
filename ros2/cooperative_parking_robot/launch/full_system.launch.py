@@ -11,6 +11,7 @@ from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
 from launch.substitutions import (
     EnvironmentVariable, LaunchConfiguration, PathJoinSubstitution,
+    PythonExpression,
 )
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -55,7 +56,14 @@ def generate_launch_description():
     enable_cctv_markers = LaunchConfiguration('enable_cctv_robot_markers')
     enable_rear_aruco = LaunchConfiguration('enable_rear_aruco')
     enable_rear_camera = LaunchConfiguration('enable_rear_camera')
-    enable_web = LaunchConfiguration('enable_debug_web')
+    enable_web = PythonExpression([
+        "('", LaunchConfiguration('enable_operator_ui'),
+        "'.lower() in ('true', '1', 'yes', 'on') and '",
+        LaunchConfiguration('enable_vision'),
+        "'.lower() in ('true', '1', 'yes', 'on')) or '",
+        LaunchConfiguration('enable_debug_overlay'),
+        "'.lower() in ('true', '1', 'yes', 'on')",
+    ])
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -70,7 +78,12 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'enable_cctv_robot_markers', default_value='false'),
         DeclareLaunchArgument('enable_rear_aruco', default_value='false'),
-        DeclareLaunchArgument('enable_debug_web', default_value='false'),
+        DeclareLaunchArgument(
+            'enable_operator_ui', default_value='true',
+            description='enable_vision 운용 시 /kiosk와 /api/* 활성'),
+        DeclareLaunchArgument(
+            'enable_debug_overlay', default_value='false',
+            description='진단 YOLO/ArUco/FPS overlay 및 annotated topic 활성'),
         DeclareLaunchArgument('enable_serial', default_value='false'),
         DeclareLaunchArgument('require_serial', default_value='false'),
         DeclareLaunchArgument('require_hardware_ready', default_value='false'),
@@ -290,6 +303,8 @@ def generate_launch_description():
                 'calibration_width_px': _int('calibration_width_px'),
                 'calibration_height_px': _int('calibration_height_px'),
                 'web_port': _int('debug_web_port'),
+                'enable_operator_ui': _bool('enable_operator_ui'),
+                'enable_debug_overlay': _bool('enable_debug_overlay'),
             }],
             output='screen'),
 

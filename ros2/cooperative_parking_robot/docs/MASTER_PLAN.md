@@ -264,8 +264,9 @@ AND front/rear IDLE AND fault is None AND fresh
 - JS: 500 ms `/api/status` 폴링, fetch 실패 시 "UI 서버 연결 끊김" 오버레이
 
 ### web_node 실행 조건
-- 현재 `enable_debug_web` default false → kiosk 운용 시 launch에서 `true` +
-  `debug_enable_yolo:=false` 유지 (**YOLO 이중 추론 금지** — 미션 노드가 이미 수행).
+- `enable_operator_ui=true`가 Fleet 승인용 kiosk/API를 독립 실행한다.
+- `enable_debug_overlay=false`가 기본이며, 진단 영상이 필요할 때만 켠다.
+  `debug_enable_yolo:=false`를 유지하면 미션 노드와 YOLO 이중 추론하지 않는다.
 
 ## 3-4. 터치스크린 / kiosk 실행 (Jetson)
 

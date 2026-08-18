@@ -136,7 +136,8 @@ def validate_role_dependencies(
         errors: MutableSequence[str], role: str,
         require_cctv_markers: bool, require_rear_aruco: bool,
         skip_serial: bool,
-        model_path: str = '', enable_debug_web: bool = False) -> None:
+        model_path: str = '', enable_operator_ui: bool = True,
+        enable_debug_overlay: bool = False) -> None:
     require_import(errors, 'ROS 2 Python', 'rclpy')
     require_import(errors, 'NumPy', 'numpy')
 
@@ -151,7 +152,7 @@ def validate_role_dependencies(
             require_import(errors, 'PyTorch', 'torch')
         if require_cctv_markers:
             validate_opencv_aruco(errors, cv2_module)
-        if enable_debug_web:
+        if enable_operator_ui or enable_debug_overlay:
             require_import(errors, 'Flask', 'flask')
             require_import(errors, 'Werkzeug', 'werkzeug')
         return
@@ -180,8 +181,11 @@ def parse_args(argv=None):
         '--allow-model-download', action='store_true',
         help='로컬 .pt가 없을 때 Ultralytics 자동 다운로드를 허용')
     parser.add_argument(
-        '--enable-debug-web', action='store_true',
-        help='Flask/Werkzeug MJPEG 모니터 의존성도 검사')
+        '--disable-operator-ui', action='store_true',
+        help='운용 kiosk/API를 사용하지 않을 때 웹 의존성 검사를 생략')
+    parser.add_argument(
+        '--enable-debug-overlay', action='store_true',
+        help='진단 영상 overlay 실행 구성을 함께 검사')
     parser.add_argument('--homography-file',
                         default='homography_rectified.npy')
     parser.add_argument(
@@ -221,7 +225,8 @@ def main(argv=None):
         require_rear_aruco=not args.disable_rear_aruco,
         skip_serial=args.skip_serial or args.software_only,
         model_path=args.model_path,
-        enable_debug_web=args.enable_debug_web)
+        enable_operator_ui=not args.disable_operator_ui,
+        enable_debug_overlay=args.enable_debug_overlay)
 
     if not args.software_only:
         if args.role == 'jetson':

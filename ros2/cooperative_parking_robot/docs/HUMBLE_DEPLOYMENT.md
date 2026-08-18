@@ -162,7 +162,9 @@ ros2 launch cooperative_parking_robot cctv_server.launch.py \
 
 1280×720은 파일 자체로 확정된 값이 아니므로 실제 생성 조건을 확인한 뒤 넣는다.
 
-선택 웹 모니터는 `enable_debug_web:=true`로 켠다. Mission YOLO와 중복 추론을 피하려면 `debug_enable_yolo:=false`를 유지한다.
+운용 kiosk/API는 `enable_operator_ui:=true`가 기본이다. 선택 진단 영상은
+`enable_debug_overlay:=true`로 켠다. Mission YOLO와 중복 추론을 피하려면
+`debug_enable_yolo:=false`를 유지한다.
 
 ## 6-1. 초음파 UART/ROS 확인
 
@@ -210,7 +212,11 @@ Jetson 핵심 토픽:
 ros2 launch cooperative_parking_robot full_system.launch.py
 ```
 
-기본값은 `enable_opencv_camera=false`, `enable_cctv_rectify=false`, `enable_vision=false`, `enable_debug_web=false`, `enable_serial=false`다. 실제 영상까지 확인하려면 Rectifier와 Vision을 함께 활성화하고 모델·Homography 경로를 제공한다.
+기본값은 `enable_opencv_camera=false`, `enable_cctv_rectify=false`,
+`enable_vision=false`, `enable_operator_ui=true`, `enable_debug_overlay=false`,
+`enable_serial=false`다. `full_system`의 operator UI는 `enable_vision=true`일 때
+Fleet와 함께 실행된다. 실제 영상까지 확인하려면 Rectifier와 Vision을 함께
+활성화하고 모델·Homography 경로를 제공한다.
 
 ## 9. 실행 가능성 판정
 

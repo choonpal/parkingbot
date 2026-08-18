@@ -1,6 +1,9 @@
 # Adaptive Valet Bot v1.9 — 실차 투입 통합 마스터 문서
 ## (검토 이슈 · 병목 · UI 구현 스펙 · 출차 미션 설계 · 시운전 체크리스트)
 
+> 이 문서는 v1.9 설계 기록이다. 구현된 출차 통합의 현재 계약은
+> `docs/RETRIEVAL_MISSION_INTEGRATION_PLAN.md`와 repository 최상위 ADR을 따른다.
+
 기준 코드: `adaptive_valet_bot_v1_9_bev_slot_parking_20260804` | 작성일: 2026-08-05
 검증 상태: 순수 로직 테스트 117개 통과, 전 노드 문법 정상, pub↔sub seam audit 미연결 없음,
 QoS 호환성 전수 확인 (transient-local 미션 토픽 포함)

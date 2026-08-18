@@ -3,8 +3,14 @@
 import math
 from pathlib import Path
 
+import pytest
+
 from cooperative_parking_robot.pure_pursuit import PurePursuit
 from cooperative_parking_robot.rigid_body_kinematics import RigidBodyKinematics
+from cooperative_parking_robot.mission_protocol import (
+    make_arrival_status,
+    parse_arrival_status,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -165,3 +171,22 @@ def test_cctv_vehicle_feedback_only_updates_during_active_transport():
     assert "not self.vehicle_lifted" in callback
     assert "self.front_robot_state != 'DRIVE'" in callback
     assert "self.rear_robot_state != 'DRIVE'" in callback
+
+
+def test_arrived_status_carries_map_vehicle_pose_and_plan_correlation():
+    status = make_arrival_status(1.2, -0.4, 3.5, 123)
+
+    assert status['error'] == 'ARRIVED'
+    assert status['final_vehicle_pose']['frame_id'] == 'map'
+    assert status['final_vehicle_pose']['yaw'] == pytest.approx(
+        -2.7831853071795862)
+    assert parse_arrival_status(status, 123) == pytest.approx(
+        (1.2, -0.4, -2.7831853071795862))
+
+
+def test_arrived_status_rejects_wrong_frame_or_plan_stamp():
+    status = make_arrival_status(1.2, -0.4, 0.2, 123)
+
+    assert parse_arrival_status(status, 122) is None
+    status['final_vehicle_pose']['frame_id'] = 'odom'
+    assert parse_arrival_status(status, 123) is None

@@ -121,7 +121,9 @@ def render_parking_layout_yaml(
         slot_occupancy_overlap_ratio: float = 0.10,
         slot_fit_longitudinal_margin_m: float = 0.06,
         slot_fit_lateral_margin_m: float = 0.06,
-        slot_staging_gap_m: float = 0.10):
+        slot_staging_gap_m: float = 0.10,
+        waiting_yaw_deg: float = 0.0,
+        car_size_m: float = 0.90):
     """등록 결과를 두 ROS 노드가 함께 읽는 parameter YAML로 직렬화한다.
 
     ROS 2 parameter는 ``[{id: P1, ...}, ...]`` 같은 중첩 객체 배열을 직접
@@ -147,12 +149,18 @@ def render_parking_layout_yaml(
     long_margin = float(slot_fit_longitudinal_margin_m)
     lat_margin = float(slot_fit_lateral_margin_m)
     staging_gap = float(slot_staging_gap_m)
+    waiting_yaw = float(waiting_yaw_deg)
+    car_size = float(car_size_m)
     if map_width <= 0.0 or map_height <= 0.0 or resolution <= 0.0:
         raise ValueError('map dimensions/resolution must be positive')
     if not 0.0 <= overlap <= 1.0:
         raise ValueError('slot_occupancy_overlap_ratio must be in [0,1]')
     if min(long_margin, lat_margin, staging_gap) < 0.0:
         raise ValueError('slot margins and staging gap must be non-negative')
+    if not math.isfinite(waiting_yaw):
+        raise ValueError('waiting_yaw_deg must be finite')
+    if not math.isfinite(car_size) or car_size <= 0.0:
+        raise ValueError('car_size_m must be finite and positive')
 
     # 현재 OccupancyGrid의 origin은 (0,0)으로 고정되어 있다. 음수 좌표나
     # map 밖 슬롯을 저장하면 후단에서 갑자기 경로 실패가 나므로 등록
@@ -200,6 +208,8 @@ def render_parking_layout_yaml(
     max_x = max(waiting[0::2])
     min_y = min(waiting[1::2])
     max_y = max(waiting[1::2])
+    waiting_x = sum(waiting[0::2]) / 4.0
+    waiting_y = sum(waiting[1::2]) / 4.0
 
     # 한국어 주석은 현장에서 어떤 배열을 고쳐야 하는지 바로 알 수 있게 남긴다.
     return f'''# BEV 브라우저 등록 도구가 생성한 주차장 배치 파일
@@ -211,6 +221,7 @@ yolo_bev_map_node:
     map_resolution: {resolution:.6f}
     map_width_m: {map_width:.6f}
     map_height_m: {map_height:.6f}
+    car_size_m: {car_size:.6f}
     # 대기영역의 실제 4개 모서리. 차량 중심이 이 다각형 안에 들어오면 타겟이다.
     waiting_polygon: {_flat(waiting)}
     # 기존 코드/수동 설정과의 호환용 축 정렬 bounding box.
@@ -235,6 +246,14 @@ fleet_manager_node:
   ros__parameters:
     layout_registered: true
     map_resolution: {resolution:.6f}
+    # waiting_polygon은 차량 중심 detection ROI이며 물리 footprint 경계가 아니다.
+    waiting_polygon: {_flat(waiting)}
+    # retrieve의 실제 map-frame 최종 차량 pose.
+    waiting_x: {waiting_x:.6f}
+    waiting_y: {waiting_y:.6f}
+    waiting_yaw_deg: {waiting_yaw:.6f}
+    # Perception의 polygon 없는 차량 fallback raster와 같은 source mask 크기.
+    source_vehicle_fallback_mask_m: {car_size:.6f}
     slot_ids: {_string_array(slot_ids)}
     slot_coords: {_flat(slot_coords)}
     slot_sizes: {_flat(slot_sizes)}
@@ -247,7 +266,12 @@ fleet_manager_node:
     # CCTV 차량 중심과 Front/Rear odom 중점 차이가 이 범위 안일 때 A* 시작점에 반영.
     initial_target_offset_gate_m: 0.500000
     use_staged_slot_entry: true
-    parking_direction: "minimum_rotation"
+    parking_direction: "forward"
+    # 현 실증 배치의 기본 운용은 기존 sequential Front-first 접근이다.
+    simultaneous_entry: false
+    # IndividualMoveNode 접근 yaw controller와 동일한 preflight 모델.
+    approach_yaw_gain: 1.500000
+    approach_max_yaw_rate_rps: 0.150000
 
 # 천장 카메라 2대 구성에서 최종 /parking/* 판단을 담당하는 병합 노드.
 # 단일 카메라 구성에서는 이 노드를 띄우지 않으므로 이 블록은 무시된다.
@@ -257,6 +281,7 @@ cctv_merge_node:
     map_resolution: {resolution:.6f}
     map_width_m: {map_width:.6f}
     map_height_m: {map_height:.6f}
+    car_size_m: {car_size:.6f}
     waiting_polygon: {_flat(waiting)}
     slot_ids: {_string_array(slot_ids)}
     slot_coords: {_flat(slot_coords)}

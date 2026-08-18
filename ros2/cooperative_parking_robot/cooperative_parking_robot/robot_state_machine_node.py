@@ -9,6 +9,8 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Bool, String
 
+from cooperative_parking_robot.mission_protocol import parse_arrival_status
+
 
 class RobotStateMachineNode(Node):
     def __init__(self, **kwargs):
@@ -68,6 +70,7 @@ class RobotStateMachineNode(Node):
         self.rear_lifted = False
         self.self_lifted = False
         self.active_mission_id = ""
+        self.active_plan_stamp_ns = 0
         self.fleet_sequence = -1
         self.fleet_receipt_time = 0.0
         self.local_ready_stage = None
@@ -167,6 +170,7 @@ class RobotStateMachineNode(Node):
             payload = json.loads(msg.data)
             fleet_state = str(payload.get("state", "WAIT_TARGET"))
             mission_id = str(payload.get("mission_id", ""))
+            plan_stamp_ns = int(payload.get("plan_stamp_ns", 0))
             sequence = int(payload["sequence"])
             stamp_ns = int(payload["stamp_ns"])
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
@@ -193,6 +197,7 @@ class RobotStateMachineNode(Node):
             self.get_logger().info(
                 f"[{self.role}] accepted mission {mission_id}")
         self.fleet_state = fleet_state
+        self.active_plan_stamp_ns = plan_stamp_ns
         self.fleet_sequence = sequence
         self.fleet_receipt_time = time.monotonic()
 
@@ -229,7 +234,7 @@ class RobotStateMachineNode(Node):
             return None
         if role != expected_role:
             return None
-        if stage not in ("LIFT", "DRIVE", "RELEASE", "RETURN"):
+        if stage not in ("LIFT", "DRIVE", "RELEASE", "RETURN", "HOME"):
             return None
         if not self.source_stamp_is_fresh(
                 stamp_ns, self.coordination_timeout):
@@ -296,11 +301,17 @@ class RobotStateMachineNode(Node):
 
     def sync_cb(self, msg):
         try:
-            error = str(json.loads(msg.data).get("error", "OK"))
-        except (TypeError, ValueError, json.JSONDecodeError):
+            payload = json.loads(msg.data)
+            error = str(payload.get("error", "OK"))
+            plan_stamp_ns = int(payload.get("plan_stamp_ns", 0))
+        except (TypeError, ValueError, json.JSONDecodeError, AttributeError):
             return
         if error == "ARRIVED":
-            self.arrived = True
+            if (self.state == "DRIVE" and self.active_plan_stamp_ns > 0 and
+                    plan_stamp_ns == self.active_plan_stamp_ns and
+                    parse_arrival_status(
+                        payload, self.active_plan_stamp_ns) is not None):
+                self.arrived = True
             return
         fatal_prefixes = (
             "ODOM_TIMEOUT",
@@ -468,7 +479,10 @@ class RobotStateMachineNode(Node):
 
         elif self.state == "RETURN":
             if self.return_done:
-                # reset()이 active_mission_id를 지우므로 먼저 통지한다.
+                self.publish_ready_stage("HOME")
+                self.maybe_publish_commit("HOME")
+            if "HOME" in self.committed_stages:
+                # 양쪽 HOME ready 이후의 commit만 진짜 mission 완료다.
                 self.publish_mission_complete()
                 self.reset()
                 self.transition("IDLE")
@@ -511,7 +525,7 @@ class RobotStateMachineNode(Node):
             self.check_both_lifted()
 
     def publish_mission_complete(self):
-        """Front만 발행한다. Rear는 자기 RETURN 완료만 알 뿐이다."""
+        """양쪽 HOME commit 뒤 Front만 최종 완료를 발행한다."""
         if self.pub_mission_complete is None or not self.active_mission_id:
             return
         payload = {
@@ -539,6 +553,7 @@ class RobotStateMachineNode(Node):
         self.rear_lifted = False
         self.self_lifted = False
         self.active_mission_id = ""
+        self.active_plan_stamp_ns = 0
         self.fleet_state = "WAIT_TARGET"
         self.fleet_sequence = -1
         self.fleet_receipt_time = 0.0

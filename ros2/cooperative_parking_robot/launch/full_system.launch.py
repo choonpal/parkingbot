@@ -142,7 +142,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'rear_aruco_gray_gain', default_value='1.0'),
         DeclareLaunchArgument(
-            'simultaneous_entry', default_value='true'),
+            'simultaneous_entry', default_value='false'),
         DeclareLaunchArgument(
             'same_direction_exit', default_value='false'),
         DeclareLaunchArgument(
@@ -237,6 +237,7 @@ def generate_launch_description():
             condition=IfCondition(enable_vision),
             parameters=[layout_config, {
                 'require_registered_layout': True,
+                'simultaneous_entry': _bool('simultaneous_entry'),
             }],
             output='screen'),
         Node(

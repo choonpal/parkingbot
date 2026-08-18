@@ -18,7 +18,7 @@ fleet_manager_node.py (Jetson Orin Nano)
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-from geometry_msgs.msg import PoseStamped, PoseArray, PoseStamped as PS
+from geometry_msgs.msg import PoseStamped, PoseArray
 from nav_msgs.msg import OccupancyGrid, Odometry, Path
 from std_msgs.msg import Bool, String
 import math
@@ -26,12 +26,36 @@ import json
 import time
 
 from cooperative_parking_robot.astar_planner import AStarPlanner
-from cooperative_parking_robot.freshness import StampGate, stamp_to_ns
+from cooperative_parking_robot.bev_fusion_core import point_in_polygon
+from cooperative_parking_robot.freshness import (
+    RequestReplayGuard,
+    StampGate,
+    stamp_to_ns,
+)
 from cooperative_parking_robot.loaded_footprint import (
     compute_loaded_footprint,
 )
 from cooperative_parking_robot.vehicle_entry import (
-    MIN_INTER_ROBOT_GAP_M, validate_wheelbase_clearance,
+    MIN_INTER_ROBOT_GAP_M,
+    approach_longitudinal,
+    validate_wheelbase_clearance,
+    vehicle_to_world,
+)
+from cooperative_parking_robot.mission_protocol import parse_arrival_status
+from cooperative_parking_robot.parking_registry import (
+    ParkingCredential,
+    ParkingRegistry,
+    RegistryTransitionError,
+    SlotLifecycle,
+    normalize_vehicle_number,
+)
+from cooperative_parking_robot.retrieval_planning import (
+    clear_source_vehicle,
+    corridor_is_free,
+    make_extraction_geometry,
+    make_waiting_staging,
+    sequential_routes_clear,
+    simultaneous_routes_clear,
 )
 from cooperative_parking_robot.parking_geometry import (
     Pose2D,
@@ -48,6 +72,10 @@ class FleetManagerNode(Node):
 
         self.declare_parameter('waiting_x', 2.3)
         self.declare_parameter('waiting_y', 0.6)
+        self.declare_parameter('waiting_yaw_deg', 0.0)
+        self.declare_parameter(
+            'waiting_polygon',
+            [2.10, 0.30, 2.50, 0.30, 2.50, 0.90, 2.10, 0.90])
         self.declare_parameter('map_resolution', 0.05)
         self.declare_parameter('target_timeout_s', 2.0)
         self.declare_parameter('vehicle_spec_timeout_s', 10.0)
@@ -62,6 +90,7 @@ class FleetManagerNode(Node):
         # 차량 외곽은 아직 실측 전 placeholder이며 config에서 교체한다.
         self.declare_parameter('default_vehicle_length_m', 0.90)
         self.declare_parameter('default_vehicle_width_m', 0.35)
+        self.declare_parameter('source_vehicle_fallback_mask_m', 0.90)
         self.declare_parameter('footprint_safety_margin_m', 0.06)
         self.declare_parameter('unknown_is_occupied', True)
         self.declare_parameter('layout_registered', False)
@@ -78,11 +107,17 @@ class FleetManagerNode(Node):
         self.declare_parameter('slot_match_tolerance_m', 0.10)
         # 최종 주차는 슬롯 앞 정렬점까지 평행이동한 뒤 회전하고 직선 삽입한다.
         self.declare_parameter('use_staged_slot_entry', True)
-        self.declare_parameter('parking_direction', 'minimum_rotation')
+        self.declare_parameter('parking_direction', 'forward')
         # staging 전환 오차(2cm) + 지역화/외곽 오차를 흡수할 양쪽 여유.
         self.declare_parameter('slot_fit_longitudinal_margin_m', 0.06)
         self.declare_parameter('slot_fit_lateral_margin_m', 0.06)
         self.declare_parameter('slot_staging_gap_m', 0.10)
+        self.declare_parameter('rigid_body_lookahead_m', 0.15)
+        self.declare_parameter('entry_standoff_m', 0.85)
+        self.declare_parameter('approach_speed_mps', 0.035)
+        self.declare_parameter('approach_yaw_gain', 1.5)
+        self.declare_parameter('approach_max_yaw_rate_rps', 0.15)
+        self.declare_parameter('simultaneous_entry', False)
         # 인양 직후에는 차량이 아직 대기위치에 있다. CCTV 차량 중심과
         # 로봇 두 대 중점의 고정 offset을 계획 시작점에도 반영해,
         # Fleet A* 좌표계와 rigid_body_sync의 차량 중심 좌표계를 맞춘다.
@@ -92,6 +127,18 @@ class FleetManagerNode(Node):
         self.declare_parameter('ui_request_timeout_s', 10.0)
         self.wait_x = self.get_parameter('waiting_x').value
         self.wait_y = self.get_parameter('waiting_y').value
+        self.wait_yaw = math.radians(float(
+            self.get_parameter('waiting_yaw_deg').value))
+        waiting_flat = list(self.get_parameter('waiting_polygon').value)
+        if len(waiting_flat) < 6 or len(waiting_flat) % 2:
+            raise ValueError('waiting_polygon must contain x,y pairs')
+        self.waiting_polygon = list(zip(
+            [float(value) for value in waiting_flat[0::2]],
+            [float(value) for value in waiting_flat[1::2]]))
+        if not point_in_polygon(
+                self.wait_x, self.wait_y, self.waiting_polygon):
+            raise ValueError(
+                'waiting_x/y must lie inside vehicle-center detection ROI')
         self.resolution = float(self.get_parameter('map_resolution').value)
         self.odom_timeout = float(
             self.get_parameter('odom_timeout_s').value)
@@ -112,6 +159,8 @@ class FleetManagerNode(Node):
             self.get_parameter('default_vehicle_length_m').value)
         self.vehicle_width = float(
             self.get_parameter('default_vehicle_width_m').value)
+        self.source_vehicle_fallback_mask = float(
+            self.get_parameter('source_vehicle_fallback_mask_m').value)
         self.footprint_margin = float(
             self.get_parameter('footprint_safety_margin_m').value)
         self.vehicle_center_offset_body = [0.0, 0.0]
@@ -139,12 +188,29 @@ class FleetManagerNode(Node):
             self.get_parameter('slot_fit_lateral_margin_m').value)
         self.slot_staging_gap = float(
             self.get_parameter('slot_staging_gap_m').value)
+        self.rigid_body_lookahead = float(
+            self.get_parameter('rigid_body_lookahead_m').value)
+        self.entry_standoff = float(
+            self.get_parameter('entry_standoff_m').value)
+        self.approach_speed = float(
+            self.get_parameter('approach_speed_mps').value)
+        self.approach_yaw_gain = float(
+            self.get_parameter('approach_yaw_gain').value)
+        self.approach_max_yaw_rate = float(
+            self.get_parameter('approach_max_yaw_rate_rps').value)
+        self.simultaneous_entry = bool(
+            self.get_parameter('simultaneous_entry').value)
         self.initial_target_offset_gate = float(
             self.get_parameter('initial_target_offset_gate_m').value)
         if (not self.registered_slots or self.slot_match_tolerance <= 0.0 or
                 min(self.slot_fit_long_margin, self.slot_fit_lat_margin,
                     self.slot_staging_gap) < 0.0 or
-                self.initial_target_offset_gate <= 0.0):
+                self.initial_target_offset_gate <= 0.0 or
+                self.rigid_body_lookahead <= 0.0 or
+                self.entry_standoff <= 0.0 or self.approach_speed <= 0.0 or
+                self.approach_yaw_gain <= 0.0 or
+                self.approach_max_yaw_rate <= 0.0 or
+                self.source_vehicle_fallback_mask <= 0.0):
             raise ValueError('invalid registered-slot parameters')
         if self.parking_direction not in (
                 'minimum_rotation', 'forward', 'reverse'):
@@ -161,6 +227,7 @@ class FleetManagerNode(Node):
         self.ui_approved_time = 0.0
         self.ui_request_id = ''
         self.ui_request_sequence = -1
+        self.request_replay = RequestReplayGuard()
         self.loaded_footprint = compute_loaded_footprint(
             self.current_wheelbase,
             self.robot_length,
@@ -176,6 +243,11 @@ class FleetManagerNode(Node):
         # Front 제어기도 마지막 임무를 받을 수 있도록 latch 성격의 QoS를 쓴다.
         self.mission_qos = QoSProfile(
             depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.coordination_qos = QoSProfile(
+            depth=10,
             reliability=ReliabilityPolicy.RELIABLE,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
         )
@@ -199,9 +271,32 @@ class FleetManagerNode(Node):
         self.state = 'WAIT_TARGET'
         self.path_published = False
         self.mission_id = ''
+        self.mission_type = ''
+        self.active_source_slot_id = ''
+        self.active_destination_slot_id = ''
+        self.requested_destination_slot_id = ''
+        self.destination_kind = ''
+        self.active_parking_direction = ''
+        self.active_vehicle_spec = None
+        self.active_vehicle_number = ''
+        self.active_parking_credential = None
+        self.active_plan_stamp_ns = 0
+        self.pending_final_vehicle_pose = None
+        self.active_committed_stages = set()
+        self.last_commit_sequence = -1
+        self.pending_completion = None
+        self.request_status = None
+        self.last_completed = None
+        self.completion_sequence = 0
         self.status_sequence = 0
         self.front_odom = None
         self.rear_odom = None
+        self.front_robot_state = 'UNKNOWN'
+        self.rear_robot_state = 'UNKNOWN'
+        self.front_motion_fault = ''
+        self.rear_motion_fault = ''
+        self.registry = ParkingRegistry(
+            [slot.slot_id for slot in self.registered_slots])
         self.target_gate = StampGate(
             self.get_parameter('target_timeout_s').value,
             self.future_tolerance)
@@ -230,9 +325,22 @@ class FleetManagerNode(Node):
         self.create_subscription(
             String, '/mission/complete', self.mission_complete_cb, 10)
         self.create_subscription(
+            String, '/mission/commit', self.mission_commit_cb,
+            self.coordination_qos)
+        self.create_subscription(
+            String, '/sync/error_state', self.sync_status_cb, 10)
+        self.create_subscription(
             Odometry, '/front/odom', self.front_odom_cb, 10)
         self.create_subscription(
             Odometry, '/rear/odom', self.rear_odom_cb, 10)
+        self.create_subscription(
+            String, '/front/robot_state', self.front_state_cb, 10)
+        self.create_subscription(
+            String, '/rear/robot_state', self.rear_state_cb, 10)
+        self.create_subscription(
+            String, '/front/motion_fault', self.front_fault_cb, 10)
+        self.create_subscription(
+            String, '/rear/motion_fault', self.rear_fault_cb, 10)
 
         # 발행
         self.pub_waypoints = self.create_publisher(
@@ -240,6 +348,10 @@ class FleetManagerNode(Node):
         self.pub_state = self.create_publisher(String, '/fleet/state', 10)
         self.pub_slot_pose = self.create_publisher(
             PoseStamped, '/parking/slot_pose', self.mission_qos)
+        self.pub_target_pose = self.create_publisher(
+            PoseStamped, '/parking/target_pose', 10)
+        self.pub_vehicle_spec = self.create_publisher(
+            String, '/parking/vehicle_spec', self.mission_qos)
 
         self.create_timer(0.5, self.manage_loop)
         self.create_timer(1.0, self.publish_state)
@@ -264,6 +376,7 @@ class FleetManagerNode(Node):
         if self.state == 'WAIT_TARGET' and not self.mission_id:
             self.mission_id = (
                 f'mission-{self.get_clock().now().nanoseconds}')
+            self.mission_type = 'park'
             self.get_logger().info(f'new mission: {self.mission_id}')
         self.target_pose = msg
 
@@ -309,47 +422,285 @@ class FleetManagerNode(Node):
         # AStarPlanner는 생성 시 해상도를 보관하므로 수신 맵과 동기화해야 한다.
         self.planner.resolution = resolution
 
+    def _set_request_status(self, payload, status, reason=''):
+        self.request_status = {
+            'request_id': str(payload.get('request_id', '')),
+            'type': str(payload.get('type', '')),
+            'source_slot_id': str(payload.get('source_slot_id', '')),
+            'destination_slot_id': str(
+                payload.get('destination_slot_id', '')),
+            'status': str(status),
+            'reason': str(reason),
+        }
+        self.publish_state()
+
+    def _robots_accepting_mission(self):
+        return (
+            self.front_robot_state == 'IDLE' and
+            self.rear_robot_state == 'IDLE' and
+            not self.front_motion_fault and
+            not self.rear_motion_fault)
+
     def ui_request_cb(self, msg):
-        """터치 UI의 입차 승인. 판단 권한은 UI가 아니라 이 노드에 있다."""
+        """UI intent를 검증한다. 실제 ACCEPTED/REJECTED 권한은 Fleet에 있다."""
         try:
             payload = json.loads(msg.data)
             request_type = str(payload['type'])
             request_id = str(payload.get('request_id', ''))
+            client_id = str(payload.get('client_id', ''))
             sequence = int(payload['sequence'])
             stamp_ns = int(payload['stamp_ns'])
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             self.get_logger().warn(
                 f'invalid ui/mission_request ignored: {exc}',
                 throttle_duration_sec=2.0)
+            self._set_request_status({}, 'REJECTED', 'INVALID_REQUEST')
             return
-        if request_type != 'park':
-            # retrieve/cancel은 아직 미구현이다. 조용히 무시하지 않고 남긴다.
-            self.get_logger().warn(
-                f'unsupported ui mission type ignored: {request_type}')
-            return
-        if sequence <= self.ui_request_sequence:
+        accepted, replay_reason = self.request_replay.accept(
+            client_id, sequence, request_id)
+        if not accepted:
+            self._set_request_status(
+                payload, 'REJECTED', replay_reason)
             return
         age_s = (self.get_clock().now().nanoseconds - stamp_ns) * 1e-9
         if not -0.5 <= age_s <= self.ui_request_timeout:
             self.get_logger().warn(
                 f'stale/future ui request rejected (age={age_s:.2f}s)')
-            return
-        if self.state != 'WAIT_TARGET':
-            self.get_logger().warn(
-                f'ui park request ignored in state {self.state}')
+            self._set_request_status(
+                payload, 'REJECTED', 'STALE_REQUEST')
             return
         self.ui_request_sequence = sequence
+        if request_type == 'park':
+            self._handle_park_request(payload)
+            return
+        if request_type == 'retrieve':
+            self._handle_retrieve_request(payload)
+            return
+        self._set_request_status(payload, 'REJECTED', 'INVALID_REQUEST')
+
+    def _handle_park_request(self, payload):
+        if (self.state != 'WAIT_TARGET' or
+                self.mission_type not in ('', 'park') or
+                self.ui_park_approved):
+            self._set_request_status(
+                payload, 'REJECTED', 'MISSION_ALREADY_ACTIVE')
+            return
+        if not self._robots_accepting_mission():
+            self._set_request_status(
+                payload, 'REJECTED', 'ROBOT_NOT_IDLE')
+            return
+        identity_keys = (
+            'vehicle_number', 'password', 'destination_slot_id')
+        has_identity = any(key in payload for key in identity_keys)
+        if has_identity:
+            if not all(key in payload for key in identity_keys):
+                self._set_request_status(
+                    payload, 'REJECTED', 'INVALID_REQUEST')
+                return
+            try:
+                vehicle_number = normalize_vehicle_number(
+                    payload.get('vehicle_number'))
+            except ValueError:
+                self._set_request_status(
+                    payload, 'REJECTED', 'INVALID_VEHICLE_NUMBER')
+                return
+            try:
+                credential = ParkingCredential.create(
+                    payload.get('password'))
+            except ValueError:
+                self._set_request_status(
+                    payload, 'REJECTED', 'INVALID_PASSWORD')
+                return
+            if self.registry.find_by_vehicle_number(vehicle_number) is not None:
+                self._set_request_status(
+                    payload, 'REJECTED', 'VEHICLE_ALREADY_PARKED')
+                return
+            destination_slot_id = str(
+                payload.get('destination_slot_id', '')).strip()
+            slot = self._slot_by_id(destination_slot_id)
+            if slot is None:
+                self._set_request_status(
+                    payload, 'REJECTED', 'DESTINATION_SLOT_NOT_FOUND')
+                return
+            if self.registry.lifecycle(
+                    destination_slot_id) is not SlotLifecycle.EMPTY:
+                self._set_request_status(
+                    payload, 'REJECTED', 'DESTINATION_SLOT_NOT_EMPTY')
+                return
+            perceived_empty = {
+                candidate.slot_id for candidate in self.empty_slots}
+            if destination_slot_id not in perceived_empty:
+                self._set_request_status(
+                    payload, 'REJECTED', 'DESTINATION_SLOT_UNAVAILABLE')
+                return
+            self.requested_destination_slot_id = destination_slot_id
+            self.active_vehicle_number = vehicle_number
+            self.active_parking_credential = credential
         self.ui_park_approved = True
         self.ui_approved_time = time.monotonic()
-        self.ui_request_id = request_id
-        self.get_logger().info(f'UI 입차 승인 수신: {request_id}')
+        self.ui_request_id = str(payload.get('request_id', ''))
+        self._set_request_status(payload, 'ACCEPTED')
+        self.get_logger().info(f'UI 입차 승인 수신: {self.ui_request_id}')
+
+    def _handle_retrieve_request(self, payload):
+        if (self.state != 'WAIT_TARGET' or self.mission_id or
+                self.target_pose is not None):
+            self._set_request_status(
+                payload, 'REJECTED', 'MISSION_ALREADY_ACTIVE')
+            return
+        if not self._robots_accepting_mission():
+            self._set_request_status(
+                payload, 'REJECTED', 'ROBOT_NOT_IDLE')
+            return
+        status_payload = dict(payload)
+        if ('vehicle_number' not in payload or 'password' not in payload):
+            self._set_request_status(
+                status_payload, 'REJECTED',
+                'VEHICLE_OR_PASSWORD_INVALID')
+            return
+        record = self.registry.authenticate_vehicle(
+            payload.get('vehicle_number'), payload.get('password'))
+        if record is None:
+            self._set_request_status(
+                status_payload, 'REJECTED',
+                'VEHICLE_OR_PASSWORD_INVALID')
+            return
+        source_slot_id = record.slot_id
+        supplied_slot = str(payload.get('source_slot_id', '')).strip()
+        if supplied_slot and supplied_slot != source_slot_id:
+            self._set_request_status(
+                status_payload, 'REJECTED',
+                'VEHICLE_OR_PASSWORD_INVALID')
+            return
+        status_payload['source_slot_id'] = source_slot_id
+        if record.lifecycle is not SlotLifecycle.OCCUPIED:
+            self._set_request_status(
+                status_payload, 'REJECTED', 'SOURCE_SLOT_NOT_OCCUPIED')
+            return
+        if record.parking_direction != 'forward':
+            self._set_request_status(
+                status_payload, 'REJECTED',
+                'UNSUPPORTED_PARKING_DIRECTION')
+            return
+        if record.final_vehicle_pose is None or record.vehicle_spec is None:
+            self._set_request_status(
+                status_payload, 'REJECTED', 'MISSING_VEHICLE_RECORD')
+            return
+        if not self._retrieve_approach_preflight(record):
+            self._set_request_status(
+                status_payload, 'REJECTED', 'APPROACH_CORRIDOR_BLOCKED')
+            return
+
+        mission_id = f'mission-{self.get_clock().now().nanoseconds}'
+        try:
+            self.registry.reserve_retrieve(source_slot_id, mission_id)
+        except (KeyError, RegistryTransitionError):
+            self._set_request_status(
+                status_payload, 'REJECTED', 'SOURCE_SLOT_NOT_OCCUPIED')
+            return
+        self.mission_id = mission_id
+        self.mission_type = 'retrieve'
+        self.active_source_slot_id = source_slot_id
+        self.destination_kind = 'WAITING'
+        self.active_parking_direction = record.parking_direction
+        self.active_vehicle_spec = dict(record.vehicle_spec)
+        self._apply_active_vehicle_spec()
+        self.target_pose = self._publish_retrieve_target(
+            record.final_vehicle_pose)
+        self.state = 'WAIT_LIFT'
+        self.ui_request_id = str(status_payload.get('request_id', ''))
+        self._set_request_status(status_payload, 'ACCEPTED')
+        self.get_logger().info(
+            f'UI 출차 승인: {source_slot_id} ({mission_id})')
+
+    def sync_status_cb(self, msg):
+        try:
+            payload = json.loads(msg.data)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return
+        if (not self.mission_id or self.active_plan_stamp_ns <= 0 or
+                self.state not in ('PLAN_PATH', 'NAVIGATING')):
+            return
+        parsed = parse_arrival_status(
+            payload, self.active_plan_stamp_ns)
+        if parsed is None:
+            return
+        self.pending_final_vehicle_pose = Pose2D(*parsed)
+        # ARRIVED와 RETURN commit은 서로 다른 topic이므로 어느 쪽이 먼저
+        # 도착해도 같은 idempotent Registry 확정을 재시도한다.
+        FleetManagerNode._try_complete_park_registry(self)
+
+    def _try_complete_park_registry(self):
+        if (self.mission_type != 'park' or
+                not self.active_destination_slot_id or
+                self.pending_final_vehicle_pose is None or
+                self.active_vehicle_spec is None or
+                not {'RELEASE', 'RETURN'}.issubset(
+                    self.active_committed_stages)):
+            return False
+        try:
+            lifecycle = self.registry.lifecycle(
+                self.active_destination_slot_id)
+            if lifecycle is SlotLifecycle.OCCUPIED:
+                return True
+            if lifecycle is not SlotLifecycle.RESERVED:
+                return False
+            self.registry.complete_park(
+                self.active_destination_slot_id,
+                self.mission_id,
+                self.pending_final_vehicle_pose,
+                self.active_parking_direction,
+                self.active_vehicle_spec)
+        except (KeyError, RegistryTransitionError) as exc:
+            self.get_logger().error(
+                f'park registry completion rejected: {exc}')
+            return False
+        self.publish_state()
+        return True
+
+    def mission_commit_cb(self, msg):
+        try:
+            payload = json.loads(msg.data)
+            mission_id = str(payload['mission_id'])
+            role = str(payload['role'])
+            stage = str(payload['stage'])
+            sequence = int(payload['sequence'])
+            stamp_ns = int(payload['stamp_ns'])
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            return
+        age_s = (self.get_clock().now().nanoseconds - stamp_ns) * 1e-9
+        if (not self.mission_id or mission_id != self.mission_id or
+                role != 'front' or sequence <= self.last_commit_sequence or
+                stage not in ('LIFT', 'DRIVE', 'RELEASE', 'RETURN', 'HOME') or
+                not -0.5 <= age_s <= 10.0):
+            return
+        self.last_commit_sequence = sequence
+        self.active_committed_stages.add(stage)
+
+        try:
+            if (stage == 'DRIVE' and self.mission_type == 'retrieve' and
+                    self.active_source_slot_id):
+                self.registry.mark_retrieve_exiting(
+                    self.active_source_slot_id, self.mission_id)
+                self.publish_state()
+            elif stage == 'RETURN' and 'RELEASE' in self.active_committed_stages:
+                if self.mission_type == 'park':
+                    FleetManagerNode._try_complete_park_registry(self)
+                elif (self.mission_type == 'retrieve' and
+                      self.destination_kind == 'WAITING' and
+                      self.active_source_slot_id):
+                    self.registry.complete_retrieve(
+                        self.active_source_slot_id, self.mission_id)
+                    self.publish_state()
+            elif (stage == 'HOME' and self.pending_completion is not None and
+                  FleetManagerNode._registry_completion_ready(self)):
+                pending = self.pending_completion
+                self.pending_completion = None
+                self._finalize_mission(pending)
+        except RegistryTransitionError as exc:
+            self.get_logger().error(f'registry transition rejected: {exc}')
 
     def mission_complete_cb(self, msg):
-        """P3: 임무 종료 시 다음 임무를 받을 수 있는 상태로 되돌린다.
-
-        v1.9까지는 NAVIGATING에서 영구히 머물렀기 때문에 두 번째 임무가
-        아예 불가능했다.
-        """
         try:
             payload = json.loads(msg.data)
             mission_id = str(payload['mission_id'])
@@ -358,21 +709,72 @@ class FleetManagerNode(Node):
             self.get_logger().warn('invalid mission/complete envelope')
             return
         age_s = (self.get_clock().now().nanoseconds - stamp_ns) * 1e-9
-        if not -0.5 <= age_s <= 10.0:
-            self.get_logger().warn(
-                f'stale mission/complete ignored (age={age_s:.2f}s)')
+        if (not -0.5 <= age_s <= 10.0 or not self.mission_id or
+                mission_id != self.mission_id):
             return
-        if not self.mission_id or mission_id != self.mission_id:
-            self.get_logger().warn(
-                f'다른 임무의 완료 통지 무시: {mission_id}')
+        if 'HOME' not in self.active_committed_stages:
+            # commit과 complete는 서로 다른 topic이므로 DDS 도착 순서가 바뀔 수 있다.
+            self.pending_completion = payload
             return
-        if self.state not in ('NAVIGATING', 'PLAN_PATH'):
-            self.get_logger().warn(
-                f'{self.state} 상태의 완료 통지 무시')
+        if not FleetManagerNode._registry_completion_ready(self):
+            self.pending_completion = payload
+            self.get_logger().error(
+                'mission complete blocked: parking registry transition '
+                'is not complete')
             return
+        self._finalize_mission(payload)
+
+    def _registry_completion_ready(self):
+        """완료 표시 전에 차량 배치 lifecycle이 확정됐는지 검사한다."""
+        try:
+            if self.mission_type == 'park':
+                return bool(
+                    self.active_destination_slot_id and
+                    self.registry.lifecycle(
+                        self.active_destination_slot_id) is
+                    SlotLifecycle.OCCUPIED)
+            if self.mission_type == 'retrieve':
+                return bool(
+                    self.active_source_slot_id and
+                    self.registry.lifecycle(
+                        self.active_source_slot_id) is SlotLifecycle.EMPTY)
+        except KeyError:
+            return False
+        return False
+
+    def _finalize_mission(self, payload):
+        mission_id = self.mission_id
+        self.completion_sequence += 1
+        self.last_completed = {
+            'completion_sequence': self.completion_sequence,
+            'mission_id': mission_id,
+            'mission_type': self.mission_type,
+            'source_slot_id': self.active_source_slot_id,
+            'stamp_ns': int(payload['stamp_ns']),
+        }
+        if (self.request_status is not None and
+                self.request_status.get('request_id') == self.ui_request_id and
+                self.request_status.get('status') == 'ACCEPTED'):
+            self.request_status = dict(self.request_status)
+            self.request_status['status'] = 'COMPLETED'
+            self.request_status['reason'] = ''
 
         self.state = 'WAIT_TARGET'
         self.mission_id = ''
+        self.mission_type = ''
+        self.active_source_slot_id = ''
+        self.active_destination_slot_id = ''
+        self.requested_destination_slot_id = ''
+        self.destination_kind = ''
+        self.active_parking_direction = ''
+        self.active_vehicle_spec = None
+        self.active_vehicle_number = ''
+        self.active_parking_credential = None
+        self.active_plan_stamp_ns = 0
+        self.pending_final_vehicle_pose = None
+        self.active_committed_stages.clear()
+        self.last_commit_sequence = -1
+        self.pending_completion = None
         self.car_lifted = False
         self.target_pose = None
         self.empty_slots = []
@@ -398,6 +800,8 @@ class FleetManagerNode(Node):
         # StampGate는 마지막 stamp를 기억하므로 새 임무 target을 받으려면
         # 반드시 함께 초기화해야 한다.
         self.target_gate.reset()
+        self.spec_gate.reset()
+        self.publish_state()
         self.get_logger().info(
             f'임무 {mission_id} 완료 — WAIT_TARGET 복귀')
 
@@ -462,6 +866,11 @@ class FleetManagerNode(Node):
         self.current_wheelbase = wheelbase
         self.vehicle_length = vehicle_length
         self.vehicle_width = vehicle_width
+        self.active_vehicle_spec = {
+            'wheelbase': wheelbase,
+            'vehicle_length_m': vehicle_length,
+            'vehicle_width_m': vehicle_width,
+        }
         self.loaded_footprint = footprint
         self.planner.set_footprint(
             footprint.half_length_m, footprint.half_width_m)
@@ -476,6 +885,18 @@ class FleetManagerNode(Node):
 
     def rear_odom_cb(self, msg):
         self._odom_cb('rear', msg)
+
+    def front_state_cb(self, msg):
+        self.front_robot_state = str(msg.data)
+
+    def rear_state_cb(self, msg):
+        self.rear_robot_state = str(msg.data)
+
+    def front_fault_cb(self, msg):
+        self.front_motion_fault = str(msg.data).strip()
+
+    def rear_fault_cb(self, msg):
+        self.rear_motion_fault = str(msg.data).strip()
 
     def _odom_cb(self, role, msg):
         if msg.header.frame_id not in ('', 'map'):
@@ -514,6 +935,87 @@ class FleetManagerNode(Node):
             (self.front_odom['x'] + self.rear_odom['x']) / 2.0,
             (self.front_odom['y'] + self.rear_odom['y']) / 2.0,
             yaw)
+
+    def _slot_by_id(self, slot_id):
+        return next((slot for slot in self.registered_slots
+                     if slot.slot_id == slot_id), None)
+
+    def _retrieve_approach_preflight(self, record):
+        if self.grid is None or self.current_virtual_start() is None:
+            return False
+        target = record.final_vehicle_pose
+        routes = {}
+        for role, odom in (
+                ('front', self.front_odom), ('rear', self.rear_odom)):
+            longitudinal = approach_longitudinal(
+                role, self.entry_standoff,
+                float(record.vehicle_spec['wheelbase']))
+            goal = vehicle_to_world(
+                longitudinal, 0.0,
+                target.x_m, target.y_m, target.yaw_rad)
+            start = (odom['x'], odom['y'])
+            if not corridor_is_free(
+                    self.grid, self.grid_w, self.grid_h, self.resolution,
+                    start, goal, odom['yaw'],
+                    self.robot_length, self.robot_width,
+                    margin_m=0.0,
+                    unknown_is_occupied=self.unknown_is_occupied,
+                    goal_yaw_rad=target.yaw_rad,
+                    speed_mps=self.approach_speed,
+                    yaw_gain=self.approach_yaw_gain,
+                    max_yaw_rate=self.approach_max_yaw_rate):
+                return False
+            routes[role] = (start, goal)
+        route_clearance = (simultaneous_routes_clear
+                           if self.simultaneous_entry
+                           else sequential_routes_clear)
+        if not route_clearance(
+                routes['front'], routes['rear'], self.approach_speed,
+                self.robot_length, self.robot_width,
+                self.minimum_inter_robot_gap,
+                self.front_odom['yaw'], self.rear_odom['yaw'],
+                front_goal_yaw_rad=target.yaw_rad,
+                rear_goal_yaw_rad=target.yaw_rad,
+                yaw_gain=self.approach_yaw_gain,
+                max_yaw_rate=self.approach_max_yaw_rate):
+            return False
+        return True
+
+    def _apply_active_vehicle_spec(self):
+        spec = self.active_vehicle_spec
+        self.current_wheelbase = float(spec['wheelbase'])
+        self.vehicle_length = float(spec['vehicle_length_m'])
+        self.vehicle_width = float(spec['vehicle_width_m'])
+        self.vehicle_center_offset_body = [0.0, 0.0]
+        self.loaded_footprint = compute_loaded_footprint(
+            self.current_wheelbase,
+            self.robot_length,
+            self.robot_width,
+            self.vehicle_length,
+            self.vehicle_width,
+            self.footprint_margin,
+            0.0,
+            0.0,
+        )
+        self.planner.set_footprint(
+            self.loaded_footprint.half_length_m,
+            self.loaded_footprint.half_width_m)
+
+    def _publish_retrieve_target(self, pose):
+        now = self.get_clock().now()
+        stamp = now.to_msg()
+        target = PoseStamped()
+        target.header.stamp = stamp
+        target.header.frame_id = 'map'
+        target.pose.position.x = pose.x_m
+        target.pose.position.y = pose.y_m
+        target.pose.orientation.z = math.sin(pose.yaw_rad / 2.0)
+        target.pose.orientation.w = math.cos(pose.yaw_rad / 2.0)
+        spec = dict(self.active_vehicle_spec)
+        spec['stamp_ns'] = now.nanoseconds
+        self.pub_target_pose.publish(target)
+        self.pub_vehicle_spec.publish(String(data=json.dumps(spec)))
+        return target
 
     def _grid_occupied(self, gx, gy):
         """맵 밖과 설정상 unknown을 점유로 포함하는 단일 셀 판정."""
@@ -594,31 +1096,60 @@ class FleetManagerNode(Node):
                     time.monotonic() - self.ui_approved_time >
                     self.ui_request_timeout):
                 self.ui_park_approved = False
+                self.requested_destination_slot_id = ''
+                self.active_vehicle_number = ''
+                self.active_parking_credential = None
+                if (self.request_status is not None and
+                        self.request_status.get('request_id') ==
+                        self.ui_request_id and
+                        self.request_status.get('status') == 'ACCEPTED'):
+                    self.request_status = dict(self.request_status)
+                    self.request_status['status'] = 'REJECTED'
+                    self.request_status['reason'] = 'TARGET_TIMEOUT'
+                    self.publish_state()
                 self.get_logger().warn('UI 입차 승인 만료 — 다시 눌러야 합니다')
             if self.target_pose is not None:
                 if not self.require_ui_confirmation:
+                    self.mission_type = 'park'
                     self.state = 'WAIT_LIFT'
+                    self.publish_state()
                 elif self.ui_park_approved:
                     # 승인은 1회성이다. 진입 순간 즉시 소비해야 다음 임무가
                     # 버튼 없이 자동 시작되는 일을 막을 수 있다.
                     self.ui_park_approved = False
+                    self.mission_type = 'park'
                     self.state = 'WAIT_LIFT'
+                    self.publish_state()
                     self.get_logger().info(
                         f'UI 승인으로 임무 시작 ({self.ui_request_id})')
 
         elif self.state == 'WAIT_LIFT':
             if self.car_lifted:
                 self.state = 'PLAN_PATH'
+                self.publish_state()
 
         elif self.state == 'PLAN_PATH':
             if self.plan_and_publish():
                 self.state = 'NAVIGATING'
+                self.publish_state()
 
         elif self.state == 'NAVIGATING':
             pass  # rigid_body_sync가 주행
 
+    def _eligible_park_slots(self):
+        '''Intersect perceived-empty slots with Registry and UI selection.'''
+        registry_empty = set(self.registry.empty_slot_ids())
+        requested = getattr(self, 'requested_destination_slot_id', '')
+        return [
+            slot for slot in self.empty_slots
+            if slot.slot_id in registry_empty and
+            (not requested or slot.slot_id == requested)
+        ]
+
     def plan_and_publish(self):
         """크기가 맞는 빈자리 선택 -> 정렬점 A* -> 슬롯 목표 자세 발행."""
+        if self.mission_type == 'retrieve':
+            return self.plan_retrieve_and_publish()
         if self.grid is None:
             self.get_logger().warn('맵 미수신 — 대기', throttle_duration_sec=2.0)
             return False
@@ -683,7 +1214,7 @@ class FleetManagerNode(Node):
 
         # 차량만이 아니라 Front+차량+Rear loaded footprint가 들어가는 슬롯만 남긴다.
         compatible = []
-        for slot in self.empty_slots:
+        for slot in FleetManagerNode._eligible_park_slots(self):
             fit = check_slot_fit(
                 slot,
                 self.loaded_footprint.length_m,
@@ -760,7 +1291,27 @@ class FleetManagerNode(Node):
                 '모든 적합 슬롯의 A*/회전공간/삽입경로 검사 실패 — 재계획')
             return False
 
-        # waypoint 발행
+        if self.active_vehicle_spec is None:
+            self.active_vehicle_spec = {
+                'wheelbase': self.current_wheelbase,
+                'vehicle_length_m': self.vehicle_length,
+                'vehicle_width_m': self.vehicle_width,
+            }
+        try:
+            self.registry.reserve_park(
+                selected_slot.slot_id,
+                self.mission_id,
+                getattr(self, 'active_vehicle_number', ''),
+                getattr(self, 'active_parking_credential', None),
+            )
+        except (KeyError, RegistryTransitionError) as exc:
+            self.get_logger().error(f'park reservation failed: {exc}')
+            return False
+        self.active_destination_slot_id = selected_slot.slot_id
+        self.destination_kind = 'PARKING_SLOT'
+        self.active_parking_direction = selected_approach.parking_direction
+
+        # Registry reservation이 성공한 뒤 path와 destination을 같은 stamp로 발행한다.
         path = Path()
         mission_stamp = self.get_clock().now().to_msg()
         path.header.stamp = mission_stamp
@@ -773,8 +1324,6 @@ class FleetManagerNode(Node):
             ps.pose.position.y = wy
             ps.pose.orientation.w = 1.0
             path.poses.append(ps)
-        self.pub_waypoints.publish(path)
-
         # 목표 주차칸 자세 발행 (FINAL_APPROACH 정밀정렬용)
         sp = PoseStamped()
         sp.header.stamp = mission_stamp
@@ -784,7 +1333,20 @@ class FleetManagerNode(Node):
         slot_yaw = selected_approach.target_pose.yaw_rad
         sp.pose.orientation.z = math.sin(slot_yaw / 2.0)
         sp.pose.orientation.w = math.cos(slot_yaw / 2.0)
-        self.pub_slot_pose.publish(sp)
+        try:
+            self.pub_slot_pose.publish(sp)
+            self.pub_waypoints.publish(path)
+        except Exception as exc:
+            self.registry.rollback_unpublished_park(
+                selected_slot.slot_id, self.mission_id)
+            self.active_destination_slot_id = ''
+            self.destination_kind = ''
+            self.active_parking_direction = ''
+            self.get_logger().error(f'park plan publish failed: {exc}')
+            return False
+        self.path_published = True
+        self.active_plan_stamp_ns = stamp_to_ns(mission_stamp)
+        self.publish_state()
 
         self.get_logger().info(
             f'A* 경로 생성: start={start.position}, '
@@ -799,12 +1361,137 @@ class FleetManagerNode(Node):
             f'{selected_fit.width_clearance_m:.3f}m)')
         return True
 
+    def plan_retrieve_and_publish(self):
+        if self.grid is None or not self.active_source_slot_id:
+            return False
+        try:
+            record = self.registry.get(self.active_source_slot_id)
+        except KeyError:
+            return False
+        if (record.lifecycle not in (
+                SlotLifecycle.EXIT_RESERVED, SlotLifecycle.EXITING) or
+                record.final_vehicle_pose is None or
+                record.vehicle_spec is None):
+            return False
+        source_slot = self._slot_by_id(self.active_source_slot_id)
+        if source_slot is None:
+            return False
+
+        self.active_vehicle_spec = dict(record.vehicle_spec)
+        self._apply_active_vehicle_spec()
+        final_pose = record.final_vehicle_pose
+        extraction = make_extraction_geometry(
+            source_slot, final_pose,
+            self.loaded_footprint.length_m,
+            self.slot_staging_gap,
+            self.rigid_body_lookahead,
+            self.slot_fit_long_margin)
+        planning_grid = clear_source_vehicle(
+            self.grid, self.grid_w, self.grid_h, self.resolution,
+            final_pose,
+            self.vehicle_length,
+            self.vehicle_width,
+            self.source_vehicle_fallback_mask)
+        if not corridor_is_free(
+                planning_grid, self.grid_w, self.grid_h, self.resolution,
+                final_pose.position, extraction.clear_pose.position,
+                final_pose.yaw_rad,
+                self.loaded_footprint.length_m,
+                self.loaded_footprint.width_m,
+                margin_m=max(
+                    self.slot_fit_long_margin, self.slot_fit_lat_margin),
+                unknown_is_occupied=self.unknown_is_occupied):
+            self.get_logger().error('retrieve extraction corridor blocked')
+            return False
+
+        waiting_pose = Pose2D(self.wait_x, self.wait_y, self.wait_yaw)
+        waiting_staging = make_waiting_staging(
+            waiting_pose,
+            self.loaded_footprint.length_m,
+            self.slot_staging_gap)
+        if not self._rotation_space_free(*waiting_staging.position):
+            self.get_logger().error('waiting staging rotation space blocked')
+            return False
+        if not corridor_is_free(
+                planning_grid, self.grid_w, self.grid_h, self.resolution,
+                waiting_staging.position, waiting_pose.position,
+                waiting_pose.yaw_rad,
+                self.loaded_footprint.length_m,
+                self.loaded_footprint.width_m,
+                margin_m=max(
+                    self.slot_fit_long_margin, self.slot_fit_lat_margin),
+                unknown_is_occupied=self.unknown_is_occupied):
+            self.get_logger().error('waiting insertion corridor blocked')
+            return False
+
+        path_length, path_width = footprint_extents_in_slot_axes(
+            self.loaded_footprint.length_m,
+            self.loaded_footprint.width_m,
+            final_pose.yaw_rad)
+        self.planner.set_footprint(path_length / 2.0, path_width / 2.0)
+        astar_path = self.planner.plan(
+            planning_grid, self.grid_w, self.grid_h,
+            extraction.clear_pose.position,
+            waiting_staging.position)
+        if astar_path is None:
+            self.get_logger().error('retrieve clear-to-waiting A* failed')
+            return False
+
+        waypoints = [
+            final_pose.position,
+            extraction.source_staging.position,
+            extraction.clear_pose.position,
+        ]
+        # exact clear와 A* start-cell 중심이 다르면 짧은 연결 segment를 보존한다.
+        # 같은 점일 때만 제거하여 discontinuity와 zero-length를 모두 피한다.
+        for point in astar_path:
+            if math.dist(waypoints[-1], point) > 1e-6:
+                waypoints.append(point)
+        if math.dist(waypoints[-1], waiting_staging.position) > 1e-6:
+            waypoints.append(waiting_staging.position)
+
+        path = Path()
+        mission_stamp = self.get_clock().now().to_msg()
+        path.header.stamp = mission_stamp
+        path.header.frame_id = 'map'
+        for wx, wy in waypoints:
+            ps = PoseStamped()
+            ps.header.stamp = mission_stamp
+            ps.header.frame_id = 'map'
+            ps.pose.position.x = wx
+            ps.pose.position.y = wy
+            ps.pose.orientation.w = 1.0
+            path.poses.append(ps)
+        destination = PoseStamped()
+        destination.header.stamp = mission_stamp
+        destination.header.frame_id = 'map'
+        destination.pose.position.x = waiting_pose.x_m
+        destination.pose.position.y = waiting_pose.y_m
+        destination.pose.orientation.z = math.sin(waiting_pose.yaw_rad / 2.0)
+        destination.pose.orientation.w = math.cos(waiting_pose.yaw_rad / 2.0)
+        try:
+            # slot을 먼저 보내도 RigidBodySync가 stamp별 pending으로 보관한다.
+            # path가 실패하면 운반 명령은 시작되지 않아 같은 mission이 재시도 가능하다.
+            self.pub_slot_pose.publish(destination)
+            self.pub_waypoints.publish(path)
+        except Exception as exc:
+            self.get_logger().error(f'retrieve plan publish failed: {exc}')
+            return False
+        self.path_published = True
+        self.active_plan_stamp_ns = stamp_to_ns(mission_stamp)
+        self.publish_state()
+        self.get_logger().info(
+            f'retrieve path: {self.active_source_slot_id} -> WAITING, '
+            f'{len(waypoints)} waypoints')
+        return True
+
     def publish_state(self):
         self.status_sequence += 1
         msg = String()
         msg.data = json.dumps({
             'state': self.state,
             'mission_id': self.mission_id,
+            'mission_type': self.mission_type,
             'sequence': self.status_sequence,
             'stamp_ns': self.get_clock().now().nanoseconds,
             'empty_count': len(self.empty_slots),
@@ -814,6 +1501,13 @@ class FleetManagerNode(Node):
             'require_ui_confirmation': self.require_ui_confirmation,
             'ui_approved': self.ui_park_approved,
             'ui_request_id': self.ui_request_id,
+            'parking_slots': self.registry.summaries(('forward',)),
+            'active_source_slot_id': self.active_source_slot_id,
+            'active_destination_slot_id': self.active_destination_slot_id,
+            'destination_kind': self.destination_kind,
+            'plan_stamp_ns': self.active_plan_stamp_ns,
+            'request_status': self.request_status,
+            'last_completed': self.last_completed,
             'footprint_length_m': round(
                 self.loaded_footprint.length_m, 4),
             'footprint_width_m': round(

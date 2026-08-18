@@ -1,5 +1,8 @@
 # v1.10 변경 내역 — P0 블로커 / P1 정밀도 / P2 터치 UI / P3 임무 리셋
 
+> 이 문서는 v1.10 당시의 이력이다. 현재 출차 통합은
+> `docs/RETRIEVAL_MISSION_INTEGRATION_PLAN.md`와 repository 최상위 ADR을 따른다.
+
 기준: v1.9 (`adaptive_valet_bot_v1_9_bev_slot_parking_20260804`)
 테스트: 128개 통과 (v1.9 117개 + 신규 11개)
 **P4(출차)는 미구현이다.** 설계는 마스터 문서 Part 5 참조.

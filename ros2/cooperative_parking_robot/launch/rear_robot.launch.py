@@ -151,7 +151,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "exit_distance_m", default_value="0.50"),
         DeclareLaunchArgument(
-            "simultaneous_entry", default_value="true"),
+            "simultaneous_entry", default_value="false"),
         DeclareLaunchArgument(
             "same_direction_exit", default_value="false"),
         DeclareLaunchArgument(

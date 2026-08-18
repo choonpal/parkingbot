@@ -155,6 +155,7 @@ _HTML = r'''<!doctype html>
       <label>맵 폭(m) <input id="mapW" type="number" value="6.0" step="0.1"></label>
       <label>맵 높이(m) <input id="mapH" type="number" value="4.0" step="0.1"></label>
       <label>해상도(m) <input id="mapRes" type="number" value="0.05" step="0.01"></label>
+      <label>출차 최종 Yaw(°) <input id="waitingYaw" type="number" value="0" step="1"></label>
     </div>
     <div class="row"><button class="warn" onclick="saveAll()">H + YAML 저장</button></div>
     <div id="status">먼저 현재 영상을 정지하세요.</div>
@@ -240,7 +241,8 @@ function refreshPreview(){document.getElementById('preview').src='/api/preview.j
 async function saveAll(){try{const out=await post('/api/save',{
   map_width_m:Number(document.getElementById('mapW').value),
   map_height_m:Number(document.getElementById('mapH').value),
-  map_resolution_m:Number(document.getElementById('mapRes').value)});
+  map_resolution_m:Number(document.getElementById('mapRes').value),
+  waiting_yaw_deg:Number(document.getElementById('waitingYaw').value)});
   status(`저장 완료\nHomography: ${out.homography_file}\nLayout: ${out.layout_file}\n주행 시 homography_scale_to_m:=1.0`);
 }catch(e){status(e.message,true);} }
 setMode('reference'); loadState();
@@ -515,6 +517,7 @@ class BevLayoutCalibratorNode(Node):
                 map_width = float(payload.get('map_width_m', self.map_width_m))
                 map_height = float(payload.get('map_height_m', self.map_height_m))
                 map_resolution = float(payload.get('map_resolution_m', 0.05))
+                waiting_yaw_deg = float(payload.get('waiting_yaw_deg', 0.0))
                 with self._lock:
                     matrix = self._require_homography()
                     slots = list(self._slots.values())
@@ -543,7 +546,8 @@ class BevLayoutCalibratorNode(Node):
                     slot_polygons=merged_polygons,
                     map_width_m=map_width,
                     map_height_m=map_height,
-                    map_resolution_m=map_resolution)
+                    map_resolution_m=map_resolution,
+                    waiting_yaw_deg=waiting_yaw_deg)
                 self._save_npy_atomic(self.homography_path, matrix)
                 write_text_atomic(str(self.layout_path), layout_text)
                 metadata_path = self.homography_path.with_suffix('.json')

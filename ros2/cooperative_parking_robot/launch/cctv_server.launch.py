@@ -73,6 +73,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'layout_config', default_value=default_layout,
             description='map 크기, 대기구역, 슬롯 좌표 YAML'),
+        DeclareLaunchArgument(
+            'simultaneous_entry', default_value='false',
+            description='Fleet retrieve preflight entry timing policy'),
 
         DeclareLaunchArgument(
             'enable_cctv_robot_markers', default_value='true'),
@@ -179,6 +182,7 @@ def generate_launch_description():
                 'require_registered_layout': True,
                 'require_ui_confirmation': _bool('require_ui_confirmation'),
                 'ui_request_timeout_s': _float('ui_request_timeout_s'),
+                'simultaneous_entry': _bool('simultaneous_entry'),
             }],
             output='screen'),
 

@@ -25,6 +25,7 @@ import os
 import queue
 import threading
 import time
+import uuid
 from typing import List, Tuple
 
 import rclpy
@@ -40,6 +41,10 @@ from cooperative_parking_robot.aruco_utils import ArucoDetectorCompat
 from cooperative_parking_robot.camera_calibration import (
     load_camera_calibration,
     scale_camera_matrix,
+)
+from cooperative_parking_robot.parking_registry import (
+    normalize_vehicle_number,
+    validate_parking_password,
 )
 from cooperative_parking_robot.vision_utils import (
     parse_class_ids,
@@ -71,25 +76,38 @@ body{width:1024px;height:600px;overflow:hidden;background:#141a21;color:#eef2f6;
 #video{width:56%;height:100%;background:#000;display:flex;align-items:center;
  justify-content:center}
 #video img{max-width:100%;max-height:100%}
-#panel{width:44%;height:100%;padding:14px;display:flex;flex-direction:column;gap:10px}
-#banner{background:#1e2a36;border-radius:10px;padding:14px;font-size:21px;
- font-weight:700;text-align:center;min-height:64px;display:flex;
+#panel{width:44%;height:100%;padding:10px;display:flex;flex-direction:column;gap:6px}
+#banner{background:#1e2a36;border-radius:10px;padding:10px;font-size:18px;
+ font-weight:700;text-align:center;min-height:52px;display:flex;
  align-items:center;justify-content:center}
 #banner.alert{background:#7f1d1d}
 #banner.warn{background:#78350f}
 .robots{display:flex;gap:10px}
-.robot{flex:1;background:#1e2a36;border-radius:10px;padding:10px}
+.robot{flex:1;background:#1e2a36;border-radius:10px;padding:7px}
 .robot h3{font-size:14px;color:#94a3b8;margin-bottom:4px}
-.robot .st{font-size:19px;font-weight:700}
+.robot .st{font-size:17px;font-weight:700}
 .robot .ph{font-size:13px;color:#94a3b8;margin-top:2px}
 .robot.fault{background:#7f1d1d}
 .robot.stale{opacity:.45}
-button{width:100%;border:0;border-radius:12px;color:#fff;font-size:26px;
+button{width:100%;border:0;border-radius:10px;color:#fff;font-size:19px;
  font-weight:800;font-family:inherit}
-#park{height:104px;background:#15803d}
-#park:disabled{background:#334155;color:#64748b}
-#retrieve{height:76px;background:#334155;color:#64748b;font-size:22px}
-#estop{height:80px;background:#b91c1c;font-size:24px}
+.mission{background:#1e2a36;border-radius:10px;padding:7px}
+.mission h3{font-size:14px;color:#cbd5e1;margin-bottom:5px}
+.fields{display:grid;gap:5px;margin-bottom:5px}
+.fields.park{grid-template-columns:1.15fr .85fr .72fr}
+.fields.retrieve{grid-template-columns:1.2fr .8fr}
+input,select{width:100%;height:34px;border:1px solid #475569;border-radius:7px;
+ background:#0f172a;color:#f8fafc;padding:0 7px;font:14px inherit;min-width:0}
+input::placeholder{color:#94a3b8}
+#park,#retrieve{height:38px}
+#park{background:#15803d}#retrieve{background:#0f766e}
+#park:disabled,#retrieve:disabled{background:#334155;color:#64748b}
+#slots{height:58px;overflow-y:auto;display:grid;grid-template-columns:1fr 1fr;
+ gap:5px}
+.slot{height:26px;background:#263646;font-size:13px;border-radius:7px;
+ display:flex;align-items:center;justify-content:center;color:#cbd5e1}
+.slot.empty{background:#14532d}.slot.occupied{background:#164e63}
+#estop{height:54px;background:#b91c1c;font-size:22px}
 #hint{font-size:12px;color:#94a3b8;text-align:center}
 #toast{position:fixed;left:50%;top:24px;transform:translateX(-50%);
  background:#0f172a;border:2px solid #38bdf8;padding:12px 22px;border-radius:10px;
@@ -106,35 +124,107 @@ button{width:100%;border:0;border-radius:12px;color:#fff;font-size:26px;
     <div class="robot" id="rr"><h3>REAR</h3>
       <div class="st">-</div><div class="ph">-</div></div>
   </div>
-  <button id="park" disabled>입　차</button>
-  <button id="retrieve" disabled>출　차 (준비 중)</button>
+  <div class="mission"><h3>입차 등록</h3>
+    <div class="fields park">
+      <input id="parkVehicle" maxlength="32" autocomplete="off" placeholder="차량번호">
+      <input id="parkPassword" type="password" minlength="4" maxlength="64"
+        autocomplete="new-password" placeholder="비밀번호">
+      <select id="parkSlot" aria-label="주차 슬롯"></select>
+    </div>
+    <button id="park" disabled>입차 요청</button>
+  </div>
+  <div class="mission"><h3>출차 인증</h3>
+    <div class="fields retrieve">
+      <input id="retrieveVehicle" maxlength="32" autocomplete="off" placeholder="차량번호">
+      <input id="retrievePassword" type="password" minlength="4" maxlength="64"
+        autocomplete="current-password" placeholder="비밀번호">
+    </div>
+    <button id="retrieve" disabled>출차 요청</button>
+  </div>
+  <div id="slots"></div>
   <button id="estop">비 상 정 지</button>
   <div id="hint">물리 비상정지 스위치가 우선입니다</div>
 </div>
 <div id="toast"></div><div id="offline">UI 서버 연결 끊김</div>
 <script>
-var park=document.getElementById('park'),banner=document.getElementById('banner'),
-    toastEl=document.getElementById('toast'),offline=document.getElementById('offline');
+var park=document.getElementById('park'),retrieve=document.getElementById('retrieve'),
+    parkVehicle=document.getElementById('parkVehicle'),
+    parkPassword=document.getElementById('parkPassword'),
+    parkSlot=document.getElementById('parkSlot'),
+    retrieveVehicle=document.getElementById('retrieveVehicle'),
+    retrievePassword=document.getElementById('retrievePassword'),
+    banner=document.getElementById('banner'),
+    slotsEl=document.getElementById('slots'),toastEl=document.getElementById('toast'),
+    offline=document.getElementById('offline'),lastCompletion=null,lastRequest=null,
+    pendingRequest='',latestStatus=null;
+var reasons={INVALID_REQUEST:'잘못된 요청',MISSION_ALREADY_ACTIVE:'미션 진행 중',
+  INVALID_VEHICLE_NUMBER:'차량번호 형식 오류',INVALID_PASSWORD:'비밀번호 형식 오류',
+  VEHICLE_ALREADY_PARKED:'이미 입차된 차량번호',
+  VEHICLE_OR_PASSWORD_INVALID:'차량번호 또는 비밀번호 불일치',
+  DESTINATION_SLOT_NOT_FOUND:'주차면 없음',DESTINATION_SLOT_NOT_EMPTY:'주차면 사용 중',
+  DESTINATION_SLOT_UNAVAILABLE:'주차면을 현재 사용할 수 없음',
+  SOURCE_SLOT_NOT_FOUND:'슬롯 없음',SOURCE_SLOT_NOT_OCCUPIED:'차량 없는 슬롯',
+  UNSUPPORTED_PARKING_DIRECTION:'지원하지 않는 주차 방향',
+  MISSING_VEHICLE_RECORD:'차량 기록 없음',APPROACH_CORRIDOR_BLOCKED:'접근 경로 막힘',
+  ROBOT_NOT_IDLE:'로봇 복귀 대기',STALE_REQUEST:'오래된 요청',
+  DUPLICATE_REQUEST_ID:'중복 요청',DUPLICATE_SEQUENCE:'중복 순번'};
 function toast(m){toastEl.textContent=m;toastEl.style.display='block';
   setTimeout(function(){toastEl.style.display='none'},2500);}
 function robot(id,d){var e=document.getElementById(id);
   e.querySelector('.st').textContent=d.state;
   e.querySelector('.ph').textContent=d.phase;
   e.className='robot'+(d.state==='FAULT'?' fault':'')+(d.fresh?'':' stale');}
+function validVehicle(v){return v.replace(/\\s/g,'').length>0;}
+function updateButtons(){var s=latestStatus||{};
+  park.disabled=!(s.park_enabled&&validVehicle(parkVehicle.value)&&
+    parkPassword.value.length>=4&&parkSlot.value);
+  retrieve.disabled=!(s.retrieve_enabled&&validVehicle(retrieveVehicle.value)&&
+    retrievePassword.value.length>=4);}
+function renderSlots(slots){var previous=parkSlot.value;
+  slotsEl.textContent='';parkSlot.textContent='';
+  slots.forEach(function(s){var d=document.createElement('div');
+    d.className='slot '+(s.lifecycle==='EMPTY'?'empty':'occupied');
+    d.textContent=s.slot_id+' · '+s.lifecycle;slotsEl.appendChild(d);
+    if(s.lifecycle==='EMPTY'){var o=document.createElement('option');
+      o.value=s.slot_id;o.textContent=s.slot_id;parkSlot.appendChild(o);}});
+  if(previous&&Array.from(parkSlot.options).some(function(o){return o.value===previous;})){
+    parkSlot.value=previous;}updateButtons();}
 function render(s){
+  latestStatus=s;
   banner.textContent=s.banner;
   banner.className=s.fault?'alert':(s.localization_warning?'warn':'');
   if(s.localization_warning&&!s.fault){
     banner.textContent=s.banner+' / 위치추정 경고';}
-  robot('rf',s.front);robot('rr',s.rear);
-  park.disabled=!s.park_enabled;}
+  robot('rf',s.front);robot('rr',s.rear);renderSlots(s.parking_slots||[]);
+  updateButtons();
+  var c=s.last_completed,seq=c?Number(c.completion_sequence):-1;
+  if(lastCompletion===null){lastCompletion=seq;}else if(seq>lastCompletion){
+    lastCompletion=seq;toast(c.mission_type==='retrieve'?'출차 완료':'입차 완료');}
+  var r=s.request_status,key=r?(r.request_id+':'+r.status):'';
+  if(lastRequest===null){lastRequest=key;}
+  else if(key&&key!==lastRequest&&r.request_id===pendingRequest){
+    lastRequest=key;if(r.status==='ACCEPTED'){toast('Fleet 승인');}
+    else if(r.status==='REJECTED'){toast('요청 거부: '+(reasons[r.reason]||r.reason));}}}
 function poll(){fetch('/api/status').then(function(r){return r.json();})
   .then(function(s){offline.style.display='none';render(s);})
   .catch(function(){offline.style.display='flex';});}
 park.onclick=function(){park.disabled=true;
-  fetch('/api/park',{method:'POST'}).then(function(r){return r.json();})
-  .then(function(r){toast(r.message);render(r.status);})
-  .catch(function(){toast('요청 실패');});};
+  fetch('/api/park',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({vehicle_number:parkVehicle.value,password:parkPassword.value,
+      destination_slot_id:parkSlot.value})}).then(function(r){return r.json();})
+  .then(function(r){if(r.submitted){pendingRequest=r.request_id;}
+    parkPassword.value='';toast(r.message);render(r.status);})
+  .catch(function(){parkPassword.value='';toast('요청 실패');});};
+retrieve.onclick=function(){retrieve.disabled=true;
+  fetch('/api/retrieve',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({vehicle_number:retrieveVehicle.value,
+      password:retrievePassword.value})}).then(function(r){return r.json();})
+  .then(function(r){if(r.submitted){pendingRequest=r.request_id;}
+    retrievePassword.value='';toast(r.message);render(r.status);})
+  .catch(function(){retrievePassword.value='';toast('요청 실패');});};
+['input','change'].forEach(function(eventName){
+  [parkVehicle,parkPassword,parkSlot,retrieveVehicle,retrievePassword].forEach(
+    function(e){e.addEventListener(eventName,updateButtons);});});
 // 비상정지에는 확인창을 두지 않는다. 누르는 즉시 나가야 한다.
 document.getElementById('estop').onclick=function(){
   fetch('/api/estop',{method:'POST'});toast('비상정지 발행');};
@@ -303,7 +393,9 @@ class JetsonVisionWebNode(Node):
         self._localization_reject_streak = {'front': 0, 'rear': 0}
         self._ui_queue = queue.Queue(maxsize=16)
         self._ui_sequence = 0
+        self._ui_client_id = f'web-{uuid.uuid4()}'
         self._last_park_publish = 0.0
+        self._last_retrieve_publish = 0.0
         if self.enable_operator_ui:
             self._setup_operator_ui()
 
@@ -400,7 +492,15 @@ class JetsonVisionWebNode(Node):
                 return
             if kind == 'mission':
                 self.pub_ui_request.publish(String(data=payload))
-                self.get_logger().info(f'UI mission request 발행: {payload}')
+                try:
+                    envelope = json.loads(payload)
+                    request_type = str(envelope.get('type', ''))
+                    request_id = str(envelope.get('request_id', ''))
+                except (TypeError, ValueError):
+                    request_type, request_id = '', ''
+                self.get_logger().info(
+                    'UI mission request 발행: '
+                    f'type={request_type}, request_id={request_id}')
             elif kind == 'estop':
                 self.pub_estop.publish(Bool(data=True))
                 self.get_logger().error('UI 비상정지 발행')
@@ -472,26 +572,50 @@ class JetsonVisionWebNode(Node):
 
         idle = all(robots[role]['state'] == 'IDLE'
                    for role in ('front', 'rear'))
-        all_fresh = (
-            fleet_fresh and target_fresh and
+        common_fresh = (
+            fleet_fresh and
             all(robots[role]['fresh'] for role in ('front', 'rear')))
+        all_fresh = common_fresh and target_fresh
 
         park_enabled = bool(
             target_ready and fleet_state == 'WAIT_TARGET' and
             empty_count >= 1 and idle and fault is None and all_fresh)
+        parking_slots = []
+        retrieve_gate = bool(
+            fleet_state == 'WAIT_TARGET' and idle and fault is None and
+            common_fresh and not fleet.get('mission_id'))
+        for value in fleet.get('parking_slots', []):
+            if not isinstance(value, dict):
+                continue
+            slot = {
+                'slot_id': str(value.get('slot_id', '')),
+                'lifecycle': str(value.get('lifecycle', 'UNKNOWN')),
+                'retrievable': bool(value.get('retrievable', False)),
+            }
+            slot['retrieve_enabled'] = bool(
+                retrieve_gate and slot['retrievable'])
+            parking_slots.append(slot)
+        retrieve_enabled = any(
+            slot['retrieve_enabled'] for slot in parking_slots)
 
         if fault is not None:
             banner = f"오류: {fault['source']} — {fault['reason']}"
-        elif not all_fresh:
+        elif not common_fresh:
             banner = '일부 노드와 통신이 끊겼습니다'
         elif fleet_state != 'WAIT_TARGET':
             banner = self._PHASE_TEXT.get(fleet_state, fleet_state)
+        elif park_enabled and retrieve_enabled:
+            banner = '입차 또는 출차 가능'
+        elif park_enabled:
+            banner = '차량 인식 완료 — 입차 가능'
+        elif retrieve_enabled:
+            banner = '출차 가능 — 차량번호와 비밀번호를 입력하세요'
+        elif not target_fresh:
+            banner = '일부 노드와 통신이 끊겼습니다'
         elif not target_ready:
             banner = '대기공간에 차량을 x축 방향으로 세워 주세요'
         elif empty_count < 1:
             banner = '빈 주차면이 없습니다'
-        elif park_enabled:
-            banner = '차량 인식 완료 — 입차 가능'
         else:
             banner = '로봇 준비 중'
 
@@ -508,34 +632,84 @@ class JetsonVisionWebNode(Node):
             'rear': robots['rear'],
             'target_ready': target_ready,
             'park_enabled': park_enabled,
-            # 출차는 미구현이다. UI에 자리만 잡아 둔다.
-            'retrieve_enabled': False,
+            'retrieve_enabled': retrieve_enabled,
+            'parking_slots': parking_slots,
+            'request_status': fleet.get('request_status'),
+            'last_completed': fleet.get('last_completed'),
             'fault': fault,
             'localization_warning': localization_warning,
             'banner': banner,
         }
 
-    def request_park(self):
+    def request_park(
+            self, vehicle_number, password, destination_slot_id):
         """서버측에서 조건을 다시 확인한 뒤에만 발행한다."""
         status = self.build_status()
         if not status['park_enabled']:
-            return False, status['banner'], status
+            return False, status['banner'], status, ''
+        try:
+            vehicle_number = normalize_vehicle_number(vehicle_number)
+            password = validate_parking_password(password)
+        except ValueError:
+            return False, '차량번호 또는 비밀번호 형식을 확인하세요', status, ''
+        destination_slot_id = str(destination_slot_id).strip()
+        selected = next((
+            slot for slot in status['parking_slots']
+            if slot['slot_id'] == destination_slot_id and
+            slot['lifecycle'] == 'EMPTY'), None)
+        if selected is None:
+            return False, '선택한 주차면을 사용할 수 없습니다', status, ''
         now = time.monotonic()
         if now - self._last_park_publish < self.ui_button_cooldown:
-            return False, '요청 처리 중입니다', status
+            return False, '요청 처리 중입니다', status, ''
         self._ui_sequence += 1
         payload = json.dumps({
             'type': 'park',
-            'request_id': f'ui-{int(time.time() * 1000)}',
+            'vehicle_number': vehicle_number,
+            'password': password,
+            'destination_slot_id': destination_slot_id,
+            'request_id': f'ui-{uuid.uuid4()}',
+            'client_id': self._ui_client_id,
             'sequence': self._ui_sequence,
             'stamp_ns': self.get_clock().now().nanoseconds,
         })
         try:
             self._ui_queue.put_nowait(('mission', payload))
         except queue.Full:
-            return False, '요청 큐가 가득 찼습니다', status
+            return False, '요청 큐가 가득 찼습니다', status, ''
         self._last_park_publish = now
-        return True, '입차 요청을 보냈습니다', status
+        request_id = json.loads(payload)['request_id']
+        return True, '입차 요청을 제출했습니다', status, request_id
+
+    def request_retrieve(self, vehicle_number, password):
+        status = self.build_status()
+        if not status['retrieve_enabled']:
+            return False, '현재 출차할 수 있는 차량이 없습니다', status, ''
+        try:
+            vehicle_number = normalize_vehicle_number(vehicle_number)
+            password = validate_parking_password(password)
+        except ValueError:
+            return False, '차량번호 또는 비밀번호 형식을 확인하세요', status, ''
+        now = time.monotonic()
+        if now - self._last_retrieve_publish < self.ui_button_cooldown:
+            return False, '요청 처리 중입니다', status, ''
+        self._ui_sequence += 1
+        request_id = f'ui-{uuid.uuid4()}'
+        payload = json.dumps({
+            'type': 'retrieve',
+            'vehicle_number': vehicle_number,
+            'password': password,
+            'request_id': request_id,
+            'client_id': self._ui_client_id,
+            'sequence': self._ui_sequence,
+            'stamp_ns': self.get_clock().now().nanoseconds,
+        })
+        try:
+            self._ui_queue.put_nowait(('mission', payload))
+        except queue.Full:
+            return False, '요청 큐가 가득 찼습니다', status, ''
+        self._last_retrieve_publish = now
+        return True, '출차 요청을 제출했습니다', status, request_id
 
     def request_estop(self) -> bool:
         try:
@@ -579,9 +753,28 @@ class JetsonVisionWebNode(Node):
         def api_park():
             if not self.enable_operator_ui:
                 return jsonify({'error': 'operator UI disabled'}), 404
-            accepted, message, status = self.request_park()
+            body = request.get_json(silent=True) or {}
+            submitted, message, status, request_id = self.request_park(
+                body.get('vehicle_number', ''),
+                body.get('password', ''),
+                body.get('destination_slot_id', ''))
             return jsonify({
-                'accepted': accepted,
+                'submitted': submitted,
+                'request_id': request_id,
+                'message': message,
+                'status': status,
+            })
+
+        @app.route('/api/retrieve', methods=['POST'])
+        def api_retrieve():
+            if not self.enable_operator_ui:
+                return jsonify({'error': 'operator UI disabled'}), 404
+            body = request.get_json(silent=True) or {}
+            submitted, message, status, request_id = self.request_retrieve(
+                body.get('vehicle_number', ''), body.get('password', ''))
+            return jsonify({
+                'submitted': submitted,
+                'request_id': request_id,
                 'message': message,
                 'status': status,
             })

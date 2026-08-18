@@ -76,7 +76,35 @@ def test_generated_layout_is_valid_ros_parameter_yaml():
     assert vision['slot_yaws_deg'] == pytest.approx([90.0])
     assert len(vision['slot_polygons']) == 8
     assert fleet['use_staged_slot_entry'] is True
-    assert fleet['parking_direction'] == 'minimum_rotation'
+    assert fleet['parking_direction'] == 'forward'
+    assert fleet['simultaneous_entry'] is False
+    assert fleet['waiting_x'] == pytest.approx(2.3)
+    assert fleet['waiting_y'] == pytest.approx(0.6)
+    assert fleet['waiting_yaw_deg'] == pytest.approx(0.0)
+    assert vision['car_size_m'] == pytest.approx(0.90)
+    assert fleet['source_vehicle_fallback_mask_m'] == pytest.approx(
+        vision['car_size_m'])
+    assert parsed['cctv_merge_node']['ros__parameters'][
+        'car_size_m'] == pytest.approx(vision['car_size_m'])
+    assert fleet['waiting_polygon'] == pytest.approx(
+        [2.1, 0.3, 2.5, 0.3, 2.5, 0.9, 2.1, 0.9])
+
+
+def test_generated_waiting_yaw_is_explicit_and_finite():
+    slot = build_slot(
+        'P1', center=(3.0, 2.0), size=(1.8, 0.7), yaw_deg=90.0)
+    text = render_parking_layout_yaml(
+        [slot], [(2.1, 0.3), (2.5, 0.3), (2.5, 0.9), (2.1, 0.9)],
+        map_width_m=6.0, map_height_m=4.0, map_resolution_m=0.05,
+        waiting_yaw_deg=180.0)
+
+    fleet = yaml.safe_load(text)['fleet_manager_node']['ros__parameters']
+    assert fleet['waiting_yaw_deg'] == pytest.approx(180.0)
+    with pytest.raises(ValueError, match='waiting_yaw_deg'):
+        render_parking_layout_yaml(
+            [slot], [(2.1, 0.3), (2.5, 0.3), (2.5, 0.9), (2.1, 0.9)],
+            map_width_m=6.0, map_height_m=4.0, map_resolution_m=0.05,
+            waiting_yaw_deg=float('nan'))
 
 
 def test_layout_rejects_slot_outside_zero_origin_occupancy_grid():

@@ -34,6 +34,9 @@ fleet_manager_node:
     layout_registered: false
     waiting_x: 2.3
     waiting_y: 0.6
+    waiting_yaw_deg: 0.0
+    # 차량 중심 detection ROI. 물리적인 loaded-footprint 경계가 아니다.
+    waiting_polygon: [2.10, 0.30, 2.50, 0.30, 2.50, 0.90, 2.10, 0.90]
     map_resolution: 0.05
     slot_ids: ["P1", "P2", "P3", "P4"]
     slot_coords: [1.5, 3.0, 2.5, 3.0, 3.5, 3.0, 4.5, 3.0]
@@ -47,6 +50,8 @@ fleet_manager_node:
     default_wheelbase_m: 0.70
     default_vehicle_length_m: 0.90
     default_vehicle_width_m: 0.35
+    # Perception의 polygon 없는 차량 0.90m 정사각형 raster와 동일한 source mask.
+    source_vehicle_fallback_mask_m: 0.90
     footprint_safety_margin_m: 0.06
     # 슬롯 적합성은 Front+차량+Rear 결합 footprint에 아래 양측 여유를 더해 검사한다.
     slot_fit_longitudinal_margin_m: 0.06
@@ -54,6 +59,12 @@ fleet_manager_node:
     slot_staging_gap_m: 0.10
     initial_target_offset_gate_m: 0.50
     use_staged_slot_entry: true
-    parking_direction: "minimum_rotation"
+    # 이번 demo의 retrieve 후방 접근 재사용 조건.
+    parking_direction: "forward"
+    # 실증 P1~P4는 동시 접근 간격을 만족하지 않아 기존 Front-first를 사용한다.
+    simultaneous_entry: false
     unknown_is_occupied: true
     odom_timeout_s: 0.5
+    # IndividualMoveNode의 접근 yaw controller 기본값과 preflight를 일치시킨다.
+    approach_yaw_gain: 1.5
+    approach_max_yaw_rate_rps: 0.15

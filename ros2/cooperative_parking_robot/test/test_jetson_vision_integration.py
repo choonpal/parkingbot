@@ -1,6 +1,7 @@
 """Static and ROS-independent regression tests for Jetson vision integration."""
 
 from pathlib import Path
+import re
 
 import numpy as np
 import pytest
@@ -104,6 +105,33 @@ def test_web_worker_waits_for_first_real_frame():
     assert 'self._input_sequence != self._processed_sequence' in source
 
 
+def test_operator_ui_submits_authenticated_vehicle_requests_and_waits_for_fleet():
+    source = (PKG / 'jetson_vision_web_node.py').read_text()
+    assert "@app.route('/api/retrieve', methods=['POST'])" in source
+    assert "'type': 'retrieve'" in source
+    assert "'vehicle_number': vehicle_number" in source
+    assert "'password': password" in source
+    assert "'destination_slot_id': destination_slot_id" in source
+    assert "body.get('password', '')" in source
+    assert "'source_slot_id': selected['slot_id']" not in source
+    assert "'client_id': self._ui_client_id" in source
+    assert "'submitted': submitted" in source
+    assert "fleet.get('request_status')" in source
+    assert "fleet.get('last_completed')" in source
+    assert 'completion_sequence' in source
+    assert 'lastCompletion=null' in source
+    assert 'lastCompletion===null' in source
+
+
+def test_web_uses_only_safe_registry_summary_for_slot_buttons():
+    source = (PKG / 'jetson_vision_web_node.py').read_text()
+    assert "fleet.get('parking_slots', [])" in source
+    assert "slot['retrieve_enabled']" in source
+    assert "value.get('retrievable', False)" in source
+    assert "value.get('final_vehicle_pose'" not in source
+    assert "value.get('vehicle_spec'" not in source
+
+
 def test_yolo_and_marker_share_homography_unit_scale_parameter():
     yolo = (PKG / 'yolo_bev_map_node.py').read_text()
     marker = (PKG / 'cctv_robot_marker_node.py').read_text()
@@ -140,3 +168,26 @@ def test_floor_homography_parallax_correction_moves_toward_optical_axis():
     assert correct_floor_projection(2.0, 1.0, 0.0, 0.0, 0.0, 0.0) == (2.0, 1.0)
     with pytest.raises(ValueError):
         correct_floor_projection(1.0, 1.0, 0.0, 0.0, 0.2, 0.2)
+
+
+def test_real_robot_launches_default_to_front_first_entry():
+    launch_dir = ROOT / 'launch'
+    for name in (
+            'front_robot.launch.py',
+            'rear_robot.launch.py',
+            'full_system.launch.py',
+            'cctv_server.launch.py',
+            'cctv_server_dual.launch.py'):
+        source = (launch_dir / name).read_text()
+        assert re.search(
+            r'DeclareLaunchArgument\(\s*[' + chr(34) + chr(39) +
+            r']simultaneous_entry[' + chr(34) + chr(39) +
+            r'],\s*default_value=[' + chr(34) + chr(39) +
+            r']false[' + chr(34) + chr(39) + r']',
+            source)
+        assert source.count(
+            chr(39) + 'simultaneous_entry' + chr(39)) + source.count(
+            chr(34) + 'simultaneous_entry' + chr(34)) >= 2
+
+    layout = (ROOT / 'config/parking_layout.yaml').read_text()
+    assert 'simultaneous_entry: false' in layout

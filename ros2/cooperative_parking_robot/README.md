@@ -72,10 +72,19 @@ xset s off; xset -dpms; xset s noblank
 ```
 
 `require_ui_confirmation:=false`를 주면 v1.9처럼 차량 인식 즉시 자동 시작한다.
-출차 버튼은 화면에 있으나 아직 동작하지 않는다(설계는 `docs/MASTER_PLAN.md` Part 5).
+기본 kiosk 입차에서는 차량번호, 4~64자 주차 비밀번호와 현재 EMPTY인 목적 슬롯을
+선택한다. 출차에서는 차량번호와 같은 비밀번호를 입력하며, Fleet Manager가 세션
+Registry에서 실제 source slot을 찾고 고정 waiting 목적지를 결정한다. UI는 차량 pose,
+spec, mission ID 또는 출차 source slot을 지정하지 않는다. 비밀번호 원문은 Registry,
+`/fleet/state`와 로그에 남지 않지만 현재 HTTP/ROS transport는 암호화되지 않으므로
+운용 UI는 trusted LAN에서만 사용한다.
 
-임무가 끝나면 Front 상태기계가 `/mission/complete`를 발행하고 Fleet과 YOLO가
-latch를 풀어 다음 임무를 받는다. v1.9에서는 1회 사이클 후 재시작이 필요했다.
+임무가 끝나면 양쪽 로봇의 HOME ready 뒤 Front가 HOME commit과
+`/mission/complete`를 발행한다. Fleet는 active mission만 reset하고 park에서 만든
+OCCUPIED 차량 기록은 같은 Fleet 프로세스 동안 유지한다. park ARRIVED의 map-frame
+final pose가 유효하지 않아 Registry가 OCCUPIED로 확정되지 않은 경우에는 HOME 뒤에도
+성공 완료/reset을 차단한다. retrieve planning-grid source mask는 Perception의
+`car_size_m` fallback raster와 동일한 layout 값을 사용한다.
 
 ## 초음파 처리 구조
 
@@ -98,7 +107,7 @@ STM32는 좌우 센서를 35 ms 간격으로 교대 트리거하고, RPi는 거�
 `right_sensor_to_gripper_x_m`에 실측값을 넣는다. 자세한 CubeMX 설정과
 시험 절차는 `docs/ULTRASONIC_STM32_INTEGRATION.md`를 본다.
 
-기본값 `simultaneous_entry:=true`에서는 Front/Rear가 차량 뒤쪽 staging으로 함께
+`simultaneous_entry:=true`에서는 Front/Rear가 차량 뒤쪽 staging으로 함께
 이동하고, 상대 ID0가 유효해진 뒤 각자 `PRE_ALIGN`에서 종방향 속도를 0으로
 유지하며 횡오차와 yaw를 먼저 닫는다. 두 로봇 모두 `PREALIGNED` 장벽에 도착한
 뒤 동시에 `SCAN_IN`하며,
@@ -110,7 +119,10 @@ Front는 두 번째 front axle, Rear는 첫 번째 rear axle에 정렬한다. �
 
 축 중심의 최종 전후 제어권은 초음파에 있으며, Front 후면 ID0은 상대
 lateral/yaw 유지, Rear 접근 감속, 최종 휠베이스 거리 검증에 사용한다.
-`simultaneous_entry:=false`로 기존 Front 우선 순차 진입도 선택할 수 있다. 기본
+현재 실증 P1~P4에서는 시간 기반 robot-footprint clearance 검증 결과 동시 접근이
+모두 거부되므로 실차 기본값은 `simultaneous_entry:=false`이다. 이 값에서는 기존
+`WAIT_FRONT_STAGED`를 사용하는 Front 우선 순차 진입을 park/retrieve가 공유한다.
+`true` 동작과 parameter는 다른 layout을 위해 보존한다. 기본
 복귀는 가까운 차량 끝으로 나뉘어 이탈하며, `same_direction_exit:=true`일 때는
 peer barrier와 상대거리 속도 보정으로 같은 방향 동기 이탈을 수행한다.
 

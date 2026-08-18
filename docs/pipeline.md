@@ -371,7 +371,7 @@ UART를 분리하면 300ms 내 STM32 PWM이 0이 되고 0.5초 내 hardware_read
 | 6 | 초음파 scan-in 모형 | PRE_ALIGN 후 축 중심 20회 재현 |
 | 7 | 서보 무부하 | 좌우 방향·간섭·ESTOP hold |
 | 8 | 보호지그 저하중 | 실제 파지 확인, 미끄럼 없음 |
-| 9 | 전체 1사이클 | 인식부터 mission reset까지 정상 |
+| 9 | park→HOME→retrieve→HOME 1사이클 | Registry와 mission reset까지 정상 |
 
 권장 초기 주행 속도는 0.03~0.05m/s다. 펌웨어 허용 상한 0.25m/s는 시험
 시작 속도가 아니다. 바퀴 부호가 하나라도 틀리면 kMotorCommandSign과
@@ -380,14 +380,24 @@ kEncoderSign을 수정한 후 2단계부터 다시 한다.
 ## 14. 정상 운용과 mission reset
 
 - 기본 require_ui_confirmation=true에서 차량 검출만으로 움직이지 않는다.
-- kiosk 입차 버튼은 target_ready, 빈 슬롯, 양측 IDLE, fresh 상태를 서버에서
-  다시 검사한 후 /ui/mission_request를 발행한다.
-- Front가 RETURN→IDLE로 전환할 때 /mission/complete를 발행한다.
-- Fleet와 YOLO latch가 mission ID를 검사한 후 초기화되어 다음 입차를 받는다.
-- 출차 버튼은 표시되지만 retrieve 기능은 아직 구현되지 않았다.
+- kiosk 입차는 차량번호, 4~64자 주차 비밀번호와 EMPTY 목적 슬롯을 입력받고,
+  target_ready, 빈 슬롯, 양측 IDLE, fresh 상태를 서버에서 다시 검사한 후
+  /ui/mission_request를 발행한다.
+- 각 로봇은 실제 home 도착 후 HOME ready를 발행한다. 양쪽 HOME ready 뒤 Front가
+  HOME commit을 발행하고, 그 이후에만 /mission/complete를 발행한다.
+- Fleet는 matching mission ID의 완료만 받아 active mission을 reset한다. park의
+  OCCUPIED Registry record는 reset하지 않아 UI에서 출차 슬롯을 선택할 수 있다.
+- 출차 UI는 차량번호와 입차 때 등록한 비밀번호만 제출한다. Fleet가 credential을
+  검증해 source_slot_id를 자체 결정하고 Registry pose/spec과 고정 waiting_x/y/yaw를
+  사용해 기존 접근·인양·A*·운반·하차·복귀 흐름을 재사용한다. source_slot_id만 보낸
+  요청은 비밀번호 우회가 되므로 거부한다.
+- 이 demo는 Fleet 프로세스 수명 동안만 Registry를 유지한다. 차량을 주차한 뒤
+  Fleet를 재시작하는 복구는 지원하지 않으며, 재시작 전 모든 슬롯을 비운다.
 
-웹 UI는 내부 신뢰망에서만 사용한다. 웹 UI가 죽어도 주행 판단은 Fleet가
-소유하지만, 물리 ESTOP 없이 웹 버튼만 안전장치로 사용하면 안 된다.
+비밀번호 원문은 Registry, /fleet/state와 로그에 남기지 않는다. 다만 현재 HTTP와
+ROS String transport 자체는 암호화되지 않으므로 웹 UI는 내부 신뢰망에서만 사용한다.
+웹 UI가 죽어도 주행 판단은 Fleet가 소유하지만, 물리 ESTOP 없이 웹 버튼만
+안전장치로 사용하면 안 된다.
 
 ## 15. ESTOP과 복구
 
@@ -419,7 +429,7 @@ STM32 ESTOP은 latch된다. UI mission reset이나 ROS 노드 재시작으로 �
 | 축 중심이 일정하게 빗나감 | sensor_to_gripper_x | 좌우 offset 재실측 |
 | 겹침 차량이 2개 | merge_status | 같은 기준점 H 재등록 또는 dedup gate |
 | A* 시작점 막힘 | robot/target mask | layout no-go와 footprint 실측 확인 |
-| 두 번째 임무가 시작 안 됨 | /mission/complete | mission ID와 Front RETURN→IDLE 확인 |
+| 두 번째 임무가 시작 안 됨 | HOME commit, /mission/complete | 양쪽 return_done과 mission ID 확인 |
 
 ## 17. 현재 구조적 한계
 
@@ -429,8 +439,9 @@ STM32 ESTOP은 latch된다. UI mission reset이나 ROS 노드 재시작으로 �
 - 벽·기둥은 차량 YOLO가 검출하지 않으므로 no-go 영역 등록이 필요하다.
 - 듀얼 CCTV 높이가 서로 다르면 단일 camera_height_m parallax 보정이 부정확하다.
 - require_full_slot_coverage=false에서는 슬롯 중심 관측만으로 판정할 수 있다.
-- retrieve는 미구현이다.
-- 다중 mission reset은 코드에 있으나 실기 연속 사이클 검증이 필요하다.
+- Registry는 메모리 전용이다. 차량이 주차된 상태의 Fleet restart recovery는 없다.
+- 이번 출차는 이 Fleet 세션이 forward로 주차한 차량만 지원한다.
+- park→retrieve 연속 사이클은 자동 테스트됐지만 실제 하중 실기 검증이 필요하다.
 
 ## 18. 최종 GO/NO-GO 체크리스트
 

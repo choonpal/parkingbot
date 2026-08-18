@@ -26,6 +26,7 @@ from std_msgs.msg import Bool, String
 
 from cooperative_parking_robot.kalman_filter import ScalarKalman
 from cooperative_parking_robot.freshness import StampGate, stamp_to_ns
+from cooperative_parking_robot.mission_protocol import make_arrival_status
 from cooperative_parking_robot.pid_controller import PID
 from cooperative_parking_robot.pure_pursuit import PurePursuit
 from cooperative_parking_robot.rigid_body_kinematics import RigidBodyKinematics
@@ -405,6 +406,11 @@ class RigidBodySyncNode(Node):
             self.rear_ready = True
 
     def _parse_odom(self, msg, stream):
+        if msg.header.frame_id != 'map':
+            self.get_logger().warn(
+                f'{stream} frame={msg.header.frame_id!r}: map odom required',
+                throttle_duration_sec=2.0)
+            return None
         if not self._accept_stamped(stream, msg):
             return None
         p, q = msg.pose.pose.position, msg.pose.pose.orientation
@@ -702,7 +708,7 @@ class RigidBodySyncNode(Node):
         if self.final_mode:
             done, command, info = self.compute_final_command(cx, cy, ct)
             if done:
-                self.finish_path('정밀 정렬 완료 — 도착')
+                self.finish_path('정밀 정렬 완료 — 도착', cx, cy, ct)
                 return
             self.apply_sync_and_publish(
                 *command, now,
@@ -734,7 +740,7 @@ class RigidBodySyncNode(Node):
                     return
                 self.final_mode = True
                 return
-            self.finish_path('waypoint 추종 완료 — 도착')
+            self.finish_path('waypoint 추종 완료 — 도착', cx, cy, ct)
             return
 
         if self.hold_initial_yaw:
@@ -950,9 +956,13 @@ class RigidBodySyncNode(Node):
         return True
 
     # ===== 상태/발행 헬퍼 =====
-    def finish_path(self, message):
+    def finish_path(self, message, vehicle_x, vehicle_y, vehicle_yaw):
         self.send_stop()
         self._err = 'ARRIVED'
+        arrival = make_arrival_status(
+            vehicle_x, vehicle_y, vehicle_yaw,
+            self.path_mission_stamp_ns)
+        self._info.update(arrival)
         self.has_path = False
         self.final_mode = False
         self.publish_status_now()

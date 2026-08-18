@@ -127,8 +127,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "exit_distance_m", default_value="0.50"),
         DeclareLaunchArgument(
-            "simultaneous_entry", default_value="true",
-            description="Stage and scan Front/Rear concurrently"),
+            "simultaneous_entry", default_value="false",
+            description="Use the validated Front-first staging by default"),
         DeclareLaunchArgument(
             "same_direction_exit", default_value="false",
             description="False keeps the validated split-nearest-end exit"),

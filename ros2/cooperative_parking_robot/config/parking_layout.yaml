@@ -1,6 +1,7 @@
 # 예시 주차장 배치. 현장에서는 bev_layout_calibrator가 생성한 YAML로 교체한다.
 # 모든 좌표/크기는 map frame의 metre, Yaw는 통로에서 슬롯 안쪽 방향의 degree다.
-yolo_bev_map_node:
+# single/dual CCTV의 node name과 무관하게 perception 공용 값을 적용한다.
+/**:
   ros__parameters:
     # 이 파일은 시연용 예시이므로 실차 mission launch에서는 거부된다.
     layout_registered: false

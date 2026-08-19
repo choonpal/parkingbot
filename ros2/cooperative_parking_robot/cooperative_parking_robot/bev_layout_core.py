@@ -211,11 +211,16 @@ def render_parking_layout_yaml(
     waiting_x = sum(waiting[0::2]) / 4.0
     waiting_y = sum(waiting[1::2]) / 4.0
 
-    # 한국어 주석은 현장에서 어떤 배열을 고쳐야 하는지 바로 알 수 있게 남긴다.
+    # ROS 2 parameter YAML은 node name이 일치해야 적용된다. 듀얼 CCTV의
+    # sensor node는 yolo_bev_map_node_cam0/_cam2로 이름이 달라지므로
+    # perception 공용 layout은 wildcard block으로 전달한다. 선언하지 않은
+    # parameter는 각 node가 사용하지 않으며 Fleet 전용 값은 아래 전용
+    # block에서 유지한다.
     return f'''# BEV 브라우저 등록 도구가 생성한 주차장 배치 파일
 # 모든 좌표/크기는 map frame의 metre, Yaw는 degree이다.
 # 같은 index의 slot_ids/slot_coords/slot_sizes/slot_yaws_deg가 한 슬롯이다.
-yolo_bev_map_node:
+# `/**`는 single/dual CCTV node name과 무관하게 공용 layout을 적용한다.
+/**:
   ros__parameters:
     layout_registered: true
     map_resolution: {resolution:.6f}
@@ -312,11 +317,16 @@ def load_layout_yaml(path: str):
         return None
     with target.open('r', encoding='utf-8') as stream:
         document = yaml.safe_load(stream) or {}
-    node = document.get('yolo_bev_map_node', {})
-    params = node.get('ros__parameters', {}) if isinstance(node, dict) else {}
+    params = {}
+    for key in ('/**', 'yolo_bev_map_node'):
+        node = document.get(key)
+        if isinstance(node, dict) and node.get('ros__parameters'):
+            params = node['ros__parameters']
+            break
     if not params:
         raise ValueError(
-            f'{target}에 yolo_bev_map_node.ros__parameters 블록이 없습니다')
+            f'{target}에 `/**` 또는 yolo_bev_map_node의 '
+            'ros__parameters 블록이 없습니다')
 
     slot_ids = [str(value) for value in params.get('slot_ids', [])]
     if not slot_ids:

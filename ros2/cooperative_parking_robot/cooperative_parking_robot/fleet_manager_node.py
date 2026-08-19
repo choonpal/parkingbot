@@ -48,6 +48,7 @@ from cooperative_parking_robot.parking_registry import (
     RegistryTransitionError,
     SlotLifecycle,
     normalize_vehicle_number,
+    registered_slots_fingerprint,
 )
 from cooperative_parking_robot.retrieval_planning import (
     clear_source_vehicle,
@@ -125,6 +126,9 @@ class FleetManagerNode(Node):
         # P2: 터치 UI 승인 게이트. false면 v1.9와 동일하게 target 인식 즉시 시작한다.
         self.declare_parameter('require_ui_confirmation', True)
         self.declare_parameter('ui_request_timeout_s', 10.0)
+        self.declare_parameter(
+            'parking_registry_db_path',
+            '~/.ros/adaptive_valet_bot/parking_registry.db')
         self.wait_x = self.get_parameter('waiting_x').value
         self.wait_y = self.get_parameter('waiting_y').value
         self.wait_yaw = math.radians(float(
@@ -176,6 +180,10 @@ class FleetManagerNode(Node):
             self.get_parameter('slot_coords').value,
             self.get_parameter('slot_sizes').value,
             self.get_parameter('slot_yaws_deg').value)
+        self.registry_database_path = str(
+            self.get_parameter('parking_registry_db_path').value).strip()
+        if not self.registry_database_path:
+            raise ValueError('parking_registry_db_path must not be empty')
         self.slot_match_tolerance = float(
             self.get_parameter('slot_match_tolerance_m').value)
         self.use_staged_slot_entry = bool(
@@ -296,7 +304,10 @@ class FleetManagerNode(Node):
         self.front_motion_fault = ''
         self.rear_motion_fault = ''
         self.registry = ParkingRegistry(
-            [slot.slot_id for slot in self.registered_slots])
+            [slot.slot_id for slot in self.registered_slots],
+            database_path=self.registry_database_path,
+            layout_fingerprint=registered_slots_fingerprint(
+                self.registered_slots))
         self.target_gate = StampGate(
             self.get_parameter('target_timeout_s').value,
             self.future_tolerance)

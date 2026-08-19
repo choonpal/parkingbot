@@ -83,6 +83,15 @@ def test_kiosk_uses_password_fields_and_does_not_select_retrieve_slot():
     assert 'submitRetrieve(s.slot_id)' not in KIOSK_PAGE
 
 
+def test_kiosk_layout_supports_seven_inch_touch_viewports():
+    assert 'width=device-width' in KIOSK_PAGE
+    assert '--touch-target:44px' in KIOSK_PAGE
+    assert 'min-height:var(--touch-target)' in KIOSK_PAGE
+    assert '@media (max-width:900px)' in KIOSK_PAGE
+    assert '@media (max-height:520px)' in KIOSK_PAGE
+    assert 'body{width:1024px;height:600px' not in KIOSK_PAGE
+
+
 def test_mission_publish_log_excludes_vehicle_number_and_password():
     node = web_harness()
     payload = json.dumps({

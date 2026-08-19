@@ -43,6 +43,8 @@ def generate_launch_description():
         runtime_config_dir, 'homography_rectified.npy'])
     default_layout = PathJoinSubstitution([
         runtime_config_dir, 'parking_layout.yaml'])
+    default_registry_database = PathJoinSubstitution([
+        runtime_config_dir, 'parking_registry.db'])
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -79,6 +81,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'layout_config', default_value=default_layout,
             description='map 크기, 대기구역, 슬롯 좌표 YAML'),
+        DeclareLaunchArgument(
+            'parking_registry_db_path',
+            default_value=default_registry_database,
+            description='Fleet Parking Registry SQLite 파일'),
         DeclareLaunchArgument(
             'simultaneous_entry', default_value='false',
             description='Fleet retrieve preflight entry timing policy'),
@@ -191,6 +197,8 @@ def generate_launch_description():
                 'require_ui_confirmation': _bool('require_ui_confirmation'),
                 'ui_request_timeout_s': _float('ui_request_timeout_s'),
                 'simultaneous_entry': _bool('simultaneous_entry'),
+                'parking_registry_db_path': LaunchConfiguration(
+                    'parking_registry_db_path'),
             }],
             output='screen'),
 

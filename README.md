@@ -5,8 +5,9 @@ ROS 2 Humble 협동 주차로봇과 STM32F401RE 제어 펌웨어를 한 배포�
 
 ## 먼저 읽을 문서
 
-1. docs/REAL_WORLD_READINESS.md — 현재 가능한 시험 범위와 NO-GO 조건
-2. docs/pipeline.md — STM32 플래시부터 ROS 2 분산 기동·실차 검증까지의 절차
+1. docs/REAL_ROBOT_DEPLOYMENT_RUNBOOK.md — 탑재, 실행, STM32 핀맵, UI, 복구
+2. docs/REAL_WORLD_READINESS.md — 현재 가능한 시험 범위와 NO-GO 조건
+3. docs/pipeline.md — calibration부터 분산 기동·실차 검증까지의 상세 절차
 
 ## 구성
 

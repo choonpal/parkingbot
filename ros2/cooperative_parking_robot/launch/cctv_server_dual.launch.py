@@ -136,8 +136,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'camera2_id', default_value='2',
             description='/dev/video2'),
-        DeclareLaunchArgument('camera_width_px', default_value='1280'),
-        DeclareLaunchArgument('camera_height_px', default_value='720'),
+        DeclareLaunchArgument('camera_width_px', default_value='640'),
+        DeclareLaunchArgument('camera_height_px', default_value='480'),
         DeclareLaunchArgument('camera_fps', default_value='30.0'),
         DeclareLaunchArgument('camera0_gstreamer_pipeline', default_value=''),
         DeclareLaunchArgument('camera2_gstreamer_pipeline', default_value=''),
@@ -147,8 +147,8 @@ def generate_launch_description():
         DeclareLaunchArgument('cctv2_rect_topic', default_value='/cctv2/image_rect'),
         DeclareLaunchArgument('cctv0_camera_calib', default_value=default_calib0),
         DeclareLaunchArgument('cctv2_camera_calib', default_value=default_calib2),
-        DeclareLaunchArgument('calibration_width_px', default_value='1280'),
-        DeclareLaunchArgument('calibration_height_px', default_value='720'),
+        DeclareLaunchArgument('calibration_width_px', default_value='640'),
+        DeclareLaunchArgument('calibration_height_px', default_value='480'),
 
         # ============================================================
         # YOLO / BEV

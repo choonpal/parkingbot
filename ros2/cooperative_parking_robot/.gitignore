@@ -8,6 +8,8 @@ __pycache__/
 # Runtime calibration/model artifacts are ignored unless intentionally shipped.
 config/*calibration*.npz
 !config/cctv_camera_calibration.npz
+!config/cctv0_camera_calibration.npz
+!config/cctv2_camera_calibration.npz
 models/*.pt
 
 # Runtime Fleet Parking Registry (SQLite and rollback/WAL sidecars).

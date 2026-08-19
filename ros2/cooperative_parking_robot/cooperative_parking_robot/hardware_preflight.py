@@ -178,9 +178,6 @@ def parse_args(argv=None):
         help=('coco: COCO 차량 box, vehicle_seg: 차량 mask+고정 슬롯(권장), '
               'parking_seg: 기존 vehicle/empty_slot 커스텀 모델'))
     parser.add_argument(
-        '--allow-model-download', action='store_true',
-        help='로컬 .pt가 없을 때 Ultralytics 자동 다운로드를 허용')
-    parser.add_argument(
         '--disable-operator-ui', action='store_true',
         help='운용 kiosk/API를 사용하지 않을 때 웹 의존성 검사를 생략')
     parser.add_argument(
@@ -232,11 +229,7 @@ def main(argv=None):
         if args.role == 'jetson':
             model_mode = normalize_model_mode(args.model_mode)
             model_path = Path(args.model_path).expanduser()
-            can_download = (args.allow_model_download and
-                            model_path.suffix.lower() == '.pt' and
-                            not model_path.is_absolute() and
-                            model_path.parent == Path('.'))
-            if not model_path.is_file() and not can_download:
+            if not model_path.is_file():
                 errors.append(f'YOLO model 없음: {args.model_path}')
             if (model_mode in ('vehicle_seg', 'parking_seg') and
                     not model_path.is_file()):

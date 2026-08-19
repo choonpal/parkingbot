@@ -59,8 +59,9 @@ def test_range_infinity_closes_real_hc_sr04_wheel_edge():
 
 
 def test_f401re_firmware_timer_map_and_startup_watchdog_guard():
-    source = (Path(__file__).resolve().parents[1] /
-              'stm32_firmware/Core/Src/parking_robot_firmware.c').read_text()
+    source = (Path(__file__).resolve().parents[3] /
+              'stm32/parking_robot/Core/Src/'
+              'parking_robot_firmware.c').read_text()
     assert 'htim8' not in source
     assert 'htim10' in source and 'htim11' in source
     assert 'heartbeat_seen' in source and 'command_seen' in source
@@ -73,8 +74,9 @@ def test_f401re_firmware_timer_map_and_startup_watchdog_guard():
 
 
 def test_firmware_estop_holds_servo_at_current_angle():
-    source = (Path(__file__).resolve().parents[1] /
-              'stm32_firmware/Core/Src/parking_robot_firmware.c').read_text()
+    source = (Path(__file__).resolve().parents[3] /
+              'stm32/parking_robot/Core/Src/'
+              'parking_robot_firmware.c').read_text()
     assert 'Robot_HoldServosImmediate();' in source
     assert 'g_robot.servo_target[i] = g_robot.servo_current[i];' in source
     assert 'g_robot.servo_motion_active = 0;' in source
@@ -82,7 +84,9 @@ def test_firmware_estop_holds_servo_at_current_angle():
 
 def test_nominal_100mm_wheel_radius_is_consistent_across_stack():
     root = Path(__file__).resolve().parents[1]
-    firmware = (root / 'stm32_firmware/Core/Src/parking_robot_firmware.c').read_text()
+    firmware = (
+        root.parents[1] /
+        'stm32/parking_robot/Core/Src/parking_robot_firmware.c').read_text()
     bridge = (root / 'cooperative_parking_robot/stm32_bridge_node.py').read_text()
     quote_map = str.maketrans({chr(34): chr(39)})
     front_launch = (

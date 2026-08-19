@@ -266,7 +266,7 @@ AND front/rear IDLE AND fault is None AND fresh
 ### web_node 실행 조건
 - `enable_operator_ui=true`가 Fleet 승인용 kiosk/API를 독립 실행한다.
 - `enable_debug_overlay=false`가 기본이며, 진단 영상이 필요할 때만 켠다.
-  `debug_enable_yolo:=false`를 유지하면 미션 노드와 YOLO 이중 추론하지 않는다.
+  웹 진단은 ArUco/FPS만 처리하고 차량 YOLO는 미션 노드에서 한 번만 실행한다.
 
 ## 3-4. 터치스크린 / kiosk 실행 (Jetson)
 

@@ -13,7 +13,7 @@
 > 관련 코드: `encoder_odometry.py`, `kalman_filter.py`(PoseEKF), `pose_fusion_node.py`,
 > `cctv_robot_marker_node.py`, `aruco_utils.py`(신규), `stm32_bridge_node.py`(수정),
 > `aruco_tracker_node.py`(수정, yaw축 버그),
-> `rigid_body_sync_node.py`(수정, 초기화 레이스), `stm32_firmware/.../parking_robot_firmware.c`(수정, 엔코더 rollover),
+> `rigid_body_sync_node.py`(수정, 초기화 레이스), `../../stm32/parking_robot/Core/Src/parking_robot_firmware.c`(수정, 엔코더 rollover),
 > `front_robot.launch.py` / `rear_robot.launch.py` / `full_system.launch.py` / `cctv_server.launch.py`(수정),
 > `test/test_localization_math.py`, `docs/localization_validation_report.md`
 > 이 문서는 `system_spec_v15_reviewed.md`를 대체하지 않는다 — 그 문서의 몇 가지

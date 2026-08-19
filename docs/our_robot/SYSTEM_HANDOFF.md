@@ -70,8 +70,8 @@
 
 최종 자동주행 구현에서 지켜야 할 목표 설계다. 현재 벤치용 STM32 수동 제어와 ROS2 전체 통합은 구분한다.
 
-**5-1. 경로 계획 — Nav2 미사용**
-천장 카메라가 전역 위치를 직접 제공하므로 로봇의 자기위치추정(AMCL)·로컬 플래너·Nav2 Controller를 쓰지 않는다. 중앙 Jetson이 OccupancyGrid 기반 A* 경로계획을 수행하고 waypoint 목록을 로봇에 전달한다.
+**5-1. 경로 계획 — 자체 A***
+천장 카메라가 전역 위치를 직접 제공하므로 중앙 Jetson이 OccupancyGrid 기반 A* 경로계획을 수행하고 waypoint 목록을 로봇에 전달한다.
 `CCTV BEV Map → OccupancyGrid → A* → Waypoints → rigid_body_sync_node`
 
 **5-2. ArUco — 단방향 구조**
@@ -221,7 +221,7 @@
 - **호모그래피 + 복수 카메라 정합** — 각 카메라 픽셀 좌표를 실평면 좌표로 변환하는 3×3 행렬. 설치 시 1회 캘리브레이션으로 H₁·H₂를 저장, 런타임엔 행렬 곱만 수행해 두 결과가 하나의 좌표계로 통합. 정합 기준점은 겹침 영역 바닥 특징점(주차선·코너)이며 런타임엔 바닥·차량에 마커 미부착. 영상 스티칭은 하지 않고 검출 좌표만 통합.
 - **BEV + Occupancy Grid** — 천장 영상을 탑뷰로 정합해 전역 2D 점유 지도 생성. 빈자리 탐색·경로계획의 기반.
 - **ROS 2 Humble** — 현재 두 Raspberry Pi에서 사용하는 로봇 미들웨어. 노드 분산, 토픽/서비스/액션 통신.
-- **A* 경로 계획** — 점유 격자에서 목표까지 최단·충돌 회피 탐색. Nav2 풀스택 대신 경량 A* + waypoint 추종(천장 카메라가 전역 위치를 주므로 로봇 자기위치추정·로컬플래너 불필요).
+- **A* 경로 계획** — 점유 격자에서 목표까지 최단·충돌 회피 탐색. 중앙 경량 A*와 waypoint 추종을 사용한다.
 - **Pure Pursuit** — waypoint 추종.
 - **ArUco 마커** — 카메라 한 대로 상대 로봇의 거리·각도 산출. 로봇 상호에만 사용(단방향).
 - **칼만 필터** — 엔코더(고빈도·단기)와 ArUco·카메라 관측(절대 보정)을 융합. 마커 가림·바퀴 슬립에도 측위 연속성 유지.
@@ -299,11 +299,6 @@ cooperative_parking_robot_ws/
         │   ├── yolo11n_vehicle.pt
         │   ├── efficientnetv2_b0_vehicle_cls.pt
         │   └── yolo8n_parking_seg.pt
-        ├── stm32_firmware/
-        │   ├── Core/
-        │   │   ├── Inc/  (uart_comm_task.h, motor_pid_task.h, servo_lift_task.h, mecanum_kinematics.h, safety_watchdog.h)
-        │   │   └── Src/  (uart_comm_task.c, motor_pid_task.c, servo_lift_task.c, mecanum_kinematics.c, safety_watchdog.c)
-        │   └── cooperative_parking_robot.ioc
         ├── docs/
         │   ├── system_spec.md
         │   ├── topic_list.md
@@ -313,6 +308,8 @@ cooperative_parking_robot_ws/
         ├── setup.cfg
         └── resource/cooperative_parking_robot
 ```
+
+STM32 프로젝트는 ROS 패키지 안에 사본을 두지 않는다. 현재 실차 벤치 스냅샷은 `real_robot_code/stm32/parking_robot_f401/`, 통합 펌웨어 대상은 최상위 `stm32/parking_robot/`에서 관리한다.
 
 ---
 

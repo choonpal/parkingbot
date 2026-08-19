@@ -204,20 +204,10 @@ dual launch의 영상과 calibration 기본 해상도도 640×480이다. 실제 
 카메라별로 재보정하거나 1280×720으로 변경한 뒤에는 두 NPZ뿐 아니라
 rectified 영상 기준 Homography와 layout도 반드시 다시 만든다.
 
-전달 ZIP에는 현장 실측 Homography가 없다. 카메라 topic, dual merge 및
-coverage 배선만 점검해야 할 때에는 다음 명령으로 640×480 합성 Homography와
-예제 layout을 만들 수 있다.
-
-```bash
-python3 "$(ros2 pkg prefix --share cooperative_parking_robot)/scripts/make_dummy_calibration.py" \
-  --output-dir ~/.ros/adaptive_valet_bot
-```
-
-이미 파일이 있으면 기본적으로 중단하며, `--force`를 붙일 때만 덮어쓴다.
-생성된 metadata의 `synthetic: true`는 실차용이 아니라는 표시다. 합성
-Homography는 실제 카메라 자세와 바닥 좌표를 반영하지 않으므로 **모터를 켠
-주행에 사용하지 않는다.** 실차 운행 전 cam0/cam2 각각의 rectified 영상에서
-동일한 map 기준점으로 Homography와 layout을 현장 재등록한다.
+전달 ZIP에는 현장 실측 Homography가 없으며 실차 배포 패키지는 합성
+Homography 생성 기능을 제공하지 않는다. cam0/cam2 각각의 rectified 영상에서
+동일한 map 기준점으로 Homography와 layout을 현장 등록하기 전에는 모터를 켠
+주행을 시작하지 않는다.
 
 ## 7. 분산 기동 순서
 

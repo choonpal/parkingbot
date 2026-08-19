@@ -283,7 +283,7 @@ ROS/OpenCV/YOLO에 의존하지 않는 순수 계산 모듈. 단위 테스트가
 | `homography_cam2_rectified.npy` | `~/.ros/adaptive_valet_bot/` | `bev_layout_calibration.launch.py` 2회차 | O |
 | `parking_layout.yaml` | `~/.ros/adaptive_valet_bot/` | 위 두 번의 등록으로 자동 생성/병합 | O |
 | `homography_cam*_rectified.json` | 같은 폴더 | 자동 생성(재투영 오차 기록) | 자동 |
-| `yolov8n.pt` 또는 `vehicle_seg.engine` | 아무 경로 | YOLO 모델. COCO는 자동 다운로드 가능 | O |
+| `yolov8n.pt` 또는 `vehicle_seg.engine` | 로컬 절대 경로 | YOLO 모델. 인터넷 자동 다운로드 없음 | O |
 
 > 기존 `config/cctv_camera_calibration.npz`는 그대로 두었다. cam0에 같은 카메라를 쓴다면 `cctv0_camera_calibration.npz`로 복사해도 되지만, **해상도와 렌즈가 동일한지 반드시 확인**해야 한다. 두 카메라가 같은 모델(OV2710)이라도 개체차가 있으므로 각각 캘리브레이션하는 것을 권장한다.
 

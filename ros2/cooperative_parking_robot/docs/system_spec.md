@@ -54,8 +54,8 @@
 
 ## 4. 제어 구조 핵심 결정
 
-### 4-1. 경로 계획 — 자체 A* (Nav2 미사용)
-천장 카메라가 전역 위치를 직접 제공하므로 자기위치추정·로컬플래너·Nav2 Controller 불필요. Jetson에서 OccupancyGrid 기반 A* 경로계획 후 waypoint 목록을 로봇에 전달. 운반 중 yaw는 고정하며, `Front + 차량 + Rear` 결합 직사각형 footprint만큼 장애물을 팽창한다. 미확인 셀·맵 밖은 점유로 취급하고 대각선 corner cutting을 금지한다.
+### 4-1. 경로 계획 — 자체 A*
+천장 카메라가 전역 위치를 직접 제공하므로 별도 전역 navigation framework 없이 Jetson에서 OccupancyGrid 기반 A* 경로계획 후 waypoint 목록을 로봇에 전달한다. 운반 중 yaw는 고정하며, `Front + 차량 + Rear` 결합 직사각형 footprint만큼 장애물을 팽창한다. 미확인 셀·맵 밖은 점유로 취급하고 대각선 corner cutting을 금지한다.
 
 ```
 CCTV BEV Map → OccupancyGrid → 결합 footprint 팽창 → 2D A* → Waypoints → rigid_body_sync_node
@@ -287,7 +287,7 @@ V,vx,vy,w 수신
 - **EfficientNetV2-B0**: 차종 분류 → 제원 매핑
 - **Homography**: 천장 카메라 좌표 → BEV 좌표 변환 (설치 시 1회 캘리브)
 - **BEV + OccupancyGrid**: 전역 맵 생성
-- **A***: 전역 경로계획 (Nav2 미사용, 경량)
+- **A***: 자체 경량 전역 경로계획
 - **Pure Pursuit**: waypoint 추종
 - **ArUco**: 단방향 상대측위 (Rear→Front)
 - **Kalman Filter**: Encoder + ArUco 융합, CCTV 절대 보정
@@ -331,9 +331,10 @@ cooperative_parking_robot_ws/
     │       └── encoder_odometry.py          엔코더→odom
     ├── launch/full_system.launch.py
     ├── config/ (sync_params, safety_limits)
-    ├── models/ (parking_seg 또는 COCO YOLO, efficientnetv2_b0_vehicle)
-    └── stm32_firmware/ (Core/Src, Core/Inc, .ioc)
+    └── models/ (parking_seg 또는 COCO YOLO, efficientnetv2_b0_vehicle)
 ```
+
+STM32 펌웨어 정본은 저장소 최상위 `stm32/parking_robot/`에만 둔다.
 
 ---
 

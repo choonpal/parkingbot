@@ -48,6 +48,8 @@ def generate_launch_description():
         runtime_config_dir, 'homography_rectified.npy'])
     default_layout_config = PathJoinSubstitution([
         runtime_config_dir, 'parking_layout.yaml'])
+    default_registry_database = PathJoinSubstitution([
+        runtime_config_dir, 'parking_registry.db'])
     layout_config = LaunchConfiguration('layout_config')
 
     enable_camera = LaunchConfiguration('enable_opencv_camera')
@@ -136,6 +138,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'layout_config', default_value=default_layout_config,
             description='브라우저에서 생성한 주차면/맵 YAML 경로'),
+        DeclareLaunchArgument(
+            'parking_registry_db_path',
+            default_value=default_registry_database,
+            description='Fleet Parking Registry SQLite 파일'),
         DeclareLaunchArgument('front_marker_id', default_value='10'),
         DeclareLaunchArgument('rear_marker_id', default_value='11'),
         DeclareLaunchArgument('min_marker_area_px', default_value='1000.0'),
@@ -251,6 +257,8 @@ def generate_launch_description():
             parameters=[layout_config, {
                 'require_registered_layout': True,
                 'simultaneous_entry': _bool('simultaneous_entry'),
+                'parking_registry_db_path': LaunchConfiguration(
+                    'parking_registry_db_path'),
             }],
             output='screen'),
         Node(

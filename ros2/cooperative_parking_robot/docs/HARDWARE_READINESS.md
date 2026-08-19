@@ -17,11 +17,10 @@
 
 ## STM32F401RE 타이머 배치
 
-현재 ZIP에는 검토·통합용 제어 C 소스만 있고 실제 CubeMX 프로젝트의 `.ioc`,
-HAL 생성 `main.h`, startup/linker 파일은 들어 있지 않다. 따라서 이 소스를
-그대로 단독 빌드·플래시할 수는 없으며, 아래 타이머/핀 배치로 생성한 실제
-Nucleo-F401RE CubeMX 프로젝트에 통합해야 한다. 자동 검증의 "GNU11 syntax
-PASS"는 HAL stub을 이용한 문법 검사이지 보드 링크·플래시 성공 판정이 아니다.
+저장소의 `stm32/parking_robot`에는 `parking_robot.ioc`, HAL/CMSIS,
+`main.h`, startup/linker와 통합 제어 소스가 포함되어 있다. 실제 권위 프로젝트는
+이 디렉터리다. 자동 GNU11 검사는 코드 정합성만 뜻하므로 CubeIDE ARM
+build/link와 두 보드 ST-LINK flash는 여전히 실기에서 확인해야 한다.
 
 현재 펌웨어가 기대하는 CubeMX 배치는 다음과 같다.
 
@@ -51,8 +50,8 @@ CubeMX에서 검토할 수 있는 **예시 핀 배치**는 다음과 같다. 실
 | TIM10 CH1 servo | PB8 |
 | TIM11 CH1 servo | PB9 |
 | USART2 TX/RX | PA2, PA3 |
-| 초음파 TRIG L/R fallback | PB12, PB13 (GPIO output) |
-| 초음파 ECHO L/R fallback | PB14, PB15 (EXTI rising+falling) |
+| 초음파 TRIG Left/Right | PC8, PC5 (GPIO output) |
+| 초음파 ECHO Left/Right | PC6, PC7 (EXTI rising+falling) |
 
 PA15/PB3/PB4는 기본 JTAG 관련 핀과 겹칠 수 있다. CubeMX의 debug 설정은 full JTAG가 아니라 SWD 기준으로 확인하고, ST-LINK의 PA13/PA14 SWD 연결은 유지한다. 이 표는 `.ioc`를 대체하지 않는다.
 
@@ -133,7 +132,9 @@ ros2 launch cooperative_parking_robot front_robot.launch.py \
 ## 아직 코드만으로 해결되지 않는 안전 항목
 
 - `GRIP_DONE`은 실제 바퀴 파지를 확인하지 않는다. 무인 인양 판정에는 리미트 스위치, 서보 전류 또는 위치/하중 센서가 필요하다.
-- 현재는 한 사이클 시연 범위다. 다음 차량 처리를 위한 fleet/YOLO latch reset은 구현하지 않았다.
-- 천장 카메라 2대 좌표 통합은 현재 패키지에 없다. 지금 launch는 단일 Raw→Rectified 스트림만 사용한다.
-- 로컬 YOLO 모델(자동 다운로드를 쓰지 않을 때), homography `.npy`, Rear 카메라 calibration `.npz`,
-  CubeMX `.ioc`는 ZIP에 포함되어 있지 않으므로 실차 launch 전에 별도로 생성·배치해야 한다.
+- park/retrieve와 양쪽 HOME 뒤 mission reset은 구현됐지만 실제 하중 연속
+  사이클은 아직 검증해야 한다.
+- dual CCTV merge launch는 구현됐지만 두 실카메라의 공통 map 정합을 현장에서
+  반복 검증해야 한다.
+- 로컬 YOLO 모델, rectified Homography `.npy`와 Rear 카메라 calibration
+  `.npz`는 현장 장비별로 별도 생성·배치해야 한다.

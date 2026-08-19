@@ -1,20 +1,24 @@
 # Adaptive Valet Bot v1.11 실차 적용 준비도 검토
 
-- 검토 대상: `Adaptive_Valet_Bot_v1_11_UI_MissionReset_20260805.zip`
-- 검토일: 2026-08-16
+- 검토 대상: `feature/exit-mission-integration` 현재 소스
+- 검토일: 2026-08-19
 - 목적: Homography 등록 후 실제 협동 주차로봇 운용 가능 여부와 선행 조건 명확화
 
 ## 1. 결론
 
 v1.11은 실차 운용을 목표로 한 소프트웨어 구조와 안전 정지 로직을 갖추고 있다. UI 승인, mission reset, CCTV/YOLO/ArUco 인식, PoseEKF, 동시 scan-in, 초음파 차축 정렬, 결합 footprint A*, 슬롯 축 정밀 진입까지 코드에 구현되어 있다.
 
-그러나 **Homography 파일만 넣은 상태로 실제 차량을 들어 올려 무인 주차시키면 안 된다.** 현재 ZIP에는 실기체별 보정값과 완전한 STM32 빌드 프로젝트가 없고, 일부 통합 launch 기본값도 실차 안전 설정이 아니다.
+그러나 **Homography 파일만 넣은 상태로 실제 차량을 들어 올려 무인 주차시키면 안 된다.**
+완전한 STM32CubeIDE 프로젝트와 park/retrieve 소프트웨어 흐름은 저장소에
+포함됐지만, 실기체별 보정값, ARM build/flash, 전기 안전과 하중 검증은
+현장에서 완료해야 한다. 실제 탑재 순서는
+`docs/REAL_ROBOT_DEPLOYMENT_RUNBOOK.md`를 우선 따른다.
 
 현재 권장 판정은 다음과 같다.
 
 | 단계 | 판정 |
 |---|---|
-| 소프트웨어 단위/계약 시험 | PASS — 162 tests |
+| 소프트웨어 단위/계약 시험 | PASS — 234 tests |
 | 카메라·BEV 정적 인식 시험 | 보정 후 가능 |
 | 바퀴 공중시험 | 하드웨어 상수 입력 후 가능 |
 | 빈 차체 저속 단독주행 | 단계 시험 후 가능 |
@@ -22,7 +26,9 @@ v1.11은 실차 운용을 목표로 한 소프트웨어 구조와 안전 정지 
 | 모형차 저하중 인양·주차 | 모든 인터락 검증 후 조건부 가능 |
 | 사람 없는 무인 인양·운반 | 현재 NO-GO |
 
-자동 테스트는 ROS 2 Jazzy 환경에서 `162 passed`를 확인했다. 이는 Python 로직과 계약 검증이며, 목표 환경인 Ubuntu 22.04 + ROS 2 Humble의 실제 카메라, UART, DDS, STM32, 모터 및 하중 시험을 대체하지 않는다.
+자동 테스트는 ROS 2 Jazzy 환경에서 `234 passed`를 확인했다. 이는 Python
+로직과 계약 검증이며, 목표 환경인 Ubuntu 22.04 + ROS 2 Humble의 실제
+카메라, UART, DDS, STM32, 모터 및 하중 시험을 대체하지 않는다.
 
 ## 2. 구현된 주요 기능
 
@@ -37,6 +43,9 @@ v1.11은 실차 운용을 목표로 한 소프트웨어 구조와 안전 정지 
 - 결합 차량 크기를 반영한 footprint A*
 - 슬롯 밖 staging → 슬롯 yaw 회전 → 슬롯 축 직선 삽입
 - 통신/센서/pose/ArUco timeout과 ESTOP 경로
+- 차량번호/비밀번호와 목적 slot을 받는 입차 UI, 인증 기반 출차 UI
+- park/retrieve 공통 접근·인양·운반·하차와 양쪽 HOME 완료 barrier
+- SQLite Parking Registry의 안정 `EMPTY/OCCUPIED` Fleet restart 복구
 
 ## 3. Homography 등록 조건
 
@@ -166,14 +175,10 @@ UI 승인 기본값은 Fleet Manager에서 `require_ui_confirmation=true`이며,
 
 ## 6. STM32와 전기 안전
 
-ZIP의 펌웨어는 검토·통합용 C 소스이며 다음이 포함된 완전한 플래시 프로젝트가 아니다.
-
-- CubeMX `.ioc`
-- 실제 핀 배치가 반영된 HAL `main.h`
-- startup/linker 파일
-- 보드별 생성 코드
-
-따라서 실제 Nucleo-F401RE 프로젝트에 통합하고 빌드·링크·플래시 시험을 수행해야 한다.
+`stm32/parking_robot`에 CubeMX `.ioc`, 생성 HAL `main.h`,
+startup/linker와 통합 제어 소스가 포함되어 있다. 이 프로젝트를 CubeIDE에서
+ARM build/link하고 Front/Rear 두 보드에 ST-LINK flash하는 실기 검증은
+아직 별도로 수행해야 한다.
 
 필수 전기 안전:
 
@@ -244,14 +249,16 @@ ZIP의 펌웨어는 검토·통합용 C 소스이며 다음이 포함된 완전�
 - 실제 파지/하중 센서가 없으면 무인 진행 금지
 - 정지·전원 차단 시 낙하하지 않는지 확인
 
-### 단계 8 — 전체 한 사이클
+### 단계 8 — 전체 park/retrieve 사이클
 
 - 차량 인식 → UI 승인 → 정렬 → 인양
 - 결합 footprint 경로계획
 - staging에서 슬롯 yaw 정렬
 - 슬롯 중심축 직선 삽입
-- 하차 → 분리 → 두 로봇 복귀
-- `/mission/complete` 후 latch가 reset되고 다음 입차 대기 상태로 복귀
+- 하차 → 분리 → 두 로봇 HOME → 입차 완료
+- Fleet 재시작 뒤 OCCUPIED/credential 복원
+- 같은 차량번호/비밀번호로 출차 → waiting 하차 → 양쪽 HOME
+- `/mission/complete` 후 source slot이 EMPTY이고 다음 미션 대기
 
 ## 8. 최종 GO/NO-GO 기준
 

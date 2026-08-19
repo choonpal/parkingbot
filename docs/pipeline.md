@@ -395,8 +395,10 @@ kEncoderSign을 수정한 후 2단계부터 다시 한다.
   검증해 source_slot_id를 자체 결정하고 Registry pose/spec과 고정 waiting_x/y/yaw를
   사용해 기존 접근·인양·A*·운반·하차·복귀 흐름을 재사용한다. source_slot_id만 보낸
   요청은 비밀번호 우회가 되므로 거부한다.
-- 이 demo는 Fleet 프로세스 수명 동안만 Registry를 유지한다. 차량을 주차한 뒤
-  Fleet를 재시작하는 복구는 지원하지 않으며, 재시작 전 모든 슬롯을 비운다.
+- Fleet Registry는 기본 `~/.ros/adaptive_valet_bot/parking_registry.db`에
+  저장된다. `EMPTY/OCCUPIED` 안정 상태는 같은 layout에서 Fleet 재시작 뒤
+  복원한다. `RESERVED/EXIT_RESERVED/EXITING`, 손상 DB 또는 layout 불일치는
+  startup을 차단하며 자동 재개하지 않는다.
 
 비밀번호 원문은 Registry, /fleet/state와 로그에 남기지 않는다. 다만 현재 HTTP와
 ROS String transport 자체는 암호화되지 않으므로 웹 UI는 내부 신뢰망에서만 사용한다.
@@ -443,7 +445,8 @@ STM32 ESTOP은 latch된다. UI mission reset이나 ROS 노드 재시작으로 �
 - 벽·기둥은 차량 YOLO가 검출하지 않으므로 no-go 영역 등록이 필요하다.
 - 듀얼 CCTV 높이가 서로 다르면 단일 camera_height_m parallax 보정이 부정확하다.
 - require_full_slot_coverage=false에서는 슬롯 중심 관측만으로 판정할 수 있다.
-- Registry는 메모리 전용이다. 차량이 주차된 상태의 Fleet restart recovery는 없다.
+- Registry는 SQLite로 안정 상태를 복원하지만 transient mission crash recovery와
+  Perception 기반 물리 reconciliation은 없다.
 - 이번 출차는 이 Fleet 세션이 forward로 주차한 차량만 지원한다.
 - park→retrieve 연속 사이클은 자동 테스트됐지만 실제 하중 실기 검증이 필요하다.
 

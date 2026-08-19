@@ -54,7 +54,7 @@ Homography는 반드시 `/cctv/image_rect`에서 다시 생성한 `homography_re
 | `vehicle_seg.engine`(권장) 또는 `yolov8n.pt` | Jetson | 차량 Seg 모델은 별도 준비; COCO 모델은 box 폴백 |
 | `rear_camera_calibration.npz` | Rear RPi | 별도 생성 필수 |
 | 천장/Rear Image publisher | Jetson/Rear | 별도 준비 필수 |
-| STM32CubeMX/HAL 완성 프로젝트 | 각 STM32 | 별도 준비 필수 |
+| `stm32/parking_robot` CubeIDE 프로젝트 | 각 STM32 | 저장소 포함; ARM build/flash 실기 확인 필수 |
 
 ## 5. 사전 점검
 
@@ -223,6 +223,9 @@ Fleet와 함께 실행된다. 실제 영상까지 확인하려면 Rectifier와 V
 - 천장 calibration의 파일 구조와 OpenCV 입력 형식은 유효하다.
 - Raw→Rectified→YOLO/Homography 연결은 코드에 반영했다.
 - 실제 카메라 해상도와 calibration 생성 해상도의 일치 여부는 아직 확인되지 않았다.
-- `homography_rectified.npy`가 없으므로 실제 world 좌표 변환은 아직 실행할 수 없다.
+- Homography와 layout은 현장 카메라에서 생성해 runtime 경로에 배치해야 한다.
 - Rear 카메라 calibration은 별도로 필요하다.
-- 무인 실차 주차는 STM32 완성 프로젝트와 하중 시험 전까지 미검증이다.
+- STM32 프로젝트는 저장소에 포함됐지만 ARM build/flash, 전기 안전과 하중
+  시험 전까지 무인 실차 주차는 미검증이다.
+- Fleet Registry는 SQLite 안정 상태를 복원하지만 미션 중간 crash 자동 복구는
+  지원하지 않는다.

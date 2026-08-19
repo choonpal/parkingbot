@@ -82,7 +82,8 @@ ros2 launch cooperative_parking_robot front_robot.launch.py \
 
 ## 5. STM32CubeMX 필수 설정
 
-현재 ZIP의 C 소스는 완성 `.ioc`가 아니므로 실제 프로젝트에서 다음을 설정해야 한다.
+현재 권위 프로젝트는 저장소의 `stm32/parking_robot/parking_robot.ioc`다.
+CubeIDE에서 다음 설정이 유지되는지 확인한다.
 
 | 기능 | 설정 |
 |---|---|
@@ -92,13 +93,13 @@ ros2 launch cooperative_parking_robot front_robot.launch.py \
 | USART2 | 115200 8N1, RPi UART |
 | main loop | `Robot_Init()` 한 번, `Robot_MainLoop()` 지속 호출 |
 
-소스 fallback GPIO label은 다음과 같다. 실제 배선과 충돌하면 CubeMX label을 같은 이름으로 만들어 교체한다.
+현재 `.ioc`의 GPIO label과 핀은 다음과 같다.
 
 ```text
-Left TRIG  PB12
-Right TRIG PB13
-Left ECHO  PB14
-Right ECHO PB15
+Left TRIG  PC8
+Right TRIG PC5
+Left ECHO  PC6
+Right ECHO PC7
 ```
 
 HC-SR04 ECHO는 5 V다. STM32 핀의 5 V tolerance를 확인하고 불확실하면 레벨시프터 또는 저항분압을 사용한다.
@@ -151,7 +152,7 @@ ros2 topic echo /front/hardware_ready
 
 ## 8. 아직 해야 할 것
 
-- 실제 CubeMX `.ioc`와 핀 충돌 검토
+- 실제 확장보드/driver와 현재 `.ioc` 핀 충돌 검토
 - TIM9 1 MHz 설정 및 실제 counter 검증
 - ECHO 입력 전압 보호회로
 - 좌/우 센서 장착 위치와 offset 실측

@@ -72,15 +72,19 @@ except ImportError:
 # 시연장에 인터넷이 없을 수 있으므로 외부 CDN을 쓰지 않는다.
 KIOSK_PAGE = """<!DOCTYPE html>
 <html lang="ko"><head><meta charset="utf-8">
-<meta name="viewport" content="width=1024,initial-scale=1,user-scalable=no">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,
+ user-scalable=no,viewport-fit=cover">
 <title>협동 주차 로봇</title><style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-body{width:1024px;height:600px;overflow:hidden;background:#141a21;color:#eef2f6;
- font-family:"Noto Sans KR","Malgun Gothic",sans-serif;display:flex}
-#video{width:56%;height:100%;background:#000;display:flex;align-items:center;
+:root{--touch-target:44px}
+html,body{width:100%;height:100%}
+body{min-width:800px;min-height:480px;overflow:hidden;background:#141a21;
+ color:#eef2f6;font-family:"Noto Sans KR","Malgun Gothic",sans-serif;display:flex}
+#video{flex:0 0 56%;height:100%;background:#000;display:flex;align-items:center;
  justify-content:center}
 #video img{max-width:100%;max-height:100%}
-#panel{width:44%;height:100%;padding:10px;display:flex;flex-direction:column;gap:6px}
+#panel{flex:1;min-width:0;height:100%;padding:8px;display:flex;
+ flex-direction:column;gap:5px}
 #banner{background:#1e2a36;border-radius:10px;padding:10px;font-size:18px;
  font-weight:700;text-align:center;min-height:52px;display:flex;
  align-items:center;justify-content:center}
@@ -94,30 +98,50 @@ body{width:1024px;height:600px;overflow:hidden;background:#141a21;color:#eef2f6;
 .robot.fault{background:#7f1d1d}
 .robot.stale{opacity:.45}
 button{width:100%;border:0;border-radius:10px;color:#fff;font-size:19px;
- font-weight:800;font-family:inherit}
+ font-weight:800;font-family:inherit;min-height:var(--touch-target);
+ touch-action:manipulation}
 .mission{background:#1e2a36;border-radius:10px;padding:7px}
 .mission h3{font-size:14px;color:#cbd5e1;margin-bottom:5px}
 .fields{display:grid;gap:5px;margin-bottom:5px}
 .fields.park{grid-template-columns:1.15fr .85fr .72fr}
 .fields.retrieve{grid-template-columns:1.2fr .8fr}
-input,select{width:100%;height:34px;border:1px solid #475569;border-radius:7px;
+input,select{width:100%;height:var(--touch-target);
+ min-height:var(--touch-target);border:1px solid #475569;border-radius:7px;
  background:#0f172a;color:#f8fafc;padding:0 7px;font:14px inherit;min-width:0}
 input::placeholder{color:#94a3b8}
-#park,#retrieve{height:38px}
+#park,#retrieve{height:var(--touch-target)}
 #park{background:#15803d}#retrieve{background:#0f766e}
 #park:disabled,#retrieve:disabled{background:#334155;color:#64748b}
-#slots{height:58px;overflow-y:auto;display:grid;grid-template-columns:1fr 1fr;
- gap:5px}
-.slot{height:26px;background:#263646;font-size:13px;border-radius:7px;
+#slots{min-height:52px;max-height:82px;flex:1;overflow-y:auto;display:grid;
+ grid-template-columns:1fr 1fr;gap:5px}
+.slot{min-height:32px;background:#263646;font-size:13px;border-radius:7px;
  display:flex;align-items:center;justify-content:center;color:#cbd5e1}
 .slot.empty{background:#14532d}.slot.occupied{background:#164e63}
-#estop{height:54px;background:#b91c1c;font-size:22px}
+#estop{height:54px;background:#b91c1c;font-size:22px;flex:0 0 auto}
 #hint{font-size:12px;color:#94a3b8;text-align:center}
 #toast{position:fixed;left:50%;top:24px;transform:translateX(-50%);
  background:#0f172a;border:2px solid #38bdf8;padding:12px 22px;border-radius:10px;
  font-size:18px;display:none}
 #offline{position:fixed;inset:0;background:rgba(0,0,0,.86);display:none;
  align-items:center;justify-content:center;font-size:30px;font-weight:800}
+@media (max-width:900px){
+ #video{flex-basis:45%}
+ #panel{padding:6px;gap:4px}
+ .fields{gap:4px}
+}
+@media (max-height:520px){
+ #banner{min-height:40px;padding:4px;font-size:16px}
+ .robot{padding:4px}.robot h3{margin-bottom:2px}
+ .robot .st{font-size:16px}.robot .ph{font-size:12px}
+ .mission{padding:4px}.mission h3{margin-bottom:2px}
+ .fields{margin-bottom:3px}
+ input,select{height:var(--touch-target);min-height:var(--touch-target)}
+ #park,#retrieve{height:var(--touch-target);min-height:var(--touch-target)}
+ #slots{min-height:36px;max-height:44px}
+ .slot{min-height:22px}
+ #estop{height:44px;min-height:44px;font-size:20px}
+ #hint{display:none}
+}
 </style></head><body>
 <div id="video"><img src="/video_feed" alt="CCTV"></div>
 <div id="panel">

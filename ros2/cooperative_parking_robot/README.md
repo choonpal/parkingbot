@@ -81,10 +81,14 @@ spec, mission ID 또는 출차 source slot을 지정하지 않는다. 비밀번�
 
 임무가 끝나면 양쪽 로봇의 HOME ready 뒤 Front가 HOME commit과
 `/mission/complete`를 발행한다. Fleet는 active mission만 reset하고 park에서 만든
-OCCUPIED 차량 기록은 같은 Fleet 프로세스 동안 유지한다. park ARRIVED의 map-frame
-final pose가 유효하지 않아 Registry가 OCCUPIED로 확정되지 않은 경우에는 HOME 뒤에도
-성공 완료/reset을 차단한다. retrieve planning-grid source mask는 Perception의
-`car_size_m` fallback raster와 동일한 layout 값을 사용한다.
+OCCUPIED 차량 기록은 SQLite Registry에 저장한다. 정상 종료·재시작 뒤에는 안정 상태인
+`EMPTY`/`OCCUPIED` 기록과 차량번호·비밀번호 verifier를 복구하지만, 임무 도중의
+`RESERVED`/`EXIT_RESERVED`/`EXITING` 상태가 남아 있거나 DB·layout이 일치하지 않으면
+자동 추정하지 않고 Fleet 기동을 차단한다. 기본 DB는
+`~/.ros/adaptive_valet_bot/parking_registry.db`이며 비밀번호 원문은 저장하지 않는다.
+park ARRIVED의 map-frame final pose가 유효하지 않아 Registry가 OCCUPIED로 확정되지 않은
+경우에는 HOME 뒤에도 성공 완료/reset을 차단한다. retrieve planning-grid source mask는
+Perception의 `car_size_m` fallback raster와 동일한 layout 값을 사용한다.
 
 ## 초음파 처리 구조
 

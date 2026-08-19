@@ -22,18 +22,19 @@
 
 ## 2. 실증 범위와 불변조건
 
-- Fleet Manager 내부의 session-only Parking Registry가 슬롯 운영 상태와 차량-슬롯 기록의 단일 writer다.
-- 시작 시 모든 등록 슬롯을 `EMPTY`로 초기화한다.
-- 같은 Fleet 프로세스가 수행한 park만 `OCCUPIED` record를 만든다.
+- Fleet Manager 내부 Parking Registry가 슬롯 운영 상태와 차량-슬롯 기록의 단일 writer다.
+- 최초 DB 생성은 물리 주차장이 빈 상태일 때만 수행하며 등록 슬롯을 `EMPTY`로 초기화한다.
+- 시스템 park가 만든 안정 상태(`EMPTY`, `OCCUPIED`)는 SQLite에 저장해 정상 Fleet 재시작 뒤 복원한다.
 - 주차 뒤 사람이 차량을 움직이지 않으므로 retrieve target은 Registry의 final vehicle pose만 사용한다.
 - Web UI 재시작은 지원하며 새 `client_id`와 `/fleet/state` snapshot으로 복원한다.
-- Fleet 재시작 복구, Registry persistence와 Perception 기반 재구성은 제외한다.
+- 미션 중간 상태 자동 재개와 Perception 기반 Registry 재구성은 제외한다. 저장된 transient 상태나 layout 불일치는 startup을 차단한다.
 - 출차 중 waiting zone에 새 입차 차량을 두지 않는다.
 - 신규 park 운용값은 `parking_direction=forward`다. reverse/unknown 차량의 출차 접근은 제외한다.
 - `waiting_polygon`은 vehicle-center detection ROI다. 물리적 parking boundary가 아니다.
 - 새 ROS topic, service, action, retrieve 전용 Robot FSM state를 만들지 않는다.
 
-> Fleet restart after a vehicle has been parked is not supported in this demo configuration.
+> Stable EMPTY/OCCUPIED Registry records survive Fleet restart; unfinished
+> missions require operator recovery.
 
 ## 3. 상태 소유권
 
@@ -232,12 +233,13 @@ Robot FSM은 기존처럼 `error`만 읽으므로 호환된다. Fleet만 plan st
 ### 신규 코드
 
 - `cooperative_parking_robot/parking_registry.py`
-  - Fleet 프로세스 내부에서만 사용하는 Registry module
+  - Fleet가 단일 writer로 사용하는 Registry module
   - lifecycle과 mission binding 검증
   - park reservation/placement, retrieve reservation/transport/release 전이
   - 차량번호 정규화/중복 방지와 salt/PBKDF2 비밀번호 검증
   - UI-safe summary와 `retrievable` 계산
-  - 디스크 I/O나 ROS publisher 없음
+  - SQLite schema/layout 검증과 안정 상태 startup 복구
+  - transient/corrupt 상태 fail-closed, ROS publisher 없음
 
 ### 핵심 실행 코드
 
@@ -335,7 +337,7 @@ Robot FSM은 기존처럼 `error`만 읽으므로 호환된다. Fleet만 plan st
 - `docs/pipeline.md`
 - package `README.md`, `docs/MASTER_PLAN.md`
 
-현재 “출차 미구현” 설명을 실제 연결 방법, demo invariant와 Fleet restart 제한으로 갱신한다.
+현재 “출차 미구현” 설명을 실제 연결 방법, demo invariant와 안정 상태 Fleet restart 복구 범위로 갱신한다.
 
 ## 10. TDD seam과 vertical slices
 
@@ -355,7 +357,8 @@ Robot FSM은 기존처럼 `error`만 읽으므로 호환된다. Fleet만 plan st
 - park `EMPTY -> RESERVED -> OCCUPIED`
 - retrieve `OCCUPIED -> EXIT_RESERVED -> EXITING -> EMPTY`
 - active mission reset/HOME 뒤 OCCUPIED record 유지
-- 새 Registry 인스턴스는 다시 전부 EMPTY이며 persistence가 없음을 명시
+- 새 DB는 전부 EMPTY, 같은 DB의 EMPTY/OCCUPIED는 Registry 재생성 뒤 복원
+- schema/layout/slot 불일치와 transient lifecycle startup 차단
 - summary에 내부 pose/spec/direction이 노출되지 않음
 - 차량번호 정규화/중복 거부, 서로 다른 salt와 비밀번호 검증
 - summary에 차량번호·credential이 노출되지 않음

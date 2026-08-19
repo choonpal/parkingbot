@@ -92,6 +92,8 @@ def generate_launch_description():
         runtime_config_dir, 'homography_cam2_rectified.npy'])
     default_layout = PathJoinSubstitution([
         runtime_config_dir, 'parking_layout.yaml'])
+    default_registry_database = PathJoinSubstitution([
+        runtime_config_dir, 'parking_registry.db'])
 
     common_vision_params = {
         'model_path': LaunchConfiguration('model_path'),
@@ -170,6 +172,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'layout_config', default_value=default_layout,
             description='두 카메라의 슬롯이 합쳐진 하나의 등록 파일'),
+        DeclareLaunchArgument(
+            'parking_registry_db_path',
+            default_value=default_registry_database,
+            description='Fleet Parking Registry SQLite 파일'),
         DeclareLaunchArgument(
             'simultaneous_entry', default_value='false',
             description='Fleet retrieve preflight entry timing policy'),
@@ -386,6 +392,8 @@ def generate_launch_description():
                 'require_ui_confirmation': _bool('require_ui_confirmation'),
                 'ui_request_timeout_s': _float('ui_request_timeout_s'),
                 'simultaneous_entry': _bool('simultaneous_entry'),
+                'parking_registry_db_path': LaunchConfiguration(
+                    'parking_registry_db_path'),
             }],
             output='screen'),
 

@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR-0019
 ---
 
 # 실증은 빈 주차장과 연속된 Fleet 프로세스를 요구한다

@@ -109,6 +109,14 @@ def test_dual_cctv_uses_runtime_per_camera_calibration_paths():
     assert "share, 'config', 'cctv2_camera_calibration.npz'" not in source
 
 
+def test_dual_cctv_provisional_camera_and_calibration_resolution_is_640x480():
+    source = (ROOT / 'launch/cctv_server_dual.launch.py').read_text()
+    assert "'camera_width_px', default_value='640'" in source
+    assert "'camera_height_px', default_value='480'" in source
+    assert "'calibration_width_px', default_value='640'" in source
+    assert "'calibration_height_px', default_value='480'" in source
+
+
 def test_operator_ui_launch_is_independent_from_debug_overlay():
     launch_dir = ROOT / 'launch'
     for name in (

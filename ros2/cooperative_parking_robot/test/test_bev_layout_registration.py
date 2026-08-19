@@ -1,6 +1,9 @@
 """브라우저형 BEV/주차면 등록과 실제 주차 연결 회귀 테스트."""
 
+import json
 from pathlib import Path
+import subprocess
+import sys
 
 import numpy as np
 import pytest
@@ -111,6 +114,29 @@ def test_layout_loader_accepts_dual_wildcard_and_legacy_node_block(tmp_path):
         encoding='utf-8')
     legacy = load_layout_yaml(str(legacy_path))
     assert [slot.slot_id for slot in legacy['slots']] == ['P1']
+
+
+def test_dummy_dual_calibration_defaults_to_640x480_runtime_assets(tmp_path):
+    script = ROOT / 'scripts' / 'make_dummy_calibration.py'
+    result = subprocess.run(
+        [sys.executable, str(script), '--output-dir', str(tmp_path)],
+        cwd=ROOT, text=True, capture_output=True, check=False)
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    for camera_id in ('cam0', 'cam2'):
+        homography = tmp_path / f'homography_{camera_id}_rectified.npy'
+        metadata = tmp_path / f'homography_{camera_id}_rectified.json'
+        assert np.load(homography).shape == (3, 3)
+        payload = json.loads(metadata.read_text(encoding='utf-8'))
+        assert payload['synthetic'] is True
+        assert payload['image_width_px'] == 640
+        assert payload['image_height_px'] == 480
+
+    layout = yaml.safe_load(
+        (tmp_path / 'parking_layout.yaml').read_text(encoding='utf-8'))
+    assert layout['/**']['ros__parameters']['layout_registered'] is True
+    setup_source = (ROOT / 'setup.py').read_text(encoding='utf-8')
+    assert "glob('scripts/*.py')" in setup_source
 
 
 def test_generated_waiting_yaw_is_explicit_and_finite():

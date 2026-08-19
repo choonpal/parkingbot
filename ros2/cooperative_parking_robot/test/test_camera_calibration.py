@@ -26,6 +26,26 @@ def test_packaged_ceiling_calibration_loads():
     assert camera_matrix[1, 2] == pytest.approx(358.75645269)
 
 
+@pytest.mark.parametrize(
+    ('filename', 'expected_fx', 'expected_fy'),
+    [
+        ('cctv0_camera_calibration.npz', 436.84593725, 433.72630176),
+        ('cctv2_camera_calibration.npz', 448.12854014, 445.36364374),
+    ],
+)
+def test_packaged_provisional_dual_calibrations_are_640x480_compatible(
+        filename, expected_fx, expected_fy):
+    path = ROOT / 'config' / filename
+    camera_matrix, dist_coeffs, keys = load_camera_calibration(str(path))
+    assert keys == ('mtx', 'dist')
+    assert camera_matrix.shape == (3, 3)
+    assert dist_coeffs.shape == (1, 5)
+    assert camera_matrix[0, 0] == pytest.approx(expected_fx)
+    assert camera_matrix[1, 1] == pytest.approx(expected_fy)
+    assert 0.0 <= camera_matrix[0, 2] < 640.0
+    assert 0.0 <= camera_matrix[1, 2] < 480.0
+
+
 def test_original_mtx_dist_keys_are_supported(tmp_path):
     path = tmp_path / 'legacy.npz'
     matrix = np.array([

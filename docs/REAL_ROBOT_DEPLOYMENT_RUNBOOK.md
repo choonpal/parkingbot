@@ -172,6 +172,8 @@ Jetson의 기본 runtime 디렉터리는 다음과 같다.
 
 ```text
 ~/.ros/adaptive_valet_bot/
+  cctv0_camera_calibration.npz
+  cctv2_camera_calibration.npz
   parking_layout.yaml
   parking_registry.db
   homography_cam0_rectified.npy
@@ -182,6 +184,40 @@ Jetson의 기본 runtime 디렉터리는 다음과 같다.
 model이 필요하다. Homography와 layout은 반드시 rectified image와 같은
 `map` frame/metre 좌표를 사용한다. 등록 방법은 `docs/pipeline.md`와
 `ros2/cooperative_parking_robot/docs/CCTV_CALIBRATION.md`를 따른다.
+
+현재 저장소의 `config/cctv0_camera_calibration.npz`와
+`config/cctv2_camera_calibration.npz`는 2026-08-14 전달본에서 가져온
+**임시 640×480 보정값**이다. 초기 연결 시험에는 다음처럼 runtime 경로로
+복사해 사용할 수 있다.
+
+```bash
+mkdir -p ~/.ros/adaptive_valet_bot
+install -m 600 \
+  "$(ros2 pkg prefix --share cooperative_parking_robot)/config/cctv0_camera_calibration.npz" \
+  ~/.ros/adaptive_valet_bot/cctv0_camera_calibration.npz
+install -m 600 \
+  "$(ros2 pkg prefix --share cooperative_parking_robot)/config/cctv2_camera_calibration.npz" \
+  ~/.ros/adaptive_valet_bot/cctv2_camera_calibration.npz
+```
+
+dual launch의 영상과 calibration 기본 해상도도 640×480이다. 실제 설치
+카메라별로 재보정하거나 1280×720으로 변경한 뒤에는 두 NPZ뿐 아니라
+rectified 영상 기준 Homography와 layout도 반드시 다시 만든다.
+
+전달 ZIP에는 현장 실측 Homography가 없다. 카메라 topic, dual merge 및
+coverage 배선만 점검해야 할 때에는 다음 명령으로 640×480 합성 Homography와
+예제 layout을 만들 수 있다.
+
+```bash
+python3 "$(ros2 pkg prefix --share cooperative_parking_robot)/scripts/make_dummy_calibration.py" \
+  --output-dir ~/.ros/adaptive_valet_bot
+```
+
+이미 파일이 있으면 기본적으로 중단하며, `--force`를 붙일 때만 덮어쓴다.
+생성된 metadata의 `synthetic: true`는 실차용이 아니라는 표시다. 합성
+Homography는 실제 카메라 자세와 바닥 좌표를 반영하지 않으므로 **모터를 켠
+주행에 사용하지 않는다.** 실차 운행 전 cam0/cam2 각각의 rectified 영상에서
+동일한 map 기준점으로 Homography와 layout을 현장 재등록한다.
 
 ## 7. 분산 기동 순서
 
@@ -195,8 +231,8 @@ model이 필요하다. Homography와 layout은 반드시 rectified image와 같�
 ros2 launch cooperative_parking_robot cctv_server_dual.launch.py \
   enable_opencv_camera:=true \
   camera0_id:=0 camera2_id:=2 \
-  cctv0_camera_calib:=<cam0.npz> \
-  cctv2_camera_calib:=<cam2.npz> \
+  camera_width_px:=640 camera_height_px:=480 \
+  calibration_width_px:=640 calibration_height_px:=480 \
   homography_cam0_file:=<cam0.npy> \
   homography_cam2_file:=<cam2.npy> \
   layout_config:=<parking_layout.yaml> \

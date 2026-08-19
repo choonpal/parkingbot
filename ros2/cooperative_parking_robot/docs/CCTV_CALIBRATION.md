@@ -22,6 +22,49 @@ dist = [0.03678515, 0.05353067, -0.00274540, 0.00510393, -0.07254668]
 
 패키지에는 `config/cctv_camera_calibration.npz`로 정규화해 넣었으며 원본 키와 표준 키를 모두 보존했다.
 
+## 듀얼 CCTV 임시 640×480 보정값
+
+2026-08-14 전달본에서 다음 카메라별 파일을 가져왔다.
+
+```text
+config/cctv0_camera_calibration.npz
+config/cctv2_camera_calibration.npz
+```
+
+두 파일은 서로 다른 intrinsic이며 `mtx/dist` 키를 사용한다. principal point가
+각각 약 `(340,238)`, `(327,256)`이므로 이번 단계에서는 **640×480 보정값**으로
+취급한다. `cctv_server_dual.launch.py`의 영상 및 calibration 기본 해상도도
+640×480으로 맞췄다.
+
+이 파일은 파이프라인 연결과 초기 실증을 위한 provisional asset이다. 실제 장착한
+cam0/cam2가 이 보정을 생성한 카메라라는 보장은 없으므로 최종 정밀 주행 전에는
+각 실제 카메라를 다시 보정해야 한다. 재보정 결과는 다음 runtime 경로에 둔다.
+
+```text
+~/.ros/adaptive_valet_bot/cctv0_camera_calibration.npz
+~/.ros/adaptive_valet_bot/cctv2_camera_calibration.npz
+```
+
+영상 해상도 또는 NPZ를 바꾸면 rectified pixel 좌표가 바뀐다. 따라서 기존
+Homography를 재사용하지 말고 두 카메라 모두 `/cctv*/image_rect`에서
+Homography와 layout을 다시 등록한다.
+
+전달 ZIP에는 실측 Homography가 없었다. 저장소의
+`scripts/make_dummy_calibration.py`는 640×480 기본값으로 두 개의 **합성**
+Homography와 예제 layout을 만들 수 있지만, 이는 topic 연결·merge·coverage
+확인 전용이다.
+
+```bash
+python3 "$(ros2 pkg prefix --share cooperative_parking_robot)/scripts/make_dummy_calibration.py" \
+  --output-dir ~/.ros/adaptive_valet_bot
+```
+
+생성되는 JSON에는 `synthetic: true`가 기록된다. 이 값은 실제 렌즈, 카메라
+높이·각도 또는 바닥 기준점을 반영하지 않으므로 **더미 Homography로 로봇을
+주행시키면 안 된다.** 실차 주행 전에는 각 카메라의 rectified 영상에서 같은
+map 기준점을 찍어 `homography_cam0_rectified.npy`와
+`homography_cam2_rectified.npy`를 각각 다시 생성해야 한다.
+
 ## 처리 순서
 
 ```text
@@ -59,11 +102,13 @@ YOLO와 상판 ArUco는 반드시 같은 `/cctv/image_rect`를 사용한다.
 
 ## 두 대의 천장 카메라를 쓸 경우
 
-현재 패키지는 천장 카메라 한 스트림 기준이다. 두 대를 실제로 사용하면 카메라마다 아래가 따로 필요하다.
+현재 패키지는 카메라별 raw → rectify → YOLO 결과를 `cctv_merge_node`에서
+공통 map frame으로 합친다. 카메라마다 아래 파일이 따로 필요하다.
 
 ```text
-cctv1_camera_calibration.npz + H1_rectified.npy
-cctv2_camera_calibration.npz + H2_rectified.npy
+cctv0_camera_calibration.npz + homography_cam0_rectified.npy
+cctv2_camera_calibration.npz + homography_cam2_rectified.npy
 ```
 
-그 후 두 rectified 좌표 결과를 하나의 공통 world 좌표계로 병합해야 한다. 한 카메라의 calibration을 다른 카메라에 복사해 쓰면 안 된다.
+두 Homography는 같은 바닥 기준점에 같은 map 좌표를 입력해 하나의 world
+좌표계로 맞춘다. 한 카메라의 calibration을 다른 카메라에 복사해 쓰면 안 된다.

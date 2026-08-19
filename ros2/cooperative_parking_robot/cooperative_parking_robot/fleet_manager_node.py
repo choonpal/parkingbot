@@ -4,7 +4,7 @@
 fleet_manager_node.py (Jetson Orin Nano)
 ==================================================
 중앙 관제탑. 빈자리 선정 + A* 경로계획 + waypoint 발행.
-(Nav2 미사용 — 자체 A* 사용)
+자체 A*를 사용한다.
 
 입력:
   /parking/target_pose, /parking/empty_slots

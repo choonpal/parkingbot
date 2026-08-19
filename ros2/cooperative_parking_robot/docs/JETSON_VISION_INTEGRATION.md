@@ -10,7 +10,7 @@
 | 렌즈 왜곡 보정 | `cctv_rectify_node` |
 | 차량/빈자리/OccupancyGrid | `yolo_bev_map_node` |
 | Front ID10·Rear ID11 천장 절대 pose | `cctv_robot_marker_node` |
-| YOLO+ArUco 웹 화면 | `jetson_vision_web_node` |
+| ArUco+FPS 웹 화면 | `jetson_vision_web_node` |
 
 ## 원본을 그대로 임무 코드로 쓰면 생기는 문제
 
@@ -56,16 +56,13 @@
 
 ### 운용 권장
 
-Mission 실행 시 웹 YOLO는 끄고 ArUco/영상 모니터만 사용한다.
+웹 진단은 ArUco/영상/FPS만 처리하고 차량 YOLO는 mission 노드에서만 실행한다.
 
 ```text
 enable_operator_ui=false
 enable_debug_overlay=true
-debug_enable_yolo=false
 debug_enable_aruco=true
 ```
-
-모델 성능을 튜닝할 때만 `debug_enable_yolo=true`로 켠다.
 
 ## 통과 기준
 

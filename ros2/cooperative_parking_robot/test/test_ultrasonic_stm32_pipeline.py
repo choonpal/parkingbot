@@ -89,7 +89,8 @@ def test_sensor_to_gripper_offset_is_projected_before_edge_detection():
 
 def test_firmware_alternates_sensors_and_uses_timer_exti():
     source = (
-        ROOT / "stm32_firmware/Core/Src/parking_robot_firmware.c"
+        ROOT.parents[1] /
+        "stm32/parking_robot/Core/Src/parking_robot_firmware.c"
     ).read_text()
     required = (
         "ULTRASONIC_INTERVAL_MS 35U",

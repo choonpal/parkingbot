@@ -51,7 +51,7 @@ Homography는 반드시 `/cctv/image_rect`에서 다시 생성한 `homography_re
 |---|---|---|
 | `cctv_camera_calibration.npz` | Jetson | 패키지 포함; 동일 카메라·해상도 확인 필요 |
 | `homography_rectified.npy` | Jetson | `bev_layout_calibration.launch.py`로 생성 필수 |
-| `vehicle_seg.engine`(권장) 또는 `yolov8n.pt` | Jetson | 차량 Seg 모델은 별도 준비; COCO 모델은 box 폴백 |
+| `vehicle_seg.engine`(권장) 또는 `yolov8n.pt` | Jetson | 로컬 파일을 별도 준비; 인터넷 자동 다운로드 없음 |
 | `rear_camera_calibration.npz` | Rear RPi | 별도 생성 필수 |
 | 천장/Rear Image publisher | Jetson/Rear | 별도 준비 필수 |
 | `stm32/parking_robot` CubeIDE 프로젝트 | 각 STM32 | 저장소 포함; ARM build/flash 실기 확인 필수 |
@@ -62,9 +62,8 @@ Jetson:
 
 ```bash
 hardware_preflight --role jetson \
-  --model-path yolov8n.pt \
+  --model-path /absolute/yolov8n.pt \
   --model-mode coco \
-  --allow-model-download \
   --homography-file /absolute/homography_rectified.npy
 ```
 
@@ -133,9 +132,8 @@ ros2 launch cooperative_parking_robot front_robot.launch.py \
 ros2 launch cooperative_parking_robot cctv_server.launch.py \
   enable_opencv_camera:=false \
   cctv_raw_topic:=/camera/image_raw \
-  model_path:=yolov8n.pt \
+  model_path:=/absolute/yolov8n.pt \
   model_mode:=coco \
-  allow_model_download:=true \
   homography_file:=/absolute/homography_rectified.npy \
   homography_scale_to_m:=1.0 \
   fixed_wheelbase_m:=0.70 \
@@ -150,9 +148,8 @@ ros2 launch cooperative_parking_robot cctv_server.launch.py \
   camera_id:=0 \
   calibration_width_px:=1280 \
   calibration_height_px:=720 \
-  model_path:=yolov8n.pt \
+  model_path:=/absolute/yolov8n.pt \
   model_mode:=coco \
-  allow_model_download:=true \
   homography_file:=/absolute/homography_rectified.npy \
   homography_scale_to_m:=1.0
 ```
@@ -163,8 +160,8 @@ ros2 launch cooperative_parking_robot cctv_server.launch.py \
 1280×720은 파일 자체로 확정된 값이 아니므로 실제 생성 조건을 확인한 뒤 넣는다.
 
 운용 kiosk/API는 `enable_operator_ui:=true`가 기본이다. 선택 진단 영상은
-`enable_debug_overlay:=true`로 켠다. Mission YOLO와 중복 추론을 피하려면
-`debug_enable_yolo:=false`를 유지한다.
+`enable_debug_overlay:=true`로 켠다. 웹 진단 경로는 ArUco/FPS만 처리하며
+차량 YOLO는 mission 노드에서 한 번만 실행된다.
 
 ## 6-1. 초음파 UART/ROS 확인
 

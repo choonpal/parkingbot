@@ -49,21 +49,10 @@ cam0/cam2가 이 보정을 생성한 카메라라는 보장은 없으므로 최�
 Homography를 재사용하지 말고 두 카메라 모두 `/cctv*/image_rect`에서
 Homography와 layout을 다시 등록한다.
 
-전달 ZIP에는 실측 Homography가 없었다. 저장소의
-`scripts/make_dummy_calibration.py`는 640×480 기본값으로 두 개의 **합성**
-Homography와 예제 layout을 만들 수 있지만, 이는 topic 연결·merge·coverage
-확인 전용이다.
-
-```bash
-python3 "$(ros2 pkg prefix --share cooperative_parking_robot)/scripts/make_dummy_calibration.py" \
-  --output-dir ~/.ros/adaptive_valet_bot
-```
-
-생성되는 JSON에는 `synthetic: true`가 기록된다. 이 값은 실제 렌즈, 카메라
-높이·각도 또는 바닥 기준점을 반영하지 않으므로 **더미 Homography로 로봇을
-주행시키면 안 된다.** 실차 주행 전에는 각 카메라의 rectified 영상에서 같은
-map 기준점을 찍어 `homography_cam0_rectified.npy`와
-`homography_cam2_rectified.npy`를 각각 다시 생성해야 한다.
+전달 ZIP에는 실측 Homography가 없으며 저장소도 합성 fallback을 제공하지
+않는다. 실차 기동 전 각 카메라의 rectified 영상에서 같은 map 기준점을 찍어
+`homography_cam0_rectified.npy`와 `homography_cam2_rectified.npy`를 각각
+생성해야 한다. 파일이 없거나 검증되지 않았으면 운행하지 않는다.
 
 ## 처리 순서
 

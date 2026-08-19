@@ -71,8 +71,8 @@ def test_generic_coco_model_is_not_interpreted_as_parking_classes():
     assert "self.model_mode in ('vehicle_seg', 'parking_seg')" in source
     assert "if self.model_mode == 'vehicle_seg':" in source
     assert 'polygon_overlap_ratio' in source
-    assert "self.model_mode in ('vehicle_seg', 'parking_seg') and" in source
-    assert 'requires a local trained model' in source
+    assert 'if not os.path.isfile(mp):' in source
+    assert 'requires a local model file' in source
     assert 'if cls not in self.coco_vehicle_ids' in source
     assert 'custom_model' not in source
     assert 'use_pretrained_fallback' not in source
@@ -82,11 +82,12 @@ def test_cctv_launch_exposes_camera_model_marker_and_web_controls():
     source = (ROOT / 'launch/cctv_server.launch.py').read_text()
     for token in (
             "'enable_opencv_camera'", "'model_mode'",
-            "'allow_model_download'", "'homography_scale_to_m'",
+            "'homography_scale_to_m'",
             "'min_marker_area_px'", "'enable_operator_ui'",
             "'enable_debug_overlay'",
             "executable='opencv_camera'", "executable='jetson_vision_web'"):
         assert token in source
+    assert 'allow_model_download' not in source
     assert "default_value='coco'" in source
     assert "default_value='false'" in source  # optional camera/web are opt-in
 
@@ -134,16 +135,16 @@ def test_operator_ui_launch_is_independent_from_debug_overlay():
         assert "'enable_debug_overlay': _bool('enable_debug_overlay')" in source
 
 
-def test_web_node_keeps_operator_ui_raw_video_without_debug_overlay():
+def test_web_node_keeps_operator_ui_without_duplicate_yolo_inference():
     source = (PKG / 'jetson_vision_web_node.py').read_text()
     assert "declare_parameter('enable_debug_overlay', False)" in source
     assert 'self.enable_debug_overlay = bool(' in source
-    assert 'self.enable_debug_overlay and requested_enable_yolo' in source
     assert 'self.enable_debug_overlay and requested_enable_aruco' in source
     assert 'if self.enable_debug_overlay:' in source
     assert 'if self.annotated_publisher is not None:' in source
-    assert 'YOLO = None' in source
-    assert 'debug overlay requires ultralytics' in source
+    assert 'from ultralytics import YOLO' not in source
+    assert 'def _run_yolo' not in source
+    assert 'def _draw_yolo' not in source
 
 
 def test_web_monitor_is_diagnostic_not_a_mission_output_publisher():

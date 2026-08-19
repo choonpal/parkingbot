@@ -21,12 +21,10 @@ Endpoints:
 from __future__ import annotations
 
 import json
-import os
 import queue
 import threading
 import time
 import uuid
-from typing import List, Tuple
 
 import rclpy
 from rclpy.node import Node
@@ -61,12 +59,6 @@ try:
     WEB_DEPS_OK = True
 except ImportError:
     WEB_DEPS_OK = False
-
-try:
-    from ultralytics import YOLO
-except ImportError:
-    YOLO = None
-
 
 # 1024x600 Waveshare 7" Display-C 고정 레이아웃.
 # 시연장에 인터넷이 없을 수 있으므로 외부 CDN을 쓰지 않는다.
@@ -266,13 +258,7 @@ class JetsonVisionWebNode(Node):
 
         self.declare_parameter('image_topic', '/cctv/image_rect')
         self.declare_parameter('annotated_topic', '/cctv/debug/annotated')
-        self.declare_parameter('enable_yolo', True)
         self.declare_parameter('enable_aruco', True)
-        self.declare_parameter('model_path', 'yolov8n.pt')
-        self.declare_parameter('confidence', 0.4)
-        self.declare_parameter('imgsz', 320)
-        self.declare_parameter('process_every_n', 3)
-        self.declare_parameter('yolo_class_ids', [])
         self.declare_parameter('aruco_dict', 'DICT_4X4_50')
         self.declare_parameter('front_marker_id', 10)
         self.declare_parameter('rear_marker_id', 11)
@@ -304,21 +290,10 @@ class JetsonVisionWebNode(Node):
             self.get_parameter('annotated_topic').value)
         self.enable_debug_overlay = bool(
             self.get_parameter('enable_debug_overlay').value)
-        requested_enable_yolo = bool(
-            self.get_parameter('enable_yolo').value)
         requested_enable_aruco = bool(
             self.get_parameter('enable_aruco').value)
-        self.enable_yolo = (
-            self.enable_debug_overlay and requested_enable_yolo)
         self.enable_aruco = (
             self.enable_debug_overlay and requested_enable_aruco)
-        if self.enable_yolo and YOLO is None:
-            raise RuntimeError(
-                'debug overlay requires ultralytics when YOLO is enabled')
-        self.confidence = float(self.get_parameter('confidence').value)
-        self.imgsz = int(self.get_parameter('imgsz').value)
-        self.process_every_n = int(
-            self.get_parameter('process_every_n').value)
         self.marker_size = float(self.get_parameter('marker_size_m').value)
         self.min_marker_area_px = float(
             self.get_parameter('min_marker_area_px').value)
@@ -346,10 +321,6 @@ class JetsonVisionWebNode(Node):
 
         if not self.image_topic or not self.annotated_topic:
             raise ValueError('image and annotated topics must not be empty')
-        if not (0.0 < self.confidence <= 1.0):
-            raise ValueError('confidence must be in (0,1]')
-        if self.imgsz <= 0 or self.process_every_n <= 0:
-            raise ValueError('imgsz and process_every_n must be positive')
         if self.marker_size <= 0.0:
             raise ValueError('marker_size_m must be positive')
         if self.min_marker_area_px < 0.0 or self.min_marker_area_ratio < 0.0:
@@ -367,17 +338,8 @@ class JetsonVisionWebNode(Node):
             self.get_parameter('front_marker_id').value,
             self.get_parameter('rear_marker_id').value,
         ])
-        yolo_ids_raw = list(self.get_parameter('yolo_class_ids').value)
-        self.yolo_class_ids = (
-            parse_class_ids(yolo_ids_raw) if yolo_ids_raw else tuple())
 
         self.bridge = CvBridge()
-        self.model = None
-        if self.enable_yolo:
-            model_path = os.path.expanduser(
-                str(self.get_parameter('model_path').value))
-            self.model = YOLO(model_path)
-            self.get_logger().info(f'debug YOLO loaded: {model_path}')
 
         self.detector = None
         if self.enable_aruco:
@@ -426,7 +388,6 @@ class JetsonVisionWebNode(Node):
         self._latest_jpeg = None
         self._jpeg_sequence = 0
         self._stop_event = threading.Event()
-        self._last_boxes: List[Tuple[int, int, int, int, int, float]] = []
         self._last_process_time = None
 
         # ===== 터치 UI 상태/발행 =====
@@ -776,7 +737,7 @@ class JetsonVisionWebNode(Node):
             return (
                 '<html><head><title>Jetson Vision</title></head>'
                 '<body style="background:#2c3e50;text-align:center;color:white">'
-                '<h2>ROS2 CCTV YOLO + ArUco</h2>'
+                '<h2>ROS2 CCTV + ArUco</h2>'
                 '<img src="/video_feed" style="border-radius:10px;max-width:100%">'
                 '</body></html>')
 
@@ -845,7 +806,6 @@ class JetsonVisionWebNode(Node):
                 'sequence': sequence,
                 'image_topic': self.image_topic,
                 'debug_overlay': self.enable_debug_overlay,
-                'yolo': self.enable_yolo,
                 'aruco': self.enable_aruco,
             })
 
@@ -879,7 +839,6 @@ class JetsonVisionWebNode(Node):
             self._frame_condition.notify()
 
     def _worker_loop(self) -> None:
-        frame_number = 0
         while not self._stop_event.is_set():
             with self._frame_condition:
                 self._frame_condition.wait_for(
@@ -894,7 +853,6 @@ class JetsonVisionWebNode(Node):
                 header = self._latest_header
                 self._processed_sequence = self._input_sequence
 
-            frame_number += 1
             now = time.monotonic()
             fps = 0.0
             if self._last_process_time is not None:
@@ -905,10 +863,6 @@ class JetsonVisionWebNode(Node):
 
             display = frame.copy()
             if self.enable_debug_overlay:
-                if (self.enable_yolo and
-                        frame_number % self.process_every_n == 0):
-                    self._last_boxes = self._run_yolo(frame)
-                self._draw_yolo(display, self._last_boxes)
                 if self.enable_aruco:
                     self._draw_aruco(display)
 
@@ -930,41 +884,6 @@ class JetsonVisionWebNode(Node):
                     self._latest_jpeg = buffer.tobytes()
                     self._jpeg_sequence += 1
                     self._jpeg_condition.notify_all()
-
-    def _run_yolo(self, frame):
-        results = self.model(
-            frame, imgsz=self.imgsz, conf=self.confidence, verbose=False)
-        boxes = []
-        for result in results:
-            if result.boxes is None:
-                continue
-            for box in result.boxes:
-                class_id = int(box.cls[0].item())
-                if self.yolo_class_ids and class_id not in self.yolo_class_ids:
-                    continue
-                x1, y1, x2, y2 = [
-                    int(value) for value in box.xyxy[0].tolist()]
-                confidence = float(box.conf[0].item())
-                boxes.append((x1, y1, x2, y2, class_id, confidence))
-        return boxes
-
-    def _draw_yolo(self, frame, boxes) -> None:
-        if self.model is None:
-            return
-        names = getattr(self.model, 'names', {})
-        for x1, y1, x2, y2, class_id, confidence in boxes:
-            if isinstance(names, dict):
-                label_name = names.get(class_id, str(class_id))
-            elif 0 <= class_id < len(names):
-                label_name = names[class_id]
-            else:
-                label_name = str(class_id)
-            label = f'{label_name} {confidence:.2f}'
-            color = (0, 255, 255)
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            cv2.putText(
-                frame, label, (x1, max(16, y1 - 8)),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
     def _ensure_effective_intrinsics(self, width: int, height: int) -> None:
         if self.base_camera_matrix is None:

@@ -249,13 +249,12 @@ colcon test-result --verbose
 
 ## Jetson 사전 점검
 
-COCO `.pt` 자동 다운로드를 허용하는 경우:
+로컬에 미리 준비한 COCO `.pt`를 사용하는 경우:
 
 ```bash
 hardware_preflight --role jetson \
-  --model-path yolov8n.pt \
+  --model-path /absolute/yolov8n.pt \
   --model-mode coco \
-  --allow-model-download \
   --homography-file /absolute/homography_rectified.npy
 ```
 
@@ -289,9 +288,8 @@ hardware_preflight --role jetson \
 ros2 launch cooperative_parking_robot cctv_server.launch.py \
   enable_opencv_camera:=false \
   cctv_raw_topic:=/camera/image_raw \
-  model_path:=yolov8n.pt \
+  model_path:=/absolute/yolov8n.pt \
   model_mode:=coco \
-  allow_model_download:=true \
   homography_file:=/absolute/homography_rectified.npy \
   homography_scale_to_m:=1.0 \
   layout_config:=/home/<USER>/.ros/adaptive_valet_bot/parking_layout.yaml
@@ -305,9 +303,8 @@ ros2 launch cooperative_parking_robot cctv_server.launch.py \
   camera_id:=0 \
   camera_width_px:=1280 \
   camera_height_px:=720 \
-  model_path:=yolov8n.pt \
+  model_path:=/absolute/yolov8n.pt \
   model_mode:=coco \
-  allow_model_download:=true \
   homography_file:=/absolute/homography_rectified.npy \
   homography_scale_to_m:=1.0 \
   layout_config:=/home/<USER>/.ros/adaptive_valet_bot/parking_layout.yaml
@@ -319,7 +316,6 @@ ros2 launch cooperative_parking_robot cctv_server.launch.py \
 ros2 launch cooperative_parking_robot cctv_server.launch.py \
   enable_operator_ui:=false \
   enable_debug_overlay:=true \
-  debug_enable_yolo:=false \
   debug_enable_aruco:=true \
   ...
 ```
@@ -329,7 +325,8 @@ ros2 launch cooperative_parking_robot cctv_server.launch.py \
 `http://<JETSON-IP>:5000/kiosk`에서 열린다. 인증 기능이 없으므로 신뢰할 수 있는
 내부망에서만 사용한다.
 
-`debug_enable_yolo:=true`로 설정하면 사용자 원본처럼 웹 화면에도 YOLO 박스를 그리지만, Mission YOLO와 별도로 한 번 더 추론하므로 Jetson GPU 사용량이 증가한다.
+웹 노드는 영상·ArUco·FPS만 표시하며 YOLO를 별도로 로드하거나 추론하지 않는다.
+차량 검출은 mission `yolo_bev_map_node` 한 곳에서만 수행한다.
 
 ## ArUco 설정
 

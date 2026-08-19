@@ -110,7 +110,7 @@ Front/Rear 모두 `DRIVE`, 활성 경로 보유 조건에서만 CCTV 차량 피�
 python3 -m compileall -q cooperative_parking_robot launch test
 PYTHONPATH=. pytest -q
 gcc -std=gnu11 -fsyntax-only -Itest/firmware_stub \
-  stm32_firmware/Core/Src/parking_robot_firmware.c
+  ../../stm32/parking_robot/Core/Src/parking_robot_firmware.c
 ```
 
 결과:

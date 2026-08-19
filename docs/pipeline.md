@@ -25,7 +25,6 @@ parkingbot_v1_11/
 ~~~
 
 - 실제 STM32 빌드는 stm32/parking_robot만 사용한다.
-- ros2/.../stm32_firmware는 코드 검토용 동기 사본이다.
 - 두 STM32에는 같은 펌웨어를 플래시하고 Front/Rear 역할은 ROS namespace와
   서로 다른 serial port로 구분한다.
 

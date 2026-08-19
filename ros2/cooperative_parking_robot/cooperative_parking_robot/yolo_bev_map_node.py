@@ -86,7 +86,6 @@ class YoloBevMapNode(Node):
         # 차량 마스크의 겹침률로 빈자리를 판정한다.
         self.declare_parameter('use_fixed_slots', True)
         self.declare_parameter('slot_occupancy_overlap_ratio', 0.10)
-        self.declare_parameter('allow_model_download', True)
         self.declare_parameter('coco_vehicle_class_ids', [2, 3, 5, 7])
         self.declare_parameter('inference_imgsz', 320)
         self.declare_parameter('process_every_n', 3)
@@ -465,18 +464,13 @@ class YoloBevMapNode(Node):
         mp = os.path.expanduser(str(self.get_parameter('model_path').value))
         if not mp:
             raise ValueError('model_path must not be empty')
-        allow_download = bool(
-            self.get_parameter('allow_model_download').value)
-        # Ultralytics 자동 다운로드는 공식 COCO .pt에만 허용한다.
-        # 커스텀 Seg 모드에서 파일이 없는데도 네트워크를 시도하면
-        # 잘못된 모델로 임무가 시작될 수 있으므로 즉시 실패시킨다.
-        if (self.model_mode in ('vehicle_seg', 'parking_seg') and
-                not os.path.exists(mp)):
+        # Ultralytics는 알려진 모델 이름이 로컬에 없으면 인터넷에서 자동으로
+        # 내려받을 수 있다. 실차는 재현 가능한 오프라인 자산만 허용하므로
+        # YOLO 생성자 호출 전에 모든 모드에서 실제 로컬 파일을 요구한다.
+        if not os.path.isfile(mp):
             raise FileNotFoundError(
-                f'{self.model_mode} requires a local trained model: {mp}')
-        if not os.path.exists(mp) and not allow_download:
-            raise FileNotFoundError(
-                f'YOLO model not found and download disabled: {mp}')
+                f'YOLO requires a local model file; network download is '
+                f'disabled: {mp}')
         try:
             self.model = YOLO(mp)
             self._validate_model_classes()

@@ -64,7 +64,6 @@ def generate_launch_description():
 
         DeclareLaunchArgument('model_path', default_value='yolov8n.pt'),
         DeclareLaunchArgument('model_mode', default_value='coco'),
-        DeclareLaunchArgument('allow_model_download', default_value='true'),
         DeclareLaunchArgument('inference_imgsz', default_value='320'),
         DeclareLaunchArgument('process_every_n', default_value='3'),
         DeclareLaunchArgument('confidence', default_value='0.4'),
@@ -119,8 +118,7 @@ def generate_launch_description():
         DeclareLaunchArgument('ui_button_cooldown_s', default_value='2.0'),
         DeclareLaunchArgument(
             'enable_debug_overlay', default_value='false',
-            description='진단 YOLO/ArUco/FPS overlay 및 annotated topic 활성'),
-        DeclareLaunchArgument('debug_enable_yolo', default_value='false'),
+            description='진단 ArUco/FPS overlay 및 annotated topic 활성'),
         DeclareLaunchArgument('debug_enable_aruco', default_value='true'),
         DeclareLaunchArgument('debug_web_host', default_value='0.0.0.0'),
         DeclareLaunchArgument('debug_web_port', default_value='5000'),
@@ -165,7 +163,6 @@ def generate_launch_description():
                 'image_topic': LaunchConfiguration('cctv_rect_topic'),
                 'model_path': LaunchConfiguration('model_path'),
                 'model_mode': LaunchConfiguration('model_mode'),
-                'allow_model_download': _bool('allow_model_download'),
                 'inference_imgsz': _int('inference_imgsz'),
                 'process_every_n': _int('process_every_n'),
                 'confidence': _float('confidence'),
@@ -236,12 +233,7 @@ def generate_launch_description():
             condition=IfCondition(enable_web),
             parameters=[{
                 'image_topic': LaunchConfiguration('cctv_rect_topic'),
-                'enable_yolo': _bool('debug_enable_yolo'),
                 'enable_aruco': _bool('debug_enable_aruco'),
-                'model_path': LaunchConfiguration('model_path'),
-                'imgsz': _int('inference_imgsz'),
-                'process_every_n': _int('process_every_n'),
-                'confidence': _float('confidence'),
                 'aruco_dict': LaunchConfiguration('aruco_dict'),
                 'front_marker_id': _int('front_marker_id'),
                 'rear_marker_id': _int('rear_marker_id'),

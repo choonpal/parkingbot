@@ -91,6 +91,24 @@ def test_cctv_launch_exposes_camera_model_marker_and_web_controls():
     assert "default_value='false'" in source  # optional camera/web are opt-in
 
 
+def test_dual_cctv_launch_wires_configurable_coco_vehicle_classes():
+    source = (ROOT / 'launch/cctv_server_dual.launch.py').read_text()
+    assert 'def _int_array(name):' in source
+    assert "'coco_vehicle_class_ids': _int_array(" in source
+    assert "'coco_vehicle_class_ids')" in source
+    assert re.search(
+        r"'coco_vehicle_class_ids',\s*default_value='\[2, 3, 5, 7\]'",
+        source)
+
+
+def test_dual_cctv_uses_runtime_per_camera_calibration_paths():
+    source = (ROOT / 'launch/cctv_server_dual.launch.py').read_text()
+    assert "runtime_config_dir, 'cctv0_camera_calibration.npz'" in source
+    assert "runtime_config_dir, 'cctv2_camera_calibration.npz'" in source
+    assert "share, 'config', 'cctv0_camera_calibration.npz'" not in source
+    assert "share, 'config', 'cctv2_camera_calibration.npz'" not in source
+
+
 def test_operator_ui_launch_is_independent_from_debug_overlay():
     launch_dir = ROOT / 'launch'
     for name in (
@@ -174,8 +192,9 @@ def test_parking_layout_is_externalized_from_python_source():
     import yaml
     layout_path = ROOT / 'config/parking_layout.yaml'
     layout = yaml.safe_load(layout_path.read_text())
-    yolo_params = layout['yolo_bev_map_node']['ros__parameters']
+    yolo_params = layout['/**']['ros__parameters']
     fleet_params = layout['fleet_manager_node']['ros__parameters']
+    assert 'yolo_bev_map_node' not in layout
     assert yolo_params['layout_registered'] is False
     assert fleet_params['layout_registered'] is False
     assert len(yolo_params['waiting_zone']) == 4

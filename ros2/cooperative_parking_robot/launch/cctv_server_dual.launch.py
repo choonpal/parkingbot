@@ -48,7 +48,6 @@ from launch.substitutions import (
 )
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
-from launch_ros.substitutions import FindPackageShare
 
 
 def _float(name):
@@ -69,6 +68,12 @@ def _float_array(name):
         LaunchConfiguration(name), value_type=List[float])
 
 
+def _int_array(name):
+    """'[2, 3, 5, 7]' 형태의 launch 인자를 integer[] 파라미터로 넘긴다."""
+    return ParameterValue(
+        LaunchConfiguration(name), value_type=List[int])
+
+
 def generate_launch_description():
     enable_cameras = LaunchConfiguration('enable_opencv_camera')
     enable_markers = LaunchConfiguration('enable_cctv_robot_markers')
@@ -79,13 +84,12 @@ def generate_launch_description():
         "'.lower() in ('true', '1', 'yes', 'on')",
     ])
 
-    share = FindPackageShare('cooperative_parking_robot')
     runtime_config_dir = PathJoinSubstitution([
         EnvironmentVariable('HOME'), '.ros', 'adaptive_valet_bot'])
     default_calib0 = PathJoinSubstitution([
-        share, 'config', 'cctv0_camera_calibration.npz'])
+        runtime_config_dir, 'cctv0_camera_calibration.npz'])
     default_calib2 = PathJoinSubstitution([
-        share, 'config', 'cctv2_camera_calibration.npz'])
+        runtime_config_dir, 'cctv2_camera_calibration.npz'])
     default_h0 = PathJoinSubstitution([
         runtime_config_dir, 'homography_cam0_rectified.npy'])
     default_h2 = PathJoinSubstitution([
@@ -106,6 +110,7 @@ def generate_launch_description():
         'yaw_ema_alpha': _float('yaw_ema_alpha'),
         'yaw_limit_deg': _float('yaw_limit_deg'),
         'classifier_path': LaunchConfiguration('classifier_path'),
+        'coco_vehicle_class_ids': _int_array('coco_vehicle_class_ids'),
         'homography_scale_to_m': _float('homography_scale_to_m'),
         'coverage_margin_px': _float('coverage_margin_px'),
         'require_dependencies': True,
@@ -160,6 +165,9 @@ def generate_launch_description():
         DeclareLaunchArgument('yaw_ema_alpha', default_value='0.15'),
         DeclareLaunchArgument('yaw_limit_deg', default_value='90.0'),
         DeclareLaunchArgument('classifier_path', default_value=''),
+        DeclareLaunchArgument(
+            'coco_vehicle_class_ids', default_value='[2, 3, 5, 7]',
+            description='COCO class IDs; camera pipeline test uses [0]'),
         DeclareLaunchArgument('homography_cam0_file', default_value=default_h0),
         DeclareLaunchArgument('homography_cam2_file', default_value=default_h2),
         DeclareLaunchArgument(

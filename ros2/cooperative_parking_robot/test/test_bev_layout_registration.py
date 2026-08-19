@@ -8,6 +8,7 @@ import yaml
 
 from cooperative_parking_robot.bev_layout_core import (
     homography_reprojection_errors,
+    load_layout_yaml,
     render_parking_layout_yaml,
     transform_points,
     validate_reference_pairs,
@@ -66,8 +67,9 @@ def test_generated_layout_is_valid_ros_parameter_yaml():
         map_resolution_m=0.05)
 
     parsed = yaml.safe_load(text)
-    vision = parsed['yolo_bev_map_node']['ros__parameters']
+    vision = parsed['/**']['ros__parameters']
     fleet = parsed['fleet_manager_node']['ros__parameters']
+    assert 'yolo_bev_map_node' not in parsed
     assert vision['layout_registered'] is True
     assert fleet['layout_registered'] is True
     assert vision['slot_ids'] == ['P1']
@@ -88,6 +90,27 @@ def test_generated_layout_is_valid_ros_parameter_yaml():
         'car_size_m'] == pytest.approx(vision['car_size_m'])
     assert fleet['waiting_polygon'] == pytest.approx(
         [2.1, 0.3, 2.5, 0.3, 2.5, 0.9, 2.1, 0.9])
+
+
+def test_layout_loader_accepts_dual_wildcard_and_legacy_node_block(tmp_path):
+    slot = build_slot(
+        'P1', center=(3.0, 2.0), size=(1.8, 0.7), yaw_deg=90.0)
+    rendered = render_parking_layout_yaml(
+        [slot], [(2.1, 0.3), (2.5, 0.3), (2.5, 0.9), (2.1, 0.9)],
+        map_width_m=6.0, map_height_m=4.0, map_resolution_m=0.05)
+    wildcard_text = rendered
+
+    wildcard_path = tmp_path / 'wildcard.yaml'
+    wildcard_path.write_text(wildcard_text, encoding='utf-8')
+    wildcard = load_layout_yaml(str(wildcard_path))
+    assert [slot.slot_id for slot in wildcard['slots']] == ['P1']
+
+    legacy_path = tmp_path / 'legacy.yaml'
+    legacy_path.write_text(
+        wildcard_text.replace('/**:', 'yolo_bev_map_node:', 1),
+        encoding='utf-8')
+    legacy = load_layout_yaml(str(legacy_path))
+    assert [slot.slot_id for slot in legacy['slots']] == ['P1']
 
 
 def test_generated_waiting_yaw_is_explicit_and_finite():

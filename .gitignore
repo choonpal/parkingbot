@@ -5,3 +5,7 @@
 **/__pycache__/
 **/.pytest_cache/
 *.py[cod]
+
+# STM32CubeIDE local build/index files
+/stm32/parking_robot/Debug/
+/stm32/parking_robot/.settings/language.settings.xml

@@ -170,7 +170,7 @@ def parse_args(argv=None):
         description='ROS 2 Humble cooperative parking robot preflight')
     parser.add_argument('--role', required=True,
                         choices=('jetson', 'front', 'rear'))
-    parser.add_argument('--serial-port', default='/dev/ttyUSB0')
+    parser.add_argument('--serial-port', default='/dev/ttyACM0')
     parser.add_argument('--model-path', default='yolov8n.pt')
     parser.add_argument(
         '--model-mode', default='coco',

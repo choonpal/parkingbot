@@ -85,7 +85,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument(
-            "serial_port", default_value="/dev/ttyUSB0"),
+            "serial_port", default_value="/dev/ttyACM0"),
         DeclareLaunchArgument("enable_serial", default_value="true"),
         DeclareLaunchArgument("require_serial", default_value="true"),
         DeclareLaunchArgument(
@@ -190,7 +190,7 @@ def generate_launch_description():
         DeclareLaunchArgument("waiting_x", default_value="0.45"),
         DeclareLaunchArgument("waiting_y", default_value="0.60"),
         DeclareLaunchArgument("wheel_radius", default_value="0.05"),
-        DeclareLaunchArgument("encoder_ppr", default_value="2600.0"),
+        DeclareLaunchArgument("encoder_ppr", default_value="5182.0"),
         DeclareLaunchArgument("lx", default_value="0.10"),
         DeclareLaunchArgument("ly", default_value="0.10"),
 

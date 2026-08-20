@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """RPi와 STM32 사이의 줄 단위 UART 프로토콜.
 
-RPi → STM32
-  V,vx,vy,w
-  S,grip | S,release
-  HB,timestamp
-  ESTOP
+RPi → STM32 (기존 단일문자 시험 명령과 충돌하지 않도록 @ prefix 사용)
+  @V,vx,vy,w
+  @S,grip | @S,release
+  @HB,timestamp
+  @ESTOP
 
 STM32 → RPi
   E,fl,fr,rl,rr
@@ -25,15 +25,18 @@ class UartProtocol:
     ULTRASONIC_SIDE = {'L': 'left', 'R': 'right'}
 
     def encode_velocity(self, vx, vy, w):
-        return f"V,{vx:.3f},{vy:.3f},{w:.3f}\n"
+        return f"@V,{vx:.3f},{vy:.3f},{w:.3f}\n"
 
     def encode_servo(self, action):
         if action not in ('grip', 'release'):
             raise ValueError("servo action must be 'grip' or 'release'")
-        return f"S,{action}\n"
+        return f"@S,{action}\n"
 
     def encode_heartbeat(self, timestamp):
-        return f"HB,{timestamp:.3f}\n"
+        return f"@HB,{timestamp:.3f}\n"
+
+    def encode_estop(self):
+        return "@ESTOP\n"
 
     def parse(self, line):
         """STM32 → RPi 응답을 엄격하게 파싱한다."""
@@ -92,4 +95,17 @@ class UartProtocol:
                 'type': 'error',
                 'code': ','.join(parts[1:]) if len(parts) > 1 else '?',
             }
+        # 실차 수동 시험기와 공유하는 14-field 진단 telemetry.
+        if tag == 'T' and len(parts) == 14 and len(parts[1]) == 1:
+            try:
+                return {
+                    'type': 'telemetry',
+                    'command': parts[1],
+                    'rpm_x10': [int(value) for value in parts[2:6]],
+                    'pwm': [int(value) for value in parts[6:10]],
+                    'servo_us': [int(value) for value in parts[10:12]],
+                    'ultrasonic_mm': [int(value) for value in parts[12:14]],
+                }
+            except ValueError:
+                return None
         return None

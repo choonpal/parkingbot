@@ -183,8 +183,8 @@ def generate_launch_description():
             'lateral_pair_timeout_s', default_value='0.20'),
         DeclareLaunchArgument('front_lateral_sign', default_value='1.0'),
         DeclareLaunchArgument('rear_lateral_sign', default_value='1.0'),
-        DeclareLaunchArgument('front_serial_port', default_value='/dev/ttyUSB0'),
-        DeclareLaunchArgument('rear_serial_port', default_value='/dev/ttyUSB1'),
+        DeclareLaunchArgument('front_serial_port', default_value='/dev/ttyACM0'),
+        DeclareLaunchArgument('rear_serial_port', default_value='/dev/ttyACM0'),
 
         Node(
             package='cooperative_parking_robot',

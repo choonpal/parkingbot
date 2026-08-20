@@ -13,8 +13,8 @@ WiFi 지연 대비 (Master→Rear cmd_vel이 WiFi 경유):
   (STM32 자체 워치독 300ms는 최후 안전망으로 그대로 유지)
 
 입력:
-  /{role}/cmd_vel (TwistStamped) → UART "V,vx,vy,w"
-  /{role}/grip_command (String) → UART "S,grip/release"
+  /{role}/cmd_vel (TwistStamped) → UART "@V,vx,vy,w"
+  /{role}/grip_command (String) → UART "@S,grip/release"
 출력:
   /{role}/wheel_odom (Odometry) ← UART "E,fl,fr,rl,rr"
       순수 엔코더 dead-reckoning (진단용). pose_fusion_node가 이걸
@@ -39,6 +39,7 @@ import time
 from cooperative_parking_robot.uart_protocol import UartProtocol
 from cooperative_parking_robot.encoder_odometry import EncoderOdometry
 from cooperative_parking_robot.freshness import StampGate, stamp_to_ns
+from cooperative_parking_robot.manual_control import VelocityCommandArbiter
 
 try:
     import serial
@@ -52,14 +53,14 @@ class Stm32BridgeNode(Node):
         super().__init__('stm32_bridge_node')
 
         self.declare_parameter('role', 'front')
-        self.declare_parameter('serial_port', '/dev/ttyUSB0')
+        self.declare_parameter('serial_port', '/dev/ttyACM0')
         self.declare_parameter('serial_baud', 115200)
         self.declare_parameter('enable_serial', True)
         self.declare_parameter('require_serial', False)
         # BOM의 100 mm 메카넘 휠 기준 명목 반경. 실물 유효반경은 실측 후 갱신.
         self.declare_parameter('wheel_radius', 0.05)
-        self.declare_parameter('encoder_ppr', 2600.0)
-        self.declare_parameter('max_delta_ticks', 1300)
+        self.declare_parameter('encoder_ppr', 5182.0)
+        self.declare_parameter('max_delta_ticks', 2591)
         self.declare_parameter('max_linear_mps', 0.25)
         self.declare_parameter('max_angular_rps', 1.0)
         # 로봇 섀시 축간/윤거의 절반 — 실측 후 확정 (이전엔 파라미터로 노출되지
@@ -78,6 +79,10 @@ class Stm32BridgeNode(Node):
         self.role = self.get_parameter('role').value
         if self.role not in ('front', 'rear'):
             raise ValueError("role must be 'front' or 'rear'")
+        # 실차 수동 조작기에서 확인된 섀시 장착 방향 보정. STM32의 양의 축은
+        # 실차 firmware 기준이고, 여기서 ROS REP-103 명령축으로 변환한다.
+        self.command_sign = ((-1.0, -1.0, -1.0) if self.role == 'front'
+                             else (-1.0, 1.0, 1.0))
         self.max_linear = float(self.get_parameter('max_linear_mps').value)
         self.max_angular = float(self.get_parameter('max_angular_rps').value)
         self.protocol = UartProtocol()
@@ -101,6 +106,8 @@ class Stm32BridgeNode(Node):
             raise ValueError('ultrasonic_frame_timeout_s must be positive')
         self.command_stamp_gate = StampGate(
             self.command_source_timeout, self.command_future_tolerance)
+        self.manual_command_stamp_gate = StampGate(
+            self.command_source_timeout, self.command_future_tolerance)
         self.odom_calc = EncoderOdometry(
             wheel_radius=self.get_parameter('wheel_radius').value,
             ppr=self.get_parameter('encoder_ppr').value,
@@ -108,9 +115,10 @@ class Stm32BridgeNode(Node):
             ly=self.get_parameter('ly').value,
             max_delta_ticks=self.get_parameter('max_delta_ticks').value)
 
-        # WiFi 지연 대비: 마지막 cmd 시각/값
-        self.last_cmd = (0.0, 0.0, 0.0)
-        self.last_cmd_time = time.monotonic()
+        # 수동 모드는 auto cmd보다 우선하며, 수동 송신이 끊겨도 auto로
+        # 되돌아가지 않고 0속도를 유지한다.
+        self.command_arbiter = VelocityCommandArbiter(
+            manual_timeout_s=self.command_source_timeout)
         self.last_ack_time = 0.0
         self.last_ultrasonic_frame = {'left': 0.0, 'right': 0.0}
         self.ultrasonic_stale_reported = False
@@ -154,6 +162,15 @@ class Stm32BridgeNode(Node):
             TwistStamped, f'/{self.role}/cmd_vel', self.cmd_vel_cb, 10)
         self.create_subscription(String, f'/{self.role}/grip_command',
                                  self.grip_cb, 10)
+        self.create_subscription(
+            TwistStamped, f'/{self.role}/manual_cmd_vel',
+            self.manual_cmd_vel_cb, 10)
+        self.create_subscription(
+            String, f'/{self.role}/manual_grip_command',
+            self.manual_grip_cb, 10)
+        self.create_subscription(
+            Bool, f'/{self.role}/manual_enable',
+            self.manual_enable_cb, 10)
         self.create_subscription(Bool, '/emergency_stop',
                                  self.estop_cb, 10)
 
@@ -174,6 +191,10 @@ class Stm32BridgeNode(Node):
         }
         self.pub_ultrasonic_status = self.create_publisher(
             String, f'/{self.role}/ultrasonic_status', 10)
+        # 바퀴별 진단. E frame은 합쳐진 odom만 주므로 개별 모터가 목표를
+        # 못 따라가는 상황은 여기서만 보인다.
+        self.pub_motor_diag = self.create_publisher(
+            String, f'/{self.role}/motor_diagnostics', 10)
 
         # ===== 루프 =====
         self.create_timer(0.02, self.read_serial)       # UART 수신
@@ -206,8 +227,43 @@ class Stm32BridgeNode(Node):
         vx = max(-self.max_linear, min(self.max_linear, values[0]))
         vy = max(-self.max_linear, min(self.max_linear, values[1]))
         w = max(-self.max_angular, min(self.max_angular, values[2]))
-        self.last_cmd = (vx, vy, w)
-        self.last_cmd_time = time.monotonic()
+        self.command_arbiter.update_auto((vx, vy, w), time.monotonic())
+
+    def manual_cmd_vel_cb(self, msg):
+        if not self.command_arbiter.manual_enabled:
+            return
+        accepted, reason = self.manual_command_stamp_gate.accept(
+            stamp_to_ns(msg.header.stamp),
+            self.get_clock().now().nanoseconds)
+        if not accepted:
+            self.get_logger().warn(
+                f'manual cmd_vel rejected: {reason}',
+                throttle_duration_sec=1.0)
+            return
+        if msg.header.frame_id not in ('', f'{self.role}_base'):
+            self.get_logger().warn(
+                f'manual cmd frame rejected: {msg.header.frame_id}')
+            return
+        values = (float(msg.twist.linear.x), float(msg.twist.linear.y),
+                  float(msg.twist.angular.z))
+        if not all(math.isfinite(value) for value in values):
+            self.get_logger().error('NaN/Inf manual cmd_vel 거부')
+            return
+        command = (
+            max(-self.max_linear, min(self.max_linear, values[0])),
+            max(-self.max_linear, min(self.max_linear, values[1])),
+            max(-self.max_angular, min(self.max_angular, values[2])))
+        self.command_arbiter.update_manual(command, time.monotonic())
+
+    def manual_enable_cb(self, msg):
+        was_enabled = self.command_arbiter.manual_enabled
+        self.command_arbiter.set_manual_enabled(msg.data, time.monotonic())
+        if msg.data and not was_enabled:
+            self.publish_status('INFO,MANUAL_MODE_ON')
+            self.get_logger().warn(f'[{self.role}] manual override ON')
+        elif not msg.data and was_enabled:
+            self.publish_status('INFO,MANUAL_MODE_OFF')
+            self.get_logger().info(f'[{self.role}] manual override OFF')
 
     def send_velocity_loop(self):
         """50Hz로 STM32에 속도 송신. cmd가 오래되면 감쇠."""
@@ -215,22 +271,27 @@ class Stm32BridgeNode(Node):
             # STM32는 ESTOP을 전원 재인가까지 latch한다. 이후 V 프레임을
             # 계속 보내면 ESTOP_LATCHED 오류만 반복되므로 송신을 멈춘다.
             return
-        age = time.monotonic() - self.last_cmd_time
-        vx, vy, w = self.last_cmd
-        if age > 0.5:
-            vx = vy = w = 0.0          # 완전 정지
-        elif age > 0.2:
-            decay = 1.0 - (age - 0.2) / 0.3   # 0.2~0.5s 선형 감쇠
-            vx *= decay; vy *= decay; w *= decay
-        cmd = self.protocol.encode_velocity(vx, vy, w)
+        vx, vy, w = self.command_arbiter.output(time.monotonic())
+        sx, sy, sw = self.command_sign
+        cmd = self.protocol.encode_velocity(vx * sx, vy * sy, w * sw)
         self._write(cmd)
 
     def grip_cb(self, msg):
+        if self.command_arbiter.manual_enabled:
+            return
+        self._send_grip(msg.data)
+
+    def manual_grip_cb(self, msg):
+        if not self.command_arbiter.manual_enabled:
+            return
+        self._send_grip(msg.data)
+
+    def _send_grip(self, action):
         if self.estop_latched:
             self.get_logger().warn('ESTOP latch 상태에서 그리퍼 명령 거부')
             return
         try:
-            cmd = self.protocol.encode_servo(msg.data)
+            cmd = self.protocol.encode_servo(action)
         except ValueError as e:
             self.get_logger().error(str(e))
             return
@@ -239,8 +300,8 @@ class Stm32BridgeNode(Node):
     def estop_cb(self, msg):
         if msg.data and not self.estop_latched:
             self.estop_latched = True
-            self.last_cmd = (0.0, 0.0, 0.0)
-            self._write('ESTOP\n')
+            self.command_arbiter.force_zero(time.monotonic())
+            self._write(self.protocol.encode_estop())
             self.publish_status('ESTOP')
 
     def send_heartbeat(self):
@@ -316,6 +377,21 @@ class Stm32BridgeNode(Node):
         elif parsed['type'] == 'error':
             self.get_logger().error(f"STM32 ERR: {parsed['code']}")
             self.publish_status(f"ERR,{parsed['code']}")
+        elif parsed['type'] == 'telemetry':
+            # E/U frame가 ROS 데이터의 기준이며 T는 수동 시험기용 진단값이다.
+            # 바퀴별로 목표를 못 따라가는 모터를 찾을 수 있도록 그대로 발행한다.
+            self.publish_motor_diagnostics(parsed)
+
+    def publish_motor_diagnostics(self, parsed):
+        wheels = ('FL', 'FR', 'RL', 'RR')
+        rpm = ','.join(
+            f'{name}:{value / 10.0:.1f}'
+            for name, value in zip(wheels, parsed['rpm_x10']))
+        pwm = ','.join(
+            f'{name}:{value}'
+            for name, value in zip(wheels, parsed['pwm']))
+        self.pub_motor_diag.publish(String(
+            data=f"cmd={parsed['command']} rpm={rpm} pwm={pwm}"))
 
     def publish_ultrasonic(self, parsed):
         side = parsed['side']
@@ -398,7 +474,7 @@ class Stm32BridgeNode(Node):
     def destroy_node(self):
         if self.ser:
             if not self.estop_latched:
-                self._write('V,0,0,0\n')
+                self._write(self.protocol.encode_velocity(0.0, 0.0, 0.0))
             self.ser.close()
         super().destroy_node()
 

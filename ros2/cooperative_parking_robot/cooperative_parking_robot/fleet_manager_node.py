@@ -1135,6 +1135,23 @@ class FleetManagerNode(Node):
                         f'UI 승인으로 임무 시작 ({self.ui_request_id})')
 
         elif self.state == 'WAIT_LIFT':
+            if self.mission_type == 'retrieve' and not self.car_lifted:
+                try:
+                    record = self.registry.get(self.active_source_slot_id)
+                except KeyError:
+                    record = None
+                if (
+                        record is not None and
+                        record.lifecycle is SlotLifecycle.EXIT_RESERVED and
+                        record.reservation_mission_id == self.mission_id and
+                        record.final_vehicle_pose is not None and
+                        record.vehicle_spec is not None):
+                    # Front-first에서는 Rear가 WAIT_FRONT_STAGED에서 target
+                    # freshness 창보다 오래 기다릴 수 있다. Registry pose는
+                    # 이 미션 동안 고정된 권위값이므로 기존 topic을 fresh
+                    # stamp로 유지해 Rear도 같은 target을 latch하게 한다.
+                    self.target_pose = self._publish_retrieve_target(
+                        record.final_vehicle_pose)
             if self.car_lifted:
                 self.state = 'PLAN_PATH'
                 self.publish_state()

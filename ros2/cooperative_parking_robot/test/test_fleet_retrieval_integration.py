@@ -30,6 +30,27 @@ VEHICLE_NUMBER = '12가3456'
 PASSWORD = '2468'
 
 
+class RecordingPublisher:
+    def __init__(self):
+        self.messages = []
+
+    def publish(self, message):
+        self.messages.append(message)
+
+
+class AdjustableClock:
+    def __init__(self, nanoseconds):
+        self.nanoseconds = nanoseconds
+
+    def now(self):
+        nanoseconds = self.nanoseconds
+        return SimpleNamespace(
+            nanoseconds=nanoseconds,
+            to_msg=lambda: SimpleNamespace(
+                sec=nanoseconds // 1_000_000_000,
+                nanosec=nanoseconds % 1_000_000_000))
+
+
 def occupied(direction='forward'):
     registry = ParkingRegistry(['A1'])
     registry.reserve_park(
@@ -213,6 +234,31 @@ def test_retrieve_request_accepts_only_complete_forward_occupied_record():
     assert fleet.registry.lifecycle('A1') is SlotLifecycle.EXIT_RESERVED
     assert fleet.target_pose == POSE
     assert fleet.publish_count == 1
+
+
+def test_wait_lift_refreshes_retrieve_target_for_sequential_rear():
+    fleet = request_harness(occupied())
+    clock = AdjustableClock(1_000_000_000)
+    fleet.get_clock = lambda: clock
+    fleet.pub_target_pose = RecordingPublisher()
+    fleet.pub_vehicle_spec = RecordingPublisher()
+    fleet._publish_retrieve_target = (
+        lambda pose: FleetManagerNode._publish_retrieve_target(fleet, pose))
+    fleet.car_lifted = False
+
+    fleet._handle_retrieve_request(authenticated_request())
+    assert len(fleet.pub_target_pose.messages) == 1
+    assert fleet.pub_target_pose.messages[-1].header.stamp.sec == 1
+
+    # Rear는 Front-first 접근에서 2초 이상 WAIT_FRONT_STAGED에 머물 수 있다.
+    # Fleet의 WAIT_LIFT tick은 Registry target을 새 stamp로 유지해야 한다.
+    clock.nanoseconds = 4_000_000_000
+    FleetManagerNode.manage_loop(fleet)
+
+    assert len(fleet.pub_target_pose.messages) == 2
+    assert fleet.pub_target_pose.messages[-1].header.stamp.sec == 4
+    spec = json.loads(fleet.pub_vehicle_spec.messages[-1].data)
+    assert spec['stamp_ns'] == 4_000_000_000
 
 
 def test_retrieve_request_rejects_unknown_or_empty_registry_identity():

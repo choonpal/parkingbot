@@ -40,6 +40,7 @@ setup(
         (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
         (os.path.join('share', package_name, 'config'),
          glob('config/*.yaml') + glob('config/*.npz')),
+        (os.path.join('share', package_name, 'models'), glob('models/*.pt')),
         (os.path.join('share', package_name, 'docs'), glob('docs/*.md')),
         (os.path.join('share', package_name, 'scripts'), glob('scripts/*.sh')),
     ],

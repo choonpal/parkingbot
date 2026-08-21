@@ -37,6 +37,9 @@ def generate_launch_description():
     default_cctv_calib = PathJoinSubstitution([
         FindPackageShare('cooperative_parking_robot'),
         'config', 'cctv_camera_calibration.npz'])
+    default_vehicle_model = PathJoinSubstitution([
+        FindPackageShare('cooperative_parking_robot'),
+        'models', 'parking_vehicle_yolo11n_seg.pt'])
     runtime_config_dir = PathJoinSubstitution([
         EnvironmentVariable('HOME'), '.ros', 'adaptive_valet_bot'])
     default_homography = PathJoinSubstitution([
@@ -62,9 +65,9 @@ def generate_launch_description():
         DeclareLaunchArgument('calibration_width_px', default_value='1280'),
         DeclareLaunchArgument('calibration_height_px', default_value='720'),
 
-        DeclareLaunchArgument('model_path', default_value='yolov8n.pt'),
-        DeclareLaunchArgument('model_mode', default_value='coco'),
-        DeclareLaunchArgument('inference_imgsz', default_value='320'),
+        DeclareLaunchArgument('model_path', default_value=default_vehicle_model),
+        DeclareLaunchArgument('model_mode', default_value='vehicle_seg'),
+        DeclareLaunchArgument('inference_imgsz', default_value='640'),
         DeclareLaunchArgument('process_every_n', default_value='3'),
         DeclareLaunchArgument('confidence', default_value='0.4'),
         DeclareLaunchArgument('yaw_pca_min_ratio', default_value='1.25'),

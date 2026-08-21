@@ -48,6 +48,7 @@ from launch.substitutions import (
 )
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+from launch_ros.substitutions import FindPackageShare
 
 
 def _float(name):
@@ -86,6 +87,9 @@ def generate_launch_description():
 
     runtime_config_dir = PathJoinSubstitution([
         EnvironmentVariable('HOME'), '.ros', 'adaptive_valet_bot'])
+    default_vehicle_model = PathJoinSubstitution([
+        FindPackageShare('cooperative_parking_robot'),
+        'models', 'parking_vehicle_yolo11n_seg.pt'])
     default_calib0 = PathJoinSubstitution([
         runtime_config_dir, 'cctv0_camera_calibration.npz'])
     default_calib2 = PathJoinSubstitution([
@@ -152,9 +156,9 @@ def generate_launch_description():
         # ============================================================
         # YOLO / BEV
         # ============================================================
-        DeclareLaunchArgument('model_path', default_value='yolov8n.pt'),
-        DeclareLaunchArgument('model_mode', default_value='coco'),
-        DeclareLaunchArgument('inference_imgsz', default_value='320'),
+        DeclareLaunchArgument('model_path', default_value=default_vehicle_model),
+        DeclareLaunchArgument('model_mode', default_value='vehicle_seg'),
+        DeclareLaunchArgument('inference_imgsz', default_value='640'),
         DeclareLaunchArgument(
             'process_every_n', default_value='3',
             description='카메라 2대분 추론이 동시에 돌므로 1대일 때보다 크게 둔다'),

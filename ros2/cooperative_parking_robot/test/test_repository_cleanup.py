@@ -1,5 +1,6 @@
 """Repository hygiene and production-only runtime regression tests."""
 
+import hashlib
 from pathlib import Path
 
 
@@ -83,3 +84,27 @@ def test_web_debug_overlay_never_loads_or_runs_yolo():
     assert 'def _draw_yolo' not in web
     for launch in (PACKAGE_ROOT / 'launch').glob('*.launch.py'):
         assert 'debug_enable_yolo' not in launch.read_text(encoding='utf-8')
+
+
+def test_trained_vehicle_seg_model_is_packaged_and_is_camera_default():
+    model_name = 'parking_vehicle_yolo11n_seg.pt'
+    model_path = PACKAGE_ROOT / 'models' / model_name
+    assert model_path.is_file()
+    assert model_path.stat().st_size == 6_031_189
+    assert hashlib.sha256(model_path.read_bytes()).hexdigest() == (
+        'e60179f0ad4a1b346b1b464dbc0cf93075f1c91385820683b384e238e8c7d896')
+
+    setup_source = (PACKAGE_ROOT / 'setup.py').read_text(encoding='utf-8')
+    assert 'models' in setup_source
+    assert 'glob(\'models/*.pt\')' in setup_source
+
+    for launch_name in (
+            'full_system.launch.py',
+            'cctv_server.launch.py',
+            'cctv_server_dual.launch.py'):
+        launch_source = (
+            PACKAGE_ROOT / 'launch' / launch_name
+        ).read_text(encoding='utf-8')
+        assert '\'models\', \'parking_vehicle_yolo11n_seg.pt\'' in launch_source
+        assert 'model_mode\', default_value=\'vehicle_seg\'' in launch_source
+        assert 'inference_imgsz\', default_value=\'640\'' in launch_source

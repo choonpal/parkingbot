@@ -151,6 +151,10 @@ peer barrier와 상대거리 속도 보정으로 같은 방향 동기 이탈을 
 차량 mask에서는 중심·장축 Yaw·길이·폭도 계산해 `/parking/vehicle_spec`으로
 전달한다.
 
+기본 CCTV launch는 패키지에 포함된
+`models/parking_vehicle_yolo11n_seg.pt`를 `vehicle_seg`, 640 입력으로 사용한다.
+학습 조건과 Jetson 배포 제약은 `docs/PACKAGED_YOLO11_SEG_MODEL.md`에 기록한다.
+
 ### `model_mode:=coco`
 
 기본 `yolov8n.pt`를 사용할 때의 모드다. COCO의 차량 클래스만 사용한다.
@@ -249,12 +253,13 @@ colcon test-result --verbose
 
 ## Jetson 사전 점검
 
-로컬에 미리 준비한 COCO `.pt`를 사용하는 경우:
+패키지에 포함된 YOLO11 차량 segmentation 모델을 점검하는 경우:
 
 ```bash
+MODEL_PREFIX=$(ros2 pkg prefix cooperative_parking_robot)
 hardware_preflight --role jetson \
-  --model-path /absolute/yolov8n.pt \
-  --model-mode coco \
+  --model-path ${MODEL_PREFIX}/share/cooperative_parking_robot/models/parking_vehicle_yolo11n_seg.pt \
+  --model-mode vehicle_seg \
   --homography-file /absolute/homography_rectified.npy
 ```
 

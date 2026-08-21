@@ -36,6 +36,9 @@ def _float(name):
 
 
 def generate_launch_description():
+    default_vehicle_model = PathJoinSubstitution([
+        FindPackageShare('cooperative_parking_robot'),
+        'models', 'parking_vehicle_yolo11n_seg.pt'])
     default_cctv_calib = PathJoinSubstitution([
         FindPackageShare('cooperative_parking_robot'),
         'config', 'cctv_camera_calibration.npz'])
@@ -122,9 +125,9 @@ def generate_launch_description():
         DeclareLaunchArgument('rear_camera_width', default_value='1280'),
         DeclareLaunchArgument('rear_camera_height', default_value='720'),
         DeclareLaunchArgument('rear_camera_fps', default_value='12.0'),
-        DeclareLaunchArgument('model_path', default_value='yolov8n.pt'),
-        DeclareLaunchArgument('model_mode', default_value='coco'),
-        DeclareLaunchArgument('inference_imgsz', default_value='320'),
+        DeclareLaunchArgument('model_path', default_value=default_vehicle_model),
+        DeclareLaunchArgument('model_mode', default_value='vehicle_seg'),
+        DeclareLaunchArgument('inference_imgsz', default_value='640'),
         DeclareLaunchArgument('process_every_n', default_value='3'),
         DeclareLaunchArgument('confidence', default_value='0.4'),
         DeclareLaunchArgument('yaw_pca_min_ratio', default_value='1.25'),

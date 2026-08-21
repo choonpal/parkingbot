@@ -51,7 +51,7 @@ Homography는 반드시 `/cctv/image_rect`에서 다시 생성한 `homography_re
 |---|---|---|
 | `cctv_camera_calibration.npz` | Jetson | 패키지 포함; 동일 카메라·해상도 확인 필요 |
 | `homography_rectified.npy` | Jetson | `bev_layout_calibration.launch.py`로 생성 필수 |
-| `vehicle_seg.engine`(권장) 또는 `yolov8n.pt` | Jetson | 로컬 파일을 별도 준비; 인터넷 자동 다운로드 없음 |
+| `parking_vehicle_yolo11n_seg.pt` | Jetson | 패키지 포함; 인터넷 자동 다운로드 없음 |
 | `rear_camera_calibration.npz` | Rear RPi | 별도 생성 필수 |
 | 천장/Rear Image publisher | Jetson/Rear | 별도 준비 필수 |
 | `stm32/parking_robot` CubeIDE 프로젝트 | 각 STM32 | 저장소 포함; ARM build/flash 실기 확인 필수 |
@@ -61,9 +61,10 @@ Homography는 반드시 `/cctv/image_rect`에서 다시 생성한 `homography_re
 Jetson:
 
 ```bash
+MODEL_PREFIX=$(ros2 pkg prefix cooperative_parking_robot)
 hardware_preflight --role jetson \
-  --model-path /absolute/yolov8n.pt \
-  --model-mode coco \
+  --model-path ${MODEL_PREFIX}/share/cooperative_parking_robot/models/parking_vehicle_yolo11n_seg.pt \
+  --model-mode vehicle_seg \
   --homography-file /absolute/homography_rectified.npy
 ```
 
@@ -132,8 +133,6 @@ ros2 launch cooperative_parking_robot front_robot.launch.py \
 ros2 launch cooperative_parking_robot cctv_server.launch.py \
   enable_opencv_camera:=false \
   cctv_raw_topic:=/camera/image_raw \
-  model_path:=/absolute/yolov8n.pt \
-  model_mode:=coco \
   homography_file:=/absolute/homography_rectified.npy \
   homography_scale_to_m:=1.0 \
   fixed_wheelbase_m:=0.70 \
@@ -148,8 +147,6 @@ ros2 launch cooperative_parking_robot cctv_server.launch.py \
   camera_id:=0 \
   calibration_width_px:=1280 \
   calibration_height_px:=720 \
-  model_path:=/absolute/yolov8n.pt \
-  model_mode:=coco \
   homography_file:=/absolute/homography_rectified.npy \
   homography_scale_to_m:=1.0
 ```

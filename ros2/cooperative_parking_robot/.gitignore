@@ -11,6 +11,7 @@ config/*calibration*.npz
 !config/cctv0_camera_calibration.npz
 !config/cctv2_camera_calibration.npz
 models/*.pt
+!models/parking_vehicle_yolo11n_seg.pt
 
 # Runtime Fleet Parking Registry (SQLite and rollback/WAL sidecars).
 parking_registry.db

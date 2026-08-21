@@ -119,6 +119,32 @@ def test_front_uses_second_axle_and_rear_uses_first_axle():
     assert (only.index, only.final) == (1, True)
 
 
+def test_axle_sequence_rejects_false_pair_outside_absolute_vehicle_window():
+    front = AxleSequenceDetector(
+        target_index=2, expected_spacing_m=0.70,
+        spacing_tolerance_m=0.05, direction=1.0,
+        expected_first_position_m=-0.35,
+        position_tolerance_m=0.15, window_size=1)
+
+    assert _feed_axle(front, -0.75, 0.0) is None
+    rear_axle = _feed_axle(front, -0.35, 1.0)
+    front_axle = _feed_axle(front, 0.35, 2.0)
+    assert (rear_axle.index, rear_axle.final) == (1, False)
+    assert (front_axle.index, front_axle.final) == (2, True)
+
+
+def test_rear_rejects_false_first_pair_then_accepts_actual_rear_axle():
+    rear = AxleSequenceDetector(
+        target_index=1, expected_spacing_m=0.70,
+        spacing_tolerance_m=0.05, direction=1.0,
+        expected_first_position_m=-0.35,
+        position_tolerance_m=0.15, window_size=1)
+
+    assert _feed_axle(rear, 0.20, 0.0) is None
+    actual = _feed_axle(rear, -0.35, 1.0)
+    assert (actual.index, actual.final) == (1, True)
+
+
 def test_aruco_coarse_guard_never_owns_final_axle_center():
     assert rear_scan_speed_from_relative(
         0.70, 0.70, 0.03, 0.006, 0.12, 0.10) > 0.0
@@ -127,6 +153,15 @@ def test_aruco_coarse_guard_never_owns_final_axle_center():
     assert relative_alignment_is_consistent(
         0.72, math.radians(2), 0.70, 0.06, math.radians(4))
     assert marker_loss_speed_scale(1.0, 0.75, 1.5) == 0.35
+
+
+def test_final_relative_alignment_rejects_excess_lateral_offset():
+    assert relative_alignment_is_consistent(
+        0.70, math.radians(2), 0.70, 0.06, math.radians(4),
+        relative_lateral=0.02, lateral_tolerance=0.03)
+    assert not relative_alignment_is_consistent(
+        0.70, math.radians(2), 0.70, 0.06, math.radians(4),
+        relative_lateral=0.031, lateral_tolerance=0.03)
 
 
 def test_approach_route_avoids_protected_vehicle_envelope():

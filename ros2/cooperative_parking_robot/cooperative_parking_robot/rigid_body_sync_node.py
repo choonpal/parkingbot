@@ -444,13 +444,29 @@ class RigidBodySyncNode(Node):
         return True
 
     def aruco_cb(self, msg):
-        if not self._accept_stamped('aruco', msg):
+        if msg.header.frame_id != 'rear_base':
+            self.get_logger().warn(
+                'ArUco pose rejected: WRONG_FRAME',
+                throttle_duration_sec=2.0)
             return
         raw_dist = float(msg.pose.position.x)
         corrected = raw_dist + self.aruco_distance_offset
         q = msg.pose.orientation
-        yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
-                         1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        quaternion = (float(q.x), float(q.y), float(q.z), float(q.w))
+        if not all(math.isfinite(value) for value in quaternion):
+            self.get_logger().warn(
+                'ArUco pose rejected: INVALID_QUATERNION',
+                throttle_duration_sec=2.0)
+            return
+        norm = math.sqrt(sum(value * value for value in quaternion))
+        if norm < 1e-6:
+            self.get_logger().warn(
+                'ArUco pose rejected: INVALID_QUATERNION',
+                throttle_duration_sec=2.0)
+            return
+        qx, qy, qz, qw = (value / norm for value in quaternion)
+        yaw = math.atan2(2.0 * (qw * qz + qx * qy),
+                         1.0 - 2.0 * (qy * qy + qz * qz))
         if not all(math.isfinite(v) for v in (raw_dist, corrected, yaw)):
             self.get_logger().warn(
                 '비정상 ArUco pose 폐기', throttle_duration_sec=2.0)
@@ -460,6 +476,10 @@ class RigidBodySyncNode(Node):
                 f'ArUco 중심거리 범위 밖: raw={raw_dist:.3f}m, '
                 f'corrected={corrected:.3f}m',
                 throttle_duration_sec=2.0)
+            return
+        # Validate the payload envelope before advancing the ordering gate. A
+        # wrong-frame packet must not poison the next legitimate observation.
+        if not self._accept_stamped('aruco', msg):
             return
 
         self.aruco_raw_dist = raw_dist
@@ -883,13 +903,15 @@ class RigidBodySyncNode(Node):
                 self.marker_lost_since = now
         else:
             self.marker_lost_since = None
+            if self._err.startswith('MARKER_HOLD'):
+                self._err = 'OK'
 
         speed_scale = 1.0
         effective_yaw_limit = self.yaw_limit
         if self.marker_lost_since is not None:
             lost = now - self.marker_lost_since
             if lost > self.marker_stop:
-                self.fatal_stop(f'MARKER_LOST {lost:.1f}s')
+                self.recoverable_hold(f'MARKER_HOLD {lost:.1f}s')
                 return False
             if lost > self.marker_slowdown:
                 speed_scale = 0.5
@@ -977,6 +999,14 @@ class RigidBodySyncNode(Node):
         self.pub_estop.publish(Bool(data=True))
         self.estop = True
         self.get_logger().error(reason)
+
+    def recoverable_hold(self, reason):
+        """Stop both robots without discarding the path or latching E-stop."""
+        self.send_stop()
+        self._err = str(reason)
+        self.get_logger().warn(
+            f'{reason}; waiting for fresh visual evidence',
+            throttle_duration_sec=2.0)
 
     def publish_status_now(self):
         info = dict(self._info)

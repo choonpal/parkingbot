@@ -93,11 +93,15 @@ class IndividualMoveNode(Node):
         # slows Rear's coarse scan, and validates the final separation.
         self.declare_parameter("aruco_distance_offset_m", ROBOT_LENGTH_M)
         self.declare_parameter("aruco_timeout_s", 0.30)
+        self.declare_parameter("cctv_marker_timeout_s", 0.50)
         self.declare_parameter("marker_slowdown_s", 0.75)
         self.declare_parameter("marker_stop_s", 1.50)
         self.declare_parameter("relative_lateral_gain", 0.60)
         self.declare_parameter("relative_yaw_gain", 0.70)
         self.declare_parameter("relative_distance_tolerance_m", 0.06)
+        # Provisional demo value; calibrate from ID0 repeatability and gripper
+        # lateral clearance before increasing the operating envelope.
+        self.declare_parameter("relative_lateral_tolerance_m", 0.03)
         self.declare_parameter("relative_yaw_tolerance_deg", 4.0)
         self.declare_parameter("relative_mismatch_timeout_s", 0.50)
         self.declare_parameter("rear_min_scan_speed", 0.006)
@@ -167,6 +171,8 @@ class IndividualMoveNode(Node):
         self.aruco_distance_offset = float(
             gp("aruco_distance_offset_m").value)
         self.aruco_timeout = float(gp("aruco_timeout_s").value)
+        self.cctv_marker_timeout = float(
+            gp("cctv_marker_timeout_s").value)
         self.marker_slowdown = float(gp("marker_slowdown_s").value)
         self.marker_stop = float(gp("marker_stop_s").value)
         self.relative_lateral_gain = float(
@@ -174,6 +180,8 @@ class IndividualMoveNode(Node):
         self.relative_yaw_gain = float(gp("relative_yaw_gain").value)
         self.relative_distance_tolerance = float(
             gp("relative_distance_tolerance_m").value)
+        self.relative_lateral_tolerance = float(
+            gp("relative_lateral_tolerance_m").value)
         self.relative_yaw_tolerance = math.radians(
             float(gp("relative_yaw_tolerance_deg").value))
         self.relative_mismatch_timeout = float(
@@ -217,6 +225,8 @@ class IndividualMoveNode(Node):
             self.mission_data_timeout, self.future_tolerance)
         self.odom_gate = StampGate(
             self.odom_timeout, self.future_tolerance)
+        self.relative_gate = StampGate(
+            self.aruco_timeout, self.future_tolerance)
 
         self.robot_state = "IDLE"
         self.phase = "IDLE"
@@ -255,6 +265,8 @@ class IndividualMoveNode(Node):
         self.relative_marker_visible = False
         self.top_marker_visible = False
         self.top_visibility_received = False
+        self.top_marker_receipt_time = None
+        self.last_visual_observation_time = None
         self.relative_lost_since = None
         self.relative_mismatch_since = None
         self.motion_speed_scale = 1.0
@@ -362,8 +374,11 @@ class IndividualMoveNode(Node):
             "exit_sync_gain": self.exit_sync_gain,
             "scan_overshoot_m": self.scan_overshoot,
             "aruco_timeout_s": self.aruco_timeout,
+            "cctv_marker_timeout_s": self.cctv_marker_timeout,
             "relative_distance_tolerance_m":
                 self.relative_distance_tolerance,
+            "relative_lateral_tolerance_m":
+                self.relative_lateral_tolerance,
             "relative_yaw_tolerance_deg": self.relative_yaw_tolerance,
             "relative_mismatch_timeout_s": self.relative_mismatch_timeout,
             "rear_min_scan_speed": self.rear_min_scan_speed,
@@ -462,6 +477,15 @@ class IndividualMoveNode(Node):
             self.front_staged = False
             self.rear_observation_ready = False
             self.front_align_done = False
+            self.relative_x = None
+            self.relative_y = None
+            self.relative_yaw = None
+            self.relative_receipt_time = None
+            self.relative_marker_visible = False
+            self.top_marker_visible = False
+            self.top_visibility_received = False
+            self.top_marker_receipt_time = None
+            self.last_visual_observation_time = None
             self.active_target = None
             self.route = []
             self.scan_origin_s = None
@@ -610,29 +634,70 @@ class IndividualMoveNode(Node):
         return self.front_staged
 
     def relative_pose_cb(self, msg):
+        if msg.header.frame_id != "rear_base":
+            self.get_logger().warn(
+                "relative pose rejected: WRONG_FRAME",
+                throttle_duration_sec=2.0)
+            return
         raw_distance = float(msg.pose.position.x)
         lateral = float(msg.pose.position.y)
         q = msg.pose.orientation
+        quaternion = (float(q.x), float(q.y), float(q.z), float(q.w))
+        if not all(math.isfinite(value) for value in quaternion):
+            self.get_logger().warn(
+                "relative pose rejected: INVALID_QUATERNION",
+                throttle_duration_sec=2.0)
+            return
+        norm = math.sqrt(sum(value * value for value in quaternion))
+        if norm < 1e-6:
+            self.get_logger().warn(
+                "relative pose rejected: INVALID_QUATERNION",
+                throttle_duration_sec=2.0)
+            return
+        qx, qy, qz, qw = (value / norm for value in quaternion)
         yaw = math.atan2(
-            2.0 * (q.w*q.z + q.x*q.y),
-            1.0 - 2.0 * (q.y*q.y + q.z*q.z))
+            2.0 * (qw*qz + qx*qy),
+            1.0 - 2.0 * (qy*qy + qz*qz))
         corrected_distance = raw_distance + self.aruco_distance_offset
         values = (corrected_distance, lateral, yaw)
         if not all(math.isfinite(value) for value in values):
             return
         if corrected_distance <= 0.0:
             return
+        accepted, reason = self.relative_gate.accept(
+            stamp_to_ns(msg.header.stamp),
+            self.get_clock().now().nanoseconds)
+        if not accepted:
+            self.get_logger().warn(
+                f"relative pose rejected: {reason}",
+                throttle_duration_sec=2.0)
+            return
+        now = time.monotonic()
         self.relative_x = corrected_distance
         self.relative_y = lateral
         self.relative_yaw = angle_norm(yaw)
-        self.relative_receipt_time = time.monotonic()
+        self.relative_receipt_time = now
+        self.last_visual_observation_time = now
 
     def relative_marker_cb(self, msg):
         self.relative_marker_visible = bool(msg.data)
 
     def top_marker_cb(self, msg):
+        now = time.monotonic()
         self.top_marker_visible = bool(msg.data)
         self.top_visibility_received = True
+        self.top_marker_receipt_time = now
+        if self.top_marker_visible:
+            self.last_visual_observation_time = now
+
+    def top_marker_is_fresh(self, now=None):
+        now = time.monotonic() if now is None else float(now)
+        return (
+            self.top_visibility_received and
+            self.top_marker_visible and
+            self.top_marker_receipt_time is not None and
+            0.0 <= now - self.top_marker_receipt_time <
+            self.cctv_marker_timeout)
 
     def relative_is_fresh(self):
         if (not self.relative_marker_visible or
@@ -654,20 +719,24 @@ class IndividualMoveNode(Node):
             self.relative_lost_since = None
             self.motion_speed_scale = 1.0
             return True
-        top_usable = (
-            self.top_visibility_received and self.top_marker_visible)
+        now = time.monotonic()
+        top_usable = self.top_marker_is_fresh(now)
         if top_usable or self.relative_is_fresh():
             self.relative_lost_since = None
             self.motion_speed_scale = 1.0
             return True
-        now = time.monotonic()
         if self.relative_lost_since is None:
-            self.relative_lost_since = now
+            self.relative_lost_since = (
+                self.last_visual_observation_time
+                if self.last_visual_observation_time is not None else now)
         lost_age = now - self.relative_lost_since
         self.motion_speed_scale = marker_loss_speed_scale(
             lost_age, self.marker_slowdown, self.marker_stop)
         if self.motion_speed_scale <= 0.0:
-            self.fault(f"UNDERBODY_VISION_LOST:{lost_age:.2f}s")
+            # Missing visual evidence is recoverable. Hold this local motion
+            # instead of publishing motion_fault, which the Robot FSM promotes
+            # to the global emergency-stop channel.
+            self.stop()
             return False
         return True
 
@@ -707,21 +776,28 @@ class IndividualMoveNode(Node):
             if self.relative_mismatch_since is None:
                 self.relative_mismatch_since = now
             elif now - self.relative_mismatch_since > self.relative_mismatch_timeout:
-                self.fault("FINAL_ID0_MISSING")
+                self.get_logger().warn(
+                    "FINAL_ID0_MISSING: holding alignment without E-stop",
+                    throttle_duration_sec=2.0)
             return False
         consistent = relative_alignment_is_consistent(
             self.relative_x, self.relative_yaw, self.wheelbase,
-            self.relative_distance_tolerance, self.relative_yaw_tolerance)
+            self.relative_distance_tolerance, self.relative_yaw_tolerance,
+            relative_lateral=self.relative_y,
+            lateral_tolerance=self.relative_lateral_tolerance)
         if consistent:
             self.relative_mismatch_since = None
             return True
         if self.relative_mismatch_since is None:
             self.relative_mismatch_since = now
         elif now - self.relative_mismatch_since > self.relative_mismatch_timeout:
-            self.fault(
+            self.get_logger().warn(
                 "FINAL_RELATIVE_CHECK_FAILED:"
                 f"distance={self.relative_x:.3f},"
-                f"yaw={math.degrees(self.relative_yaw):.2f}")
+                f"lateral={self.relative_y:.3f},"
+                f"yaw={math.degrees(self.relative_yaw):.2f}; "
+                "holding alignment without E-stop",
+                throttle_duration_sec=2.0)
         return False
 
     def set_phase(self, phase):

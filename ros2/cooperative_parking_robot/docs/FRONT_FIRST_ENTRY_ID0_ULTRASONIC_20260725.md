@@ -1,6 +1,6 @@
 # Front-first 차량 하부 진입·정렬 구현 기준
 
-최종 갱신: 2026-07-25
+최종 갱신: 2026-08-21
 
 이 문서는 같은 차량 뒤쪽에서 두 로봇이 순차 진입하는 현재 구현의 기준이다.
 과거의 “Rear 선정렬” 또는 “Front/Rear가 반대쪽에서 동시 진입” 설명보다 이
@@ -82,16 +82,25 @@ scan을 휠베이스 부근에서 감속하지만, 초음파가 바퀴의 뒤 �
 | 인양 후 절대 yaw | 보강 필요 | ID0는 상대 yaw만 보며, 현 차량 CCTV 피드백은 절대 yaw를 제공하지 않음 |
 | 천장 CCTV 수량 | 설명 불일치 | 인수인계는 2대지만 현재 launch·보정·융합 코드는 1스트림 기준 |
 
-## P1 — 실물 인양 전 코드에서 반드시 보강할 항목
+## P1 — 2026-08-21 코드 보강 결과
 
 ### P1-A. 상판 마커와 ID0 데이터의 신선도 계약
 
-`individual_move_node`는 상판 마커 Bool의 마지막 값이 `True`이면 수신이 끊긴
-뒤에도 계속 상판 pose가 사용 가능한 것으로 판단한다. 이 경우 의도한
-`ID0 → 제한된 encoder → 감속/정지` 전환이 시작되지 않는다. 또한 이 노드의
-`/sync/relative_pose` 콜백은 `header.stamp`와 `frame_id`를 검사하지 않아 지연된
-ID0 pose를 새 측정처럼 받을 수 있다. `rigid_body_sync_node`는 ID0 stamp는
-검사하지만 `rear_base` frame 계약은 확인하지 않는다.
+상판 marker Bool 수신시각과 `cctv_marker_timeout_s`를 `individual_move_node`에도
+추가했다. 마지막 `True` 후 발행이 끊기면 마지막 유효 관측을 기준으로 기존
+`0.75s` 감속, `1.50s` 정지 사다리를 적용한다. 정지는 복구 가능한 로컬 hold이며
+P1 관측 불만족 자체로 `motion_fault`나 전역 E-stop을 발행하지 않는다. 유효한
+관측이 다시 들어오면 현재 미션 안에서 동작을 재개한다.
+
+인양 후 강체 운반에서도 ID0와 양쪽 상판 marker가 모두 정지시간을 넘겨
+사라지면 `RigidBodySyncNode`가 현재 path를 버리거나 E-stop을 latch하지 않고
+양쪽 속도를 0으로 유지한다. fresh marker가 돌아오면 같은 path를 재개한다.
+
+`individual_move_node`와 `rigid_body_sync_node` 모두 ID0 pose에 대해
+`frame_id == rear_base`, 유효 quaternion, source stamp의 zero/stale/future/
+duplicate/out-of-order 계약을 적용한다. payload envelope를 먼저 검사하므로
+잘못된 frame packet이 stamp gate를 선점하지 않는다. 새 `APPROACH`에서는 이전
+미션의 top/relative marker cache를 비우되 source stamp ordering gate는 유지한다.
 
 필수 수정 기준은 다음과 같다.
 
@@ -101,14 +110,16 @@ ID0 pose를 새 측정처럼 받을 수 있다. `rigid_body_sync_node`는 ID0 st
   stale/future/duplicate 검사를 통과해야 한다.
 - source stamp 검사는 시계 동기화된 ROS 시간으로 하고, 통신 단절 timeout은
   각 장비의 monotonic 수신시각으로 별도 판단한다.
-- 회귀시험에서 마지막 `True` 뒤 발행 노드를 중단했을 때 감속 후 정지해야 한다.
+- 회귀시험에서 마지막 `True` 뒤 발행을 중단했을 때 감속 후 로컬 정지하고,
+  fresh marker 복구 후 다시 진행하는 것을 검증한다.
 
 ### P1-B. 최종 ID0 검사에 상대 횡오차 추가
 
-현재 `final_relative_check()`는 `상대거리≈wheelbase`와 `상대 yaw`만 확인하고
-ID0의 `relative_y`는 확인하지 않는다. 각 로봇의 차량 중심선 오차를 따로
-검사하더라도 최종 인양 직전에는 두 로봇 사이의 직접 횡오차를 한 번 더 막는
-편이 맞다.
+`final_relative_check()`에 `relative_y` 검사를 연결했다. 기본
+`relative_lateral_tolerance_m=0.03`은 시연용 보수 초깃값이며 최종 운용값은
+그리퍼 유격과 ID0 반복 측정으로 확정한다. 거리·yaw·횡오차가 불일치하면 해당
+로봇은 축 정렬 위치에서 정지 대기하고 LIFT ready를 발행하지 않는다. 불일치
+자체는 전역 E-stop으로 승격하지 않으며 정상 관측으로 돌아오면 재검사한다.
 
 - `abs(relative_y) <= relative_lateral_tolerance_m`을 최종 조건에 추가한다.
 - 허용값은 임의로 확정하지 말고 그리퍼 좌우 유격과 ID0 반복 측정 표준편차로
@@ -117,16 +128,22 @@ ID0의 `relative_y`는 확인하지 않는다. 각 로봇의 차량 중심선 �
 
 ### P1-C. 초음파 축 후보의 절대 위치 plausibility gate
 
-현재 Front는 첫 번째 좌우 동시 물체를 rear axle로 저장한 뒤, 그 지점에서 약
-한 휠베이스 떨어진 두 번째 물체만 검사한다. Rear는 첫 번째 좌우 동시 물체를
-바로 rear axle로 인정한다. 따라서 차체 구조물이나 다른 대칭 반사체가 먼저
-잡히면 잘못된 축 순서를 만들 수 있다.
+`AxleSequenceDetector`에 차량 frame 기준 절대 차축 창을 추가했다. 첫 후보는
+`-wheelbase/2`, 둘째 후보는 `+wheelbase/2` 부근이어야 하며 기존 차축 간격
+검사도 유지한다. 기본 `axle_position_tolerance_m=0.15`는 CCTV target pose와
+초음파 장착 오차를 실측하기 전의 시연값이다. 창 밖의 대칭 반사체는 fault 없이
+폐기하므로 뒤이어 들어오는 실제 rear/front axle를 계속 탐색한다.
 
 - latched vehicle frame에서 첫 축은 `s≈-wheelbase/2`, 둘째 축은
   `s≈+wheelbase/2`인 예상 창 안에 있을 때만 axle 후보로 인정한다.
 - YOLO 차량 중심 오차가 있으므로 창 폭은 CCTV 반복 오차를 포함해 실측하고,
   간격 검사도 함께 유지한다.
 - 가짜 좌우 반사체 → 실제 rear axle → 실제 front axle 순서의 시험을 추가한다.
+
+세 조정값 `cctv_marker_timeout_s`, `relative_lateral_tolerance_m`,
+`axle_position_tolerance_m`은 Front/Rear 실차 launch와 `full_system.launch.py`에
+모두 연결했다. P1 관측 gate는 E-stop을 새로 발생시키지 않지만, 기존 하드웨어
+고장과 전체 APPROACH/ALIGN 미션 timeout의 E-stop 정책은 변경하지 않았다.
 
 ## P1 — 코드 수정 또는 시연 범위 제한 중 하나를 반드시 선택할 항목
 
@@ -242,7 +259,7 @@ python3 -m pytest -q
 회귀 테스트는 같은 쪽 진입, Front 2번째/Rear 1번째 축 선택, `0.70m` 간격,
 초음파 종방향 제어권, ID0/ID10/ID11 fallback, 직사각형 footprint A*를 포함한다.
 
-최종 정적 검증 결과: Python `compileall` 통과, `pytest` **89개 전체 통과**.
-이 통과는 현재 구현된 계약의 회귀 결과이며, 위 P1-A~C와 공통 절대 yaw가
-이미 해결됐다는 뜻은 아니다. 카메라·초음파·모터가 연결된 HIL/실물 주행
-검증은 별도 필수 작업이다.
+2026-08-21 정적 검증 결과: 전체 `pytest` **273개 통과**. P1-A의 timeout과
+입력 envelope, P1-B의 횡오차 gate, P1-C의 가짜 반사체 거부를 포함한다.
+P1-B/P1-C 기본 허용값의 실측 보정과 카메라·초음파·모터가 연결된 HIL/실물
+주행 검증은 여전히 필수다.

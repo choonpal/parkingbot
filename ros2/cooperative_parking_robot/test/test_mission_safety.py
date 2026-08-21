@@ -180,7 +180,12 @@ def test_drive_marker_fallback_prefers_id0_then_top_pair_then_encoder():
     assert "ARUCO_DIST_YAW" in sync
     assert "CCTV_ID10_ID11" in sync
     assert "correction = 'ENCODER'" in sync
-    assert "MARKER_LOST" in sync
+    assert "MARKER_HOLD" in sync
+    marker_stop_block = sync.split(
+        "if lost > self.marker_stop:", 1)[1].split(
+        "if lost > self.marker_slowdown:", 1)[0]
+    assert "self.recoverable_hold(" in marker_stop_block
+    assert "self.fatal_stop(" not in marker_stop_block
 
 
 def test_release_exit_order_is_underbody_then_side_then_home():

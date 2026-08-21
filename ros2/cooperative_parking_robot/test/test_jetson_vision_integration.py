@@ -88,7 +88,8 @@ def test_cctv_launch_exposes_camera_model_marker_and_web_controls():
             "executable='opencv_camera'", "executable='jetson_vision_web'"):
         assert token in source
     assert 'allow_model_download' not in source
-    assert "default_value='coco'" in source
+    assert "default_value='vehicle_seg'" in source
+    assert "'models', 'parking_vehicle_yolo11n_seg.pt'" in source
     assert "default_value='false'" in source  # optional camera/web are opt-in
 
 

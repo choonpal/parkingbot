@@ -213,10 +213,14 @@ def relative_alignment_is_consistent(
         relative_yaw,
         wheelbase,
         distance_tolerance,
-        yaw_tolerance):
+        yaw_tolerance,
+        *,
+        relative_lateral=0.0,
+        lateral_tolerance=math.inf):
     return (
         abs(float(center_distance) - float(wheelbase)) <=
         float(distance_tolerance) and
+        abs(float(relative_lateral)) <= float(lateral_tolerance) and
         abs(angle_norm(float(relative_yaw))) <= float(yaw_tolerance)
     )
 

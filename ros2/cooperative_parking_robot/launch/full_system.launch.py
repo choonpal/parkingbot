@@ -171,6 +171,11 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'exit_sync_gain', default_value='0.15'),
         DeclareLaunchArgument('prealign_hold_n', default_value='10'),
+        DeclareLaunchArgument('cctv_marker_timeout_s', default_value='0.50'),
+        DeclareLaunchArgument(
+            'relative_lateral_tolerance_m', default_value='0.03'),
+        DeclareLaunchArgument(
+            'axle_position_tolerance_m', default_value='0.15'),
         DeclareLaunchArgument(
             'use_ultrasonic_lateral', default_value='true'),
         DeclareLaunchArgument(
@@ -326,6 +331,8 @@ def generate_launch_description():
                 'final_approach_dist': 0.02,
                 'aruco_distance_offset_m': 0.565,
                 'use_aruco_distance': True,
+                'cctv_marker_timeout_s': _float(
+                    'cctv_marker_timeout_s'),
                 'initialize_offset_from_target_pose': True,
             }],
             output='screen'),
@@ -400,6 +407,10 @@ def generate_launch_description():
                 'exit_distance_m': 0.50,
                 'substate_timeout_s': 60.0,
                 'aruco_distance_offset_m': 0.565,
+                'cctv_marker_timeout_s': _float(
+                    'cctv_marker_timeout_s'),
+                'relative_lateral_tolerance_m': _float(
+                    'relative_lateral_tolerance_m'),
             }],
             output='screen'),
         Node(
@@ -437,6 +448,10 @@ def generate_launch_description():
                 'exit_distance_m': 0.50,
                 'substate_timeout_s': 60.0,
                 'aruco_distance_offset_m': 0.565,
+                'cctv_marker_timeout_s': _float(
+                    'cctv_marker_timeout_s'),
+                'relative_lateral_tolerance_m': _float(
+                    'relative_lateral_tolerance_m'),
             }],
             output='screen'),
 
@@ -458,6 +473,8 @@ def generate_launch_description():
                 'lateral_pair_timeout_s': _float(
                     'lateral_pair_timeout_s'),
                 'lateral_sign': _float('front_lateral_sign'),
+                'axle_position_tolerance_m': _float(
+                    'axle_position_tolerance_m'),
             }],
             output='screen'),
         Node(
@@ -516,6 +533,8 @@ def generate_launch_description():
                 'lateral_pair_timeout_s': _float(
                     'lateral_pair_timeout_s'),
                 'lateral_sign': _float('rear_lateral_sign'),
+                'axle_position_tolerance_m': _float(
+                    'axle_position_tolerance_m'),
             }],
             output='screen'),
         Node(

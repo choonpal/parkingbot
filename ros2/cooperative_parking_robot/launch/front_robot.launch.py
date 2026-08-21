@@ -75,6 +75,9 @@ def generate_launch_description():
         "substate_timeout_s": _float("substate_timeout_s"),
         "target_timeout_s": _float("target_timeout_s"),
         "aruco_distance_offset_m": aruco_offset,
+        "cctv_marker_timeout_s": _float("cctv_marker_timeout_s"),
+        "relative_lateral_tolerance_m": _float(
+            "relative_lateral_tolerance_m"),
     }
 
     return LaunchDescription([
@@ -159,6 +162,11 @@ def generate_launch_description():
             "substate_timeout_s", default_value="60.0"),
         DeclareLaunchArgument(
             "target_timeout_s", default_value="2.0"),
+        DeclareLaunchArgument("cctv_marker_timeout_s", default_value="0.50"),
+        DeclareLaunchArgument(
+            "relative_lateral_tolerance_m", default_value="0.03"),
+        DeclareLaunchArgument(
+            "axle_position_tolerance_m", default_value="0.15"),
         DeclareLaunchArgument(
             "approach_timeout_s", default_value="150.0"),
         DeclareLaunchArgument(
@@ -193,6 +201,8 @@ def generate_launch_description():
                 "yaw_hold_kp": 1.0,
                 "aruco_distance_offset_m": aruco_offset,
                 "use_aruco_distance": use_aruco_distance,
+                "cctv_marker_timeout_s": _float(
+                    "cctv_marker_timeout_s"),
                 "initialize_offset_from_target_pose": True,
                 "initial_target_offset_gate_m": 0.50,
             }],
@@ -262,6 +272,8 @@ def generate_launch_description():
                 "lateral_pair_timeout_s": _float(
                     "lateral_pair_timeout_s"),
                 "lateral_sign": _float("lateral_sign"),
+                "axle_position_tolerance_m": _float(
+                    "axle_position_tolerance_m"),
             }],
             output="screen"),
 

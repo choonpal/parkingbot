@@ -68,6 +68,9 @@ class UltrasonicEdgeNode(Node):
         self.declare_parameter(
             "expected_axle_spacing_m", DEFAULT_WHEELBASE_M)
         self.declare_parameter("axle_spacing_tolerance_m", 0.15)
+        # Provisional demo window. Final value must include CCTV target-pose and
+        # ultrasonic mounting repeatability measured on the physical vehicle.
+        self.declare_parameter("axle_position_tolerance_m", 0.15)
         self.declare_parameter("use_vehicle_spec_wheelbase", True)
         self.declare_parameter("odom_timeout_s", 0.50)
         self.declare_parameter("future_tolerance_s", 0.10)
@@ -95,12 +98,15 @@ class UltrasonicEdgeNode(Node):
             gp("expected_axle_spacing_m").value)
         self.axle_spacing_tolerance = float(
             gp("axle_spacing_tolerance_m").value)
+        self.axle_position_tolerance = float(
+            gp("axle_position_tolerance_m").value)
         self.use_vehicle_spec_wheelbase = bool(
             gp("use_vehicle_spec_wheelbase").value)
         if self.expected_axle_spacing <= 0.0:
             raise ValueError("expected_axle_spacing_m must be positive")
-        if self.axle_spacing_tolerance <= 0.0:
-            raise ValueError("axle_spacing_tolerance_m must be positive")
+        if (self.axle_spacing_tolerance <= 0.0 or
+                self.axle_position_tolerance <= 0.0):
+            raise ValueError("axle tolerances must be positive")
         self.odom_timeout = float(gp("odom_timeout_s").value)
         self.future_tolerance = float(gp("future_tolerance_s").value)
         if self.odom_timeout <= 0.0 or self.future_tolerance < 0.0:
@@ -146,6 +152,8 @@ class UltrasonicEdgeNode(Node):
             expected_spacing_m=self.expected_axle_spacing,
             spacing_tolerance_m=self.axle_spacing_tolerance,
             direction=scan_direction(self.role),
+            expected_first_position_m=-self.expected_axle_spacing / 2.0,
+            position_tolerance_m=self.axle_position_tolerance,
             threshold_m=self.threshold_m,
             exit_hysteresis_m=float(gp("exit_hysteresis_m").value),
             window_size=int(gp("window_size").value),
@@ -194,6 +202,7 @@ class UltrasonicEdgeNode(Node):
             f"[{self.role}] vehicle-frame ultrasonic edge mode "
             f"(target_axle={self.target_axle}, "
             f"spacing={self.expected_axle_spacing:.3f}m, "
+            f"position_tol={self.axle_position_tolerance:.3f}m, "
             f"left_offset={self.sensor_to_gripper_x['left']:+.3f}m, "
             f"right_offset={self.sensor_to_gripper_x['right']:+.3f}m)")
 
@@ -258,7 +267,7 @@ class UltrasonicEdgeNode(Node):
                     throttle_duration_sec=2.0)
                 return
             self.expected_axle_spacing = candidate
-            self.detector.set_expected_spacing(candidate)
+            self.detector.set_expected_geometry(candidate, -candidate / 2.0)
         except (KeyError, TypeError, ValueError, RuntimeError,
                 json.JSONDecodeError) as exc:
             self.get_logger().warn(

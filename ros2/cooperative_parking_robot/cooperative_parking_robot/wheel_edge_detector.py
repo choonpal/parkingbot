@@ -114,15 +114,32 @@ class AxleSequenceDetector:
             expected_spacing_m,
             spacing_tolerance_m,
             direction=1.0,
+            expected_first_position_m=None,
+            position_tolerance_m=None,
             **pair_kwargs):
         self.target_index = int(target_index)
         self.expected_spacing = float(expected_spacing_m)
         self.spacing_tolerance = float(spacing_tolerance_m)
         self.direction = 1.0 if float(direction) >= 0.0 else -1.0
+        self.expected_first_position = (
+            None if expected_first_position_m is None else
+            float(expected_first_position_m))
+        self.position_tolerance = (
+            None if position_tolerance_m is None else
+            float(position_tolerance_m))
         if self.target_index < 1:
             raise ValueError("target_index must be at least 1")
         if self.expected_spacing <= 0.0 or self.spacing_tolerance <= 0.0:
             raise ValueError("spacing and tolerance must be positive")
+        if ((self.expected_first_position is None) !=
+                (self.position_tolerance is None)):
+            raise ValueError(
+                "expected first position and tolerance must be configured together")
+        if (self.expected_first_position is not None and
+                (not math.isfinite(self.expected_first_position) or
+                 not math.isfinite(self.position_tolerance) or
+                 self.position_tolerance <= 0.0)):
+            raise ValueError("invalid absolute axle position window")
         self.pair_kwargs = dict(pair_kwargs)
         self.reset()
 
@@ -138,10 +155,29 @@ class AxleSequenceDetector:
             raise RuntimeError("cannot change axle spacing during a scan")
         self.expected_spacing = spacing_m
 
+    def set_expected_geometry(self, spacing_m, first_position_m):
+        spacing_m = float(spacing_m)
+        first_position_m = float(first_position_m)
+        if (spacing_m <= 0.0 or not math.isfinite(spacing_m) or
+                not math.isfinite(first_position_m)):
+            raise ValueError("invalid expected axle geometry")
+        if self.centers:
+            raise RuntimeError("cannot change axle geometry during a scan")
+        self.expected_spacing = spacing_m
+        self.expected_first_position = first_position_m
+
     def update(self, side, distance_m, position_x, timestamp):
         center = self.pair.update(side, distance_m, position_x, timestamp)
         if center is None:
             return None
+
+        if self.expected_first_position is not None:
+            expected_absolute = (
+                self.expected_first_position +
+                self.direction * len(self.centers) * self.expected_spacing)
+            if abs(float(center) - expected_absolute) > self.position_tolerance:
+                self.pair.reset()
+                return None
 
         # Rear needs only the first pair. For Front, reject a second object
         # that is not approximately one wheelbase beyond the first pair.

@@ -12,8 +12,12 @@
  *   3-4. ultrasonic_task  : HC-SR04 좌/우 교대 측정 + UART 송신
  *
  * UART 프로토콜:
- *   수신: "V,vx,vy,omega\n"  (속도 명령, m/s)
- *         "S,grip\n" / "S,release\n"  (arm 제어)
+ *   수신: "@V,vx,vy,omega\n"  (속도 명령, m/s)
+ *         "@S,grip\n" / "@S,release\n"  (arm 제어)
+ *         "@HB,timestamp\n" / "@ESTOP\n"
+ *         "@M,FL|FR|RL|RR,pwm\n" (정비용 단일 바퀴, |pwm|<=120)
+ *   기존 실차 시험기의 W/S/A/D/Q/E, U/J/I/K/T/G/O/X 단일문자 명령도
+ *   그대로 지원한다. '@' prefix가 두 프로토콜의 S/E 충돌을 막는다.
  *   송신: "E,fl,fr,rl,rr\n"  (엔코더 카운트)
  *         "U,L,83\n" / "U,R,86\n"  (초음파 거리 mm)
  *         "U,L,TIMEOUT\n"              (Echo timeout)
@@ -23,6 +27,7 @@
  */
 
 #include "main.h"
+#include "parking_robot_firmware.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,25 +37,29 @@
 /* ===== 하드웨어 핸들 (CubeMX 생성) ===== */
 extern UART_HandleTypeDef huart2;     // 라즈베리파이 통신
 extern TIM_HandleTypeDef htim1;       // 모터 PWM CH1~4
-extern TIM_HandleTypeDef htim2;       // 엔코더 (FL, 32-bit)
-extern TIM_HandleTypeDef htim3;       // 엔코더 (FR, 16-bit)
+extern TIM_HandleTypeDef htim2;       // 엔코더 (FR, 32-bit)
+extern TIM_HandleTypeDef htim3;       // 엔코더 (RR, 16-bit)
 extern TIM_HandleTypeDef htim4;       // 엔코더 (RL, 16-bit)
-extern TIM_HandleTypeDef htim5;       // 엔코더 (RR, 32-bit)
+extern TIM_HandleTypeDef htim5;       // 엔코더 (FL, 32-bit)
 extern TIM_HandleTypeDef htim9;       // 초음파 1 MHz free-running timebase
 extern TIM_HandleTypeDef htim10;      // 좌 서보 PWM CH1
 extern TIM_HandleTypeDef htim11;      // 우 서보 PWM CH1
 
 
-/* CubeIDE 프로젝트의 MOTOR1~4를 FL/FR/RL/RR 순서로 사용한다. */
+/* 뒤쪽은 PCB 핀 배치가 PWM과 DIR 모두 4/3 순서다.
+ *   RL = TIM1_CH4(PA11) + MOTOR4_DIR(PC3)
+ *   RR = TIM1_CH3(PA10) + MOTOR3_DIR(PC2)
+ * PWM만 4/3으로 두고 DIR을 3/4로 쓰면 각 바퀴가 상대 DIR을 보게 되어
+ * 직진에서는 숨고 회전·횡이동에서만 방향 제어가 깨진다. */
 #ifndef MOTOR_FL_DIR_GPIO_Port
 #define MOTOR_FL_DIR_GPIO_Port MOTOR1_DIR_GPIO_Port
 #define MOTOR_FL_DIR_Pin       MOTOR1_DIR_Pin
 #define MOTOR_FR_DIR_GPIO_Port MOTOR2_DIR_GPIO_Port
 #define MOTOR_FR_DIR_Pin       MOTOR2_DIR_Pin
-#define MOTOR_RL_DIR_GPIO_Port MOTOR3_DIR_GPIO_Port
-#define MOTOR_RL_DIR_Pin       MOTOR3_DIR_Pin
-#define MOTOR_RR_DIR_GPIO_Port MOTOR4_DIR_GPIO_Port
-#define MOTOR_RR_DIR_Pin       MOTOR4_DIR_Pin
+#define MOTOR_RL_DIR_GPIO_Port MOTOR4_DIR_GPIO_Port
+#define MOTOR_RL_DIR_Pin       MOTOR4_DIR_Pin
+#define MOTOR_RR_DIR_GPIO_Port MOTOR3_DIR_GPIO_Port
+#define MOTOR_RR_DIR_Pin       MOTOR3_DIR_Pin
 #endif
 
 /* parking_robot.ioc의 초음파 배치를 그대로 사용한다.
@@ -70,17 +79,15 @@ extern TIM_HandleTypeDef htim11;      // 우 서보 PWM CH1
 #define WHEEL_RADIUS    0.05f      // 100mm 메카넘 명목 반경; 유효반경 실측 후 확정
 #define LX              0.10f      // 좌우 바퀴 거리/2
 #define LY              0.10f      // 전후 바퀴 거리/2
-#define ENCODER_PPR     2600.0f    // 26PPR * 100 감속비
-#define CONTROL_HZ      100.0f     // 제어 주기
+#define ENCODER_PPR     5182.0f    // 실차 telemetry로 확인된 1회전 count
+#define CONTROL_HZ      20.0f      // 실차에서 검증된 50 ms 제어 주기
 #define DT              (1.0f / CONTROL_HZ)
 #define HEARTBEAT_TIMEOUT_MS 300U
-#define COMMAND_TIMEOUT_MS   300U
+#define COMMAND_TIMEOUT_MS   250U
 #define SERVO_TIMEOUT_MS    5000U
-#define STALL_LIMIT_CYCLES    50U   // 100Hz에서 0.5초
-#define STALL_TARGET_RAD_S   0.50f
 #define MAX_LINEAR_MPS       0.25f
 #define MAX_ANGULAR_RAD_S    1.00f
-#define MOTOR_PWM_COMMAND_MAX 999.0f
+#define MOTOR_PWM_COMMAND_MAX 350.0f
 #define SERVO_NUM               2
 #define ULTRASONIC_NUM          2
 #define ULTRASONIC_TRIGGER_US  10U
@@ -88,6 +95,22 @@ extern TIM_HandleTypeDef htim11;      // 우 서보 PWM CH1
 #define ULTRASONIC_TIMEOUT_MS  25U
 #define ULTRASONIC_MIN_MM      20U
 #define ULTRASONIC_MAX_MM    4000U
+#define MANUAL_WHEEL_RAD_S     1.2566371f /* 실차 12 rpm */
+#define OPEN_LOOP_PWM          180.0f
+#define MOTOR_TEST_PWM_MAX        120L
+#define SERVO_COMMAND_STEP_US   50.0f
+#define SERVO_RAMP_STEP_US      30.0f
+#define TELEMETRY_PERIOD_MS    200U
+#define SPEED_KP                  3L
+#define SPEED_KI_DIVISOR         32L
+#define SPEED_INTEGRAL_LIMIT   3200L
+#define PWM_FEEDFORWARD_AT_12RPM 200L
+#define TARGET_RAMP_RPM_X10      10
+/* 엔코더 부호가 뒤집히면 PID가 반대로 밀어 출력이 상한에 붙는다.
+ * ramp가 끝난 정상상태에서 20cycle(1초) 동안 실제 회전이 목표와
+ * 반대이면 정지시킨다. ramp 중에는 판정하지 않아 정상적인 방향
+ * 전환과 구분된다. */
+#define WRONG_DIRECTION_LIMIT_CYCLES 20U
 
 /* ===== 메카넘 모터 인덱스 ===== */
 enum { FL = 0, FR, RL, RR, MOTOR_NUM };
@@ -109,12 +132,34 @@ static const uint16_t kUltrasonicEchoPin[ULTRASONIC_NUM] = {
 /* 실제 배선/모터 장착 방향에 맞춰 반드시 저속 잭업 시험으로 확정한다.
  * command sign: +1이면 양의 wheel target에서 DIR=SET, -1이면 반대.
  * encoder sign: 양의 wheel 회전 때 누적 count가 증가하도록 맞춘다. */
-static const int8_t kMotorCommandSign[MOTOR_NUM] = {1, 1, 1, 1};
-static const int8_t kEncoderSign[MOTOR_NUM] = {1, 1, 1, 1};
+/* 2026-08-20 오픈루프 실측으로 확정. 네 바퀴에 같은 논리 PWM +180을 줬을 때
+ * FL +9.91, FR +10.02, RL -9.95, RR -10.12으로 앞뒤가 반대로 돌았다.
+ * 육안으로도 앞바퀴는 뒤로, 뒷바퀴는 앞으로 돌아 서로 마주보는 상태였다.
+ * 뒤쪽 두 항목을 반전해 네 바퀴가 같은 방향을 향하게 한다. */
+static const int8_t kMotorCommandSign[MOTOR_NUM] = {1, -1, 1, -1};
+/* enc[] 교차를 바로잡으면서 네 바퀴 규약이 통일됐으므로 표준값을 쓴다.
+ * 손으로 네 바퀴를 전진 방향으로 돌린 실측으로 확인했다. 직진만으로는
+ * 뒤쪽 두 채널의 교차를 볼 수 없고(두 바퀴가 같은 방향이라 값이 같다)
+ * 회전을 10초 이상 유지해야 드러난다. 기존 실차 주행은 오픈루프라
+ * 이 오류가 전혀 드러나지 않았다. */
+static const int8_t kEncoderSign[MOTOR_NUM] = {1, -1, 1, -1};
 
 /* 좌/우 기구가 mirror라면 각 값을 독립적으로 반대로 튜닝한다. */
-static const float kServoOpenDeg[SERVO_NUM] = {30.0f, 30.0f};
-static const float kServoGripDeg[SERVO_NUM] = {90.0f, 90.0f};
+#if PARKING_ROBOT_PROFILE == PARKING_ROBOT_PROFILE_FRONT
+/* robot-2: ArUco가 달린 front 로봇에서 실차 검증된 pulse 범위. */
+static const float kServoOpenPulseUs[SERVO_NUM] = {2600.0f, 400.0f};
+static const float kServoGripPulseUs[SERVO_NUM] = {1550.0f, 1450.0f};
+static const float kServoMinPulseUs[SERVO_NUM] = {1550.0f, 400.0f};
+static const float kServoMaxPulseUs[SERVO_NUM] = {2600.0f, 1450.0f};
+#elif PARKING_ROBOT_PROFILE == PARKING_ROBOT_PROFILE_REAR
+/* robot-1: rear 로봇에서 실차 검증된 pulse 범위. */
+static const float kServoOpenPulseUs[SERVO_NUM] = {400.0f, 2600.0f};
+static const float kServoGripPulseUs[SERVO_NUM] = {1600.0f, 1400.0f};
+static const float kServoMinPulseUs[SERVO_NUM] = {400.0f, 1400.0f};
+static const float kServoMaxPulseUs[SERVO_NUM] = {1600.0f, 2600.0f};
+#else
+#error "PARKING_ROBOT_PROFILE must be FRONT(1) or REAR(2)"
+#endif
 
 /* ===== PID 구조체 ===== */
 typedef struct {
@@ -146,6 +191,13 @@ typedef struct {
     uint8_t command_seen;            // 첫 유효 V 수신 후 timeout 감시 시작
     uint8_t heartbeat_timed_out;
     uint8_t command_timed_out;
+    uint8_t manual_mode;
+    uint8_t manual_open_loop;
+    char last_command;
+    float motor_pwm[MOTOR_NUM];
+    int16_t target_rpm_x10[MOTOR_NUM];
+    int32_t speed_integral[MOTOR_NUM];
+    uint8_t wrong_direction_cycles[MOTOR_NUM];
 } RobotState_t;
 
 RobotState_t g_robot;
@@ -170,6 +222,7 @@ static volatile uint8_t g_ultrasonic_tx_pending[ULTRASONIC_NUM];
 uint8_t uart_rx_byte;
 char uart_rx_buf[64];
 uint8_t uart_rx_idx = 0;
+static uint8_t uart_frame_active = 0U;
 
 /* ISR에서는 blocking UART 송신을 하지 않고 main loop가 응답을 보낸다. */
 #define TX_ACK          (1U << 0)
@@ -196,6 +249,54 @@ static void QueueUltrasonic(uint8_t side, int32_t distance_mm);
 static void Ultrasonic_Task(void);
 static void Ultrasonic_StartMeasurement(uint8_t side);
 static uint16_t Ultrasonic_Micros(void);
+static void Legacy_ApplyCommand(uint8_t command);
+static void Legacy_SetVector(float forward, float right, float clockwise);
+static void Legacy_SetOpenLoop(float forward, float right, float clockwise);
+static void UART_SendTelemetry(void);
+static bool ParseDecimalToken(const char **cursor, char terminator, float *value);
+
+/* newlib-nano는 기본 링크 설정에서 scanf의 %f 지원이 빠져 있다.
+ * ROS가 보내는 짧은 10진수 토큰을 직접 읽어 CubeIDE 링크 옵션에 의존하지 않는다. */
+static bool ParseDecimalToken(const char **cursor, char terminator, float *value)
+{
+    const char *p = *cursor;
+    bool negative = false;
+    bool has_digit = false;
+    float parsed = 0.0f;
+
+    if (*p == '-' || *p == '+') {
+        negative = (*p == '-');
+        p++;
+    }
+
+    while (*p >= '0' && *p <= '9') {
+        has_digit = true;
+        parsed = parsed * 10.0f + (float)(*p - '0');
+        if (parsed > 1000.0f) {
+            return false;
+        }
+        p++;
+    }
+
+    if (*p == '.') {
+        float place = 0.1f;
+        p++;
+        while (*p >= '0' && *p <= '9') {
+            has_digit = true;
+            parsed += (float)(*p - '0') * place;
+            place *= 0.1f;
+            p++;
+        }
+    }
+
+    if (!has_digit || *p != terminator) {
+        return false;
+    }
+
+    *value = negative ? -parsed : parsed;
+    *cursor = (terminator == '\0') ? p : p + 1;
+    return true;
+}
 
 /* ==================================================
  * 초기화
@@ -206,40 +307,32 @@ void Robot_Init(void)
     memset(&g_ultrasonic, 0, sizeof(g_ultrasonic));
     g_ultrasonic.next_side = ULTRA_LEFT;
 
-    // 바퀴별 PID 게인 설정
-    for (int i = 0; i < MOTOR_NUM; i++) {
-        g_robot.pid[i].Kp = 2.0f;
-        g_robot.pid[i].Ki = 0.5f;
-        g_robot.pid[i].Kd = 0.1f;
-        g_robot.pid[i].out_limit = MOTOR_PWM_COMMAND_MAX;
-    }
-
     // 서보 초기값 (열림)
     g_robot.servo_state = 0;
     for (int i = 0; i < SERVO_NUM; i++) {
-        g_robot.servo_current[i] = kServoOpenDeg[i];
-        g_robot.servo_target[i] = kServoOpenDeg[i];
+        g_robot.servo_current[i] = kServoOpenPulseUs[i];
+        g_robot.servo_target[i] = kServoOpenPulseUs[i];
     }
     g_robot.last_cmd_time = HAL_GetTick();
     g_robot.last_heartbeat_time = HAL_GetTick();
+    g_robot.last_command = 'X';
 
     // 엔코더 타이머 시작
     HAL_TIM_Encoder_Start(&htim2, TIM_CHANNEL_ALL);
     HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
     HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL);
     HAL_TIM_Encoder_Start(&htim5, TIM_CHANNEL_ALL);
-    g_robot.encoder_prev[FL] = (int32_t)__HAL_TIM_GET_COUNTER(&htim2);
-    g_robot.encoder_prev[FR] = (int32_t)__HAL_TIM_GET_COUNTER(&htim3);
+    g_robot.encoder_prev[FL] = (int32_t)__HAL_TIM_GET_COUNTER(&htim5);
+    g_robot.encoder_prev[FR] = (int32_t)__HAL_TIM_GET_COUNTER(&htim2);
     g_robot.encoder_prev[RL] = (int32_t)__HAL_TIM_GET_COUNTER(&htim4);
-    g_robot.encoder_prev[RR] = (int32_t)__HAL_TIM_GET_COUNTER(&htim5);
+    g_robot.encoder_prev[RR] = (int32_t)__HAL_TIM_GET_COUNTER(&htim3);
 
     // PWM 시작
     HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);  // 모터
     HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
     HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
     HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4);
-    HAL_TIM_PWM_Start(&htim10, TIM_CHANNEL_1); // 좌 서보
-    HAL_TIM_PWM_Start(&htim11, TIM_CHANNEL_1); // 우 서보
+    /* 실차 기준: 부팅만으로 arm이 움직이지 않게 서보 PWM은 명령 때 시작한다. */
 
     /* TIM9: prescaler를 1 MHz tick, period 65535로 설정한다.
      * ECHO GPIO는 EXTI rising+falling, TRIG GPIO는 push-pull output. */
@@ -303,12 +396,25 @@ static void UART_SendPending(void)
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     if (huart->Instance == USART2) {
-        if (uart_rx_byte == '\n') {
+        if (!uart_frame_active) {
+            if (uart_rx_byte == '@') {
+                uart_frame_active = 1U;
+                uart_rx_idx = 0U;
+            } else if (uart_rx_byte != '\r' && uart_rx_byte != '\n') {
+                Legacy_ApplyCommand(uart_rx_byte);
+            }
+        } else if (uart_rx_byte == '\n') {
             uart_rx_buf[uart_rx_idx] = '\0';
             UART_ParseCommand(uart_rx_buf);
-            uart_rx_idx = 0;
-        } else if (uart_rx_idx < sizeof(uart_rx_buf) - 1) {
-            uart_rx_buf[uart_rx_idx++] = uart_rx_byte;
+            uart_rx_idx = 0U;
+            uart_frame_active = 0U;
+        } else if (uart_rx_byte != '\r' &&
+                   uart_rx_idx < sizeof(uart_rx_buf) - 1U) {
+            uart_rx_buf[uart_rx_idx++] = (char)uart_rx_byte;
+        } else if (uart_rx_byte != '\r') {
+            uart_rx_idx = 0U;
+            uart_frame_active = 0U;
+            QueueError("FRAME_TOO_LONG");
         }
         HAL_UART_Receive_IT(&huart2, &uart_rx_byte, 1);
     }
@@ -331,7 +437,11 @@ void UART_ParseCommand(char *cmd)
     } else if (cmd[0] == 'V') {
         // 속도 명령
         float vx, vy, omega;
-        if (sscanf(cmd, "V,%f,%f,%f", &vx, &vy, &omega) == 3) {
+        const char *cursor = cmd + 2;
+        if (cmd[1] == ',' &&
+            ParseDecimalToken(&cursor, ',', &vx) &&
+            ParseDecimalToken(&cursor, ',', &vy) &&
+            ParseDecimalToken(&cursor, '\0', &omega)) {
             if (g_robot.estop_latched) {
                 QueueError("ESTOP_LATCHED");
                 return;
@@ -348,10 +458,63 @@ void UART_ParseCommand(char *cmd)
             g_robot.target_omega = omega;
             g_robot.last_cmd_time = HAL_GetTick();
             g_robot.command_seen = 1;
+            g_robot.manual_mode = 0U;
+            g_robot.manual_open_loop = 0U;
+            g_robot.last_command = 'V';
             Mecanum_InverseKinematics(vx, vy, omega);
         } else {
             QueueError("BAD_V_FRAME");
         }
+    } else if (strncmp(cmd, "M,", 2) == 0) {
+        /* 정비용 단일 바퀴 오픈루프 명령. bridge를 끈 잭업 상태에서만 쓴다.
+         * 250ms마다 갱신하지 않으면 기존 command watchdog이 즉시 정지시킨다. */
+        if (g_robot.estop_latched) {
+            QueueError("ESTOP_LATCHED");
+            return;
+        }
+        if (strcmp(cmd, "M,STOP") == 0) {
+            Robot_StopMotorsImmediate();
+            g_robot.manual_mode = 1U;
+            g_robot.last_cmd_time = HAL_GetTick();
+            g_robot.last_command = 'M';
+            QueueAck("MOTOR_STOP");
+            return;
+        }
+
+        int motor_index = -1;
+        const char *pwm_text = NULL;
+        if (strncmp(&cmd[2], "FL,", 3) == 0) {
+            motor_index = FL;
+            pwm_text = &cmd[5];
+        } else if (strncmp(&cmd[2], "FR,", 3) == 0) {
+            motor_index = FR;
+            pwm_text = &cmd[5];
+        } else if (strncmp(&cmd[2], "RL,", 3) == 0) {
+            motor_index = RL;
+            pwm_text = &cmd[5];
+        } else if (strncmp(&cmd[2], "RR,", 3) == 0) {
+            motor_index = RR;
+            pwm_text = &cmd[5];
+        }
+
+        char *end = NULL;
+        long requested_pwm = (pwm_text != NULL)
+            ? strtol(pwm_text, &end, 10) : 0L;
+        if (motor_index < 0 || pwm_text == NULL || end == pwm_text ||
+            *end != '\0' || requested_pwm < -MOTOR_TEST_PWM_MAX ||
+            requested_pwm > MOTOR_TEST_PWM_MAX) {
+            QueueError("BAD_MOTOR_TEST");
+            return;
+        }
+
+        Robot_StopMotorsImmediate();
+        Set_MotorPWM(motor_index, (float)requested_pwm);
+        g_robot.manual_mode = 1U;
+        g_robot.manual_open_loop = 1U;
+        g_robot.command_seen = 1U;
+        g_robot.last_cmd_time = HAL_GetTick();
+        g_robot.last_command = 'M';
+        QueueAck("MOTOR_TEST");
     } else if (strncmp(cmd, "S,", 2) == 0) {
         if (g_robot.estop_latched) {
             QueueError("ESTOP_LATCHED");
@@ -361,6 +524,8 @@ void UART_ParseCommand(char *cmd)
             QueueError("LIFT_WHILE_MOVING");
             return;
         }
+        HAL_TIM_PWM_Start(&htim10, TIM_CHANNEL_1);
+        HAL_TIM_PWM_Start(&htim11, TIM_CHANNEL_1);
         uint8_t requested_state;
         uint8_t done_flag;
         if (strcmp(cmd, "S,grip") == 0) {
@@ -383,7 +548,7 @@ void UART_ParseCommand(char *cmd)
             g_robot.servo_state = requested_state;
             for (int i = 0; i < SERVO_NUM; i++) {
                 g_robot.servo_target[i] = requested_state
-                    ? kServoGripDeg[i] : kServoOpenDeg[i];
+                    ? kServoGripPulseUs[i] : kServoOpenPulseUs[i];
             }
             g_robot.servo_motion_active = 1;
             g_robot.servo_motion_start = HAL_GetTick();
@@ -392,6 +557,125 @@ void UART_ParseCommand(char *cmd)
     } else {
         QueueError("UNKNOWN_COMMAND");
     }
+}
+
+static void Legacy_SetVector(float forward, float right, float clockwise)
+{
+    float wheel[MOTOR_NUM] = {
+        forward + right + clockwise,
+        forward - right - clockwise,
+        forward - right + clockwise,
+        forward + right - clockwise
+    };
+    float max_magnitude = 1.0f;
+    for (int i = 0; i < MOTOR_NUM; i++) {
+        float magnitude = fabsf(wheel[i]);
+        if (magnitude > max_magnitude) max_magnitude = magnitude;
+    }
+    for (int i = 0; i < MOTOR_NUM; i++) {
+        g_robot.wheel_target[i] =
+            wheel[i] * MANUAL_WHEEL_RAD_S / max_magnitude;
+        g_robot.pid[i].integral = 0.0f;
+        g_robot.pid[i].prev_error = 0.0f;
+    }
+    g_robot.manual_mode = 1U;
+    g_robot.manual_open_loop = 0U;
+    g_robot.last_cmd_time = HAL_GetTick();
+}
+
+static void Legacy_SetOpenLoop(float forward, float right, float clockwise)
+{
+    float wheel[MOTOR_NUM] = {
+        forward + right + clockwise,
+        forward - right - clockwise,
+        forward - right + clockwise,
+        forward + right - clockwise
+    };
+    float max_magnitude = 1.0f;
+    for (int i = 0; i < MOTOR_NUM; i++) {
+        float magnitude = fabsf(wheel[i]);
+        if (magnitude > max_magnitude) max_magnitude = magnitude;
+    }
+    for (int i = 0; i < MOTOR_NUM; i++) {
+        g_robot.wheel_target[i] = 0.0f;
+        Set_MotorPWM(i, wheel[i] * OPEN_LOOP_PWM / max_magnitude);
+    }
+    g_robot.manual_mode = 1U;
+    g_robot.manual_open_loop = 1U;
+    g_robot.last_cmd_time = HAL_GetTick();
+}
+
+static void Legacy_ApplyCommand(uint8_t command)
+{
+    float *target;
+    switch (command) {
+    case 'W': Legacy_SetVector(1, 0, 0); break;
+    case 'S': Legacy_SetVector(-1, 0, 0); break;
+    case 'A': Legacy_SetVector(0, -1, 0); break;
+    case 'D': Legacy_SetVector(0, 1, 0); break;
+    case 'Q': Legacy_SetVector(0, 0, -1); break;
+    case 'E': Legacy_SetVector(0, 0, 1); break;
+    case 'w': Legacy_SetOpenLoop(1, 0, 0); break;
+    case 's': Legacy_SetOpenLoop(-1, 0, 0); break;
+    case 'a': Legacy_SetOpenLoop(0, -1, 0); break;
+    case 'd': Legacy_SetOpenLoop(0, 1, 0); break;
+    case 'q': Legacy_SetOpenLoop(0, 0, -1); break;
+    case 'e': Legacy_SetOpenLoop(0, 0, 1); break;
+    case 'U': case 'u':
+        Robot_StopMotorsImmediate();
+        HAL_TIM_PWM_Start(&htim10, TIM_CHANNEL_1);
+        target = &g_robot.servo_target[0];
+        *target = fminf(kServoMaxPulseUs[0], *target + SERVO_COMMAND_STEP_US);
+        break;
+    case 'J': case 'j':
+        Robot_StopMotorsImmediate();
+        HAL_TIM_PWM_Start(&htim10, TIM_CHANNEL_1);
+        target = &g_robot.servo_target[0];
+        *target = fmaxf(kServoMinPulseUs[0], *target - SERVO_COMMAND_STEP_US);
+        break;
+    case 'I': case 'i':
+        Robot_StopMotorsImmediate();
+        HAL_TIM_PWM_Start(&htim11, TIM_CHANNEL_1);
+        target = &g_robot.servo_target[1];
+        *target = fminf(kServoMaxPulseUs[1], *target + SERVO_COMMAND_STEP_US);
+        break;
+    case 'K': case 'k':
+        Robot_StopMotorsImmediate();
+        HAL_TIM_PWM_Start(&htim11, TIM_CHANNEL_1);
+        target = &g_robot.servo_target[1];
+        *target = fmaxf(kServoMinPulseUs[1], *target - SERVO_COMMAND_STEP_US);
+        break;
+    case 'T': case 't':
+        Robot_StopMotorsImmediate();
+        HAL_TIM_PWM_Start(&htim10, TIM_CHANNEL_1);
+        HAL_TIM_PWM_Start(&htim11, TIM_CHANNEL_1);
+        for (int i = 0; i < SERVO_NUM; i++)
+            g_robot.servo_target[i] = kServoGripPulseUs[i];
+        break;
+    case 'G': case 'g':
+        Robot_StopMotorsImmediate();
+        HAL_TIM_PWM_Start(&htim10, TIM_CHANNEL_1);
+        HAL_TIM_PWM_Start(&htim11, TIM_CHANNEL_1);
+        for (int i = 0; i < SERVO_NUM; i++)
+            g_robot.servo_target[i] = kServoOpenPulseUs[i];
+        break;
+    case 'O': case 'o':
+        Robot_StopMotorsImmediate();
+        HAL_TIM_PWM_Stop(&htim10, TIM_CHANNEL_1);
+        HAL_TIM_PWM_Stop(&htim11, TIM_CHANNEL_1);
+        break;
+    case '1': case '2':
+        /* 자동 초음파 상태머신이 계속 측정하므로 최신값은 U frame으로 확인한다. */
+        Robot_StopMotorsImmediate();
+        break;
+    case 'X': case 'x': case ' ':
+        Robot_StopMotorsImmediate();
+        break;
+    default:
+        return;
+    }
+    g_robot.last_command = (char)command;
+    g_robot.last_cmd_time = HAL_GetTick();
 }
 
 /* 엔코더 값 송신: "E,fl,fr,rl,rr" */
@@ -404,6 +688,27 @@ void UART_SendEncoders(void)
                        (long)g_robot.encoder_count[RL],
                        (long)g_robot.encoder_count[RR]);
     HAL_UART_Transmit(&huart2, (uint8_t*)buf, len, 10);
+}
+
+/* 기존 실차 모니터와 호환되는 14-field telemetry. */
+static void UART_SendTelemetry(void)
+{
+    char buf[160];
+    int len = snprintf(
+        buf, sizeof(buf),
+        "T,%c,%d,%d,%d,%d,%d,%d,%d,%d,%u,%u,%ld,%ld\r\n",
+        g_robot.last_command,
+        (int)(g_robot.wheel_actual[FL] * 600.0f / (2.0f * M_PI)),
+        (int)(g_robot.wheel_actual[FR] * 600.0f / (2.0f * M_PI)),
+        (int)(g_robot.wheel_actual[RL] * 600.0f / (2.0f * M_PI)),
+        (int)(g_robot.wheel_actual[RR] * 600.0f / (2.0f * M_PI)),
+        (int)g_robot.motor_pwm[FL], (int)g_robot.motor_pwm[FR],
+        (int)g_robot.motor_pwm[RL], (int)g_robot.motor_pwm[RR],
+        (unsigned)g_robot.servo_current[0],
+        (unsigned)g_robot.servo_current[1],
+        (long)g_ultrasonic_tx_mm[ULTRA_LEFT],
+        (long)g_ultrasonic_tx_mm[ULTRA_RIGHT]);
+    HAL_UART_Transmit(&huart2, (uint8_t *)buf, (uint16_t)len, 10U);
 }
 
 /* ==================================================
@@ -549,10 +854,8 @@ void Mecanum_InverseKinematics(float vx, float vy, float omega)
     g_robot.wheel_target[RR] = (vx - vy + L * omega) / WHEEL_RADIUS;
 }
 
-/* STM32F401RE에는 TIM8이 없다. 네 개의 quadrature encoder는
- * TIM2/TIM3/TIM4/TIM5에 각각 배치한다. TIM2/TIM5는 32비트,
- * TIM3/TIM4는 16비트다. enc[] 순서 FL=TIM2, FR=TIM3,
- * RL=TIM4, RR=TIM5 기준.
+/* 실차에서 확인한 논리 순서는 FL=TIM5, FR=TIM2, RL=TIM3, RR=TIM4.
+ * TIM2/TIM5는 32비트, TIM3/TIM4는 16비트다.
  * 16비트 카운터는 0~65535를 순환하는데, 이전엔 delta를 32비트 그대로
  * 빼서(cnt-prev) 카운터가 순환하는 순간마다 실제 회전량과 정반대의 거대한
  * 값(예: prev=65530,cnt=5(정상 +11회전)인데 delta=5-65530=-65525로 계산)이
@@ -562,11 +865,14 @@ void Mecanum_InverseKinematics(float vx, float vy, float omega)
  * 로봇 최대속도로는 불가능하므로) 안전하다.
  * 실제 CubeMX .ioc에서 타이머 비트폭을 다르게 설정했다면 kEncoder16Bit를
  * 맞게 수정할 것. */
-static const uint8_t kEncoder16Bit[MOTOR_NUM] = {0, 1, 1, 0};  // TIM2,3,4,5
+static const uint8_t kEncoder16Bit[MOTOR_NUM] = {0, 0, 1, 1};
 
 void Update_WheelSpeeds(void)
 {
-    TIM_HandleTypeDef* enc[] = {&htim2, &htim3, &htim4, &htim5};
+    /* 2026-08-20 현재 보드(51A2D09B...)에서 네 바퀴를 한 개씩 전진
+     * 방향으로 돌려 재확인: 물리 FL/FR/RL/RR이 각각 같은 진단 인덱스에만
+     * 음수로 나타났다. 현재 하네스에서는 RL 엔코더가 TIM4, RR이 TIM3이다. */
+    TIM_HandleTypeDef* enc[] = {&htim5, &htim2, &htim4, &htim3};
     for (int i = 0; i < MOTOR_NUM; i++) {
         uint32_t raw = __HAL_TIM_GET_COUNTER(enc[i]);
         int32_t delta;
@@ -606,8 +912,12 @@ float PID_Compute(PID_t* pid, float target, float actual)
 /* 모터 PWM 출력 (방향 + 크기) */
 void Set_MotorPWM(int idx, float pwm)
 {
+/* PA10=TIM1_CH3=RR, PA11=TIM1_CH4=RL이므로 뒤쪽 두 항목은 4/3 순서다.
+ * DIR도 위 별칭에서 RL=MOTOR4(PC3), RR=MOTOR3(PC2)로 같은 채널끼리
+ * 묶는다. 2026-08-20 단일 바퀴 ±120 실측으로 잘못된 3/4 DIR 순서가
+ * 두 뒤바퀴 모두 방향을 바꾸지 못하게 했음을 확인했다. */
     uint32_t ch[] = {TIM_CHANNEL_1, TIM_CHANNEL_2,
-                     TIM_CHANNEL_3, TIM_CHANNEL_4};
+                     TIM_CHANNEL_4, TIM_CHANNEL_3};
     GPIO_TypeDef* dir_port[] = {
         MOTOR_FL_DIR_GPIO_Port, MOTOR_FR_DIR_GPIO_Port,
         MOTOR_RL_DIR_GPIO_Port, MOTOR_RR_DIR_GPIO_Port
@@ -617,6 +927,7 @@ void Set_MotorPWM(int idx, float pwm)
         MOTOR_RL_DIR_Pin, MOTOR_RR_DIR_Pin
     };
     if (idx < 0 || idx >= MOTOR_NUM) return;
+    g_robot.motor_pwm[idx] = pwm;
     pwm *= (float)kMotorCommandSign[idx];
 
     // 방향 설정
@@ -626,18 +937,12 @@ void Set_MotorPWM(int idx, float pwm)
         HAL_GPIO_WritePin(dir_port[idx], dir_pin[idx], GPIO_PIN_RESET);
         pwm = -pwm;
     }
-    /* PID 출력 0~999를 CubeIDE TIM1의 실제 ARR 전체 범위로 환산한다.
-     * 현재 ARR=65535이면 999 명령이 CCR=65535가 된다. ARR를 나중에
-     * 바꾸더라도 duty 비율은 유지된다. */
+    /* 실차와 동일하게 ARR=999에서 compare를 0~350으로 제한한다.
+     * 즉 최대 duty는 약 35%이며, 임의로 100%로 재스케일하지 않는다. */
     if (pwm > MOTOR_PWM_COMMAND_MAX) {
         pwm = MOTOR_PWM_COMMAND_MAX;
     }
-    const uint32_t auto_reload = __HAL_TIM_GET_AUTORELOAD(&htim1);
-    uint32_t duty = (uint32_t)(
-        (pwm * (float)auto_reload / MOTOR_PWM_COMMAND_MAX) + 0.5f);
-    if (duty > auto_reload) {
-        duty = auto_reload;
-    }
+    uint32_t duty = (uint32_t)(pwm + 0.5f);
     __HAL_TIM_SET_COMPARE(&htim1, ch[idx], duty);
 }
 
@@ -650,8 +955,12 @@ static void Robot_StopMotorsImmediate(void)
         g_robot.wheel_target[i] = 0.0f;
         g_robot.pid[i].integral = 0.0f;
         g_robot.pid[i].prev_error = 0.0f;
+        g_robot.target_rpm_x10[i] = 0;
+        g_robot.speed_integral[i] = 0;
+        g_robot.wrong_direction_cycles[i] = 0;
         Set_MotorPWM(i, 0.0f);
     }
+    g_robot.manual_open_loop = 0U;
 }
 
 static void Robot_HoldServosImmediate(void)
@@ -674,12 +983,9 @@ static bool Robot_IsStopped(void)
     return true;
 }
 
-/* 모터 제어 주기 실행 (100Hz) */
+/* 실차에서 검증된 50 ms 정수 PI + feed-forward 제어. */
 void Motor_PID_Task(void)
 {
-    static const char *stall_error[MOTOR_NUM] = {
-        "STALL_FL", "STALL_FR", "STALL_RL", "STALL_RR"
-    };
     uint32_t now = HAL_GetTick();
 
     Update_WheelSpeeds();
@@ -691,12 +997,15 @@ void Motor_PID_Task(void)
 
     /* 전원 인가 직후 ROS2가 뜨기 전의 300ms를 fault로 오인하지 않는다.
      * 단, HB와 V를 각각 한 번 이상 받기 전에는 모터를 무조건 정지한다. */
-    if (!g_robot.heartbeat_seen || !g_robot.command_seen) {
-        Robot_StopMotorsImmediate();
-        return;
+    if (!g_robot.manual_mode) {
+        if (!g_robot.heartbeat_seen || !g_robot.command_seen) {
+            Robot_StopMotorsImmediate();
+            return;
+        }
     }
 
-    if (now - g_robot.last_heartbeat_time > HEARTBEAT_TIMEOUT_MS) {
+    if (!g_robot.manual_mode &&
+        now - g_robot.last_heartbeat_time > HEARTBEAT_TIMEOUT_MS) {
         if (!g_robot.heartbeat_timed_out) {
             g_robot.heartbeat_timed_out = 1;
             QueueError("HEARTBEAT_TIMEOUT");
@@ -715,35 +1024,67 @@ void Motor_PID_Task(void)
     }
     g_robot.command_timed_out = 0;
 
-    /* 명령이 있는데 엔코더가 0인 상태가 0.5초 지속되면 fault latch. */
-    for (int i = 0; i < MOTOR_NUM; i++) {
-        if (fabsf(g_robot.wheel_target[i]) > STALL_TARGET_RAD_S &&
-            labs(g_robot.encoder_delta[i]) <= 1) {
-            if (g_robot.stall_cycles[i] < STALL_LIMIT_CYCLES) {
-                g_robot.stall_cycles[i]++;
-            }
-        } else {
-            g_robot.stall_cycles[i] = 0;
-        }
-        if (g_robot.stall_cycles[i] >= STALL_LIMIT_CYCLES) {
-            g_robot.estop_latched = 1;
-            QueueError(stall_error[i]);
-            Robot_StopMotorsImmediate();
-            return;
-        }
+    /* 실차에서 먼저 검증되지 않은 stall latch는 안전한 정지를 오인해
+     * 전원 재인가가 필요해질 수 있어 이번 통합에서는 사용하지 않는다. */
+    if (g_robot.manual_open_loop) {
+        return;
     }
 
     for (int i = 0; i < MOTOR_NUM; i++) {
-        if (fabsf(g_robot.wheel_target[i]) < 0.01f) {
-            g_robot.pid[i].integral = 0.0f;
-            g_robot.pid[i].prev_error = 0.0f;
+        int16_t requested_rpm_x10 = (int16_t)(
+            g_robot.wheel_target[i] * 600.0f / (2.0f * M_PI));
+        int16_t current = g_robot.target_rpm_x10[i];
+        if (current < requested_rpm_x10) {
+            current += TARGET_RAMP_RPM_X10;
+            if (current > requested_rpm_x10) current = requested_rpm_x10;
+        } else if (current > requested_rpm_x10) {
+            current -= TARGET_RAMP_RPM_X10;
+            if (current < requested_rpm_x10) current = requested_rpm_x10;
+        }
+        g_robot.target_rpm_x10[i] = current;
+
+        if (current == 0) {
+            g_robot.speed_integral[i] = 0;
+            g_robot.wrong_direction_cycles[i] = 0;
             Set_MotorPWM(i, 0.0f);
             continue;
         }
-        float pwm = PID_Compute(&g_robot.pid[i],
-                                g_robot.wheel_target[i],
-                                g_robot.wheel_actual[i]);
-        Set_MotorPWM(i, pwm);
+
+        int32_t target_delta =
+            ((int32_t)current * (int32_t)ENCODER_PPR * 50L) / 600000L;
+        int32_t error = target_delta - g_robot.encoder_delta[i];
+
+        /* 정상상태에서 실제 회전이 목표와 반대면 부호 설정이 틀린
+         * 것이다. 그대로 두면 PID가 출력을 상한까지 밀어올린다. */
+        if (current == requested_rpm_x10 &&
+            ((current > 0 && g_robot.encoder_delta[i] < 0) ||
+             (current < 0 && g_robot.encoder_delta[i] > 0))) {
+            g_robot.wrong_direction_cycles[i]++;
+            if (g_robot.wrong_direction_cycles[i] >=
+                WRONG_DIRECTION_LIMIT_CYCLES) {
+                Robot_StopMotorsImmediate();
+                QueueError("WHEEL_DIR_MISMATCH");
+                return;
+            }
+        } else {
+            g_robot.wrong_direction_cycles[i] = 0;
+        }
+
+        g_robot.speed_integral[i] += error;
+        if (g_robot.speed_integral[i] > SPEED_INTEGRAL_LIMIT)
+            g_robot.speed_integral[i] = SPEED_INTEGRAL_LIMIT;
+        if (g_robot.speed_integral[i] < -SPEED_INTEGRAL_LIMIT)
+            g_robot.speed_integral[i] = -SPEED_INTEGRAL_LIMIT;
+
+        int32_t feedforward =
+            ((int32_t)current * PWM_FEEDFORWARD_AT_12RPM) / 120L;
+        int32_t output = feedforward + SPEED_KP * error +
+            g_robot.speed_integral[i] / SPEED_KI_DIVISOR;
+        if (output > (int32_t)MOTOR_PWM_COMMAND_MAX)
+            output = (int32_t)MOTOR_PWM_COMMAND_MAX;
+        if (output < -(int32_t)MOTOR_PWM_COMMAND_MAX)
+            output = -(int32_t)MOTOR_PWM_COMMAND_MAX;
+        Set_MotorPWM(i, (float)output);
     }
 }
 
@@ -751,23 +1092,21 @@ void Motor_PID_Task(void)
  * [3-3] servo_lift_task — arm Soft-start 제어
  * ================================================== */
 
-/* 서보 각도 → PWM (50Hz, 0.5~2.5ms 펄스).
- * CubeMX에서 TIM10 CH1/TIM11 CH1 활성화 필수. */
-void Set_ServoPWM(int idx, float angle)
+/* 실차에서 검증한 microsecond pulse를 그대로 출력한다. */
+void Set_ServoPWM(int idx, float pulse_us)
 {
     TIM_HandleTypeDef *timer[SERVO_NUM] = {&htim10, &htim11};
     if (idx < 0 || idx >= SERVO_NUM) return;
-    if (angle < 0.0f) angle = 0.0f;
-    if (angle > 180.0f) angle = 180.0f;
-    /* TIM10/TIM11을 1 MHz tick, 20,000 period(50 Hz)로 설정한다. */
-    uint32_t pulse = 500 + (uint32_t)(angle / 180.0f * 2000.0f);
+    if (pulse_us < kServoMinPulseUs[idx]) pulse_us = kServoMinPulseUs[idx];
+    if (pulse_us > kServoMaxPulseUs[idx]) pulse_us = kServoMaxPulseUs[idx];
+    uint32_t pulse = (uint32_t)(pulse_us + 0.5f);
     __HAL_TIM_SET_COMPARE(timer[idx], TIM_CHANNEL_1, pulse);
 }
 
 /* 서보 Soft-start: 급가동 방지 (목표까지 서서히) */
 void Servo_Lift_Task(void)
 {
-    float step = 1.0f;   // 한 주기당 최대 1도씩 (부드럽게)
+    float step = SERVO_RAMP_STEP_US;
     bool all_done = true;
 
     for (int i = 0; i < SERVO_NUM; i++) {
@@ -803,10 +1142,11 @@ void Robot_MainLoop(void)
     static uint32_t last_control = 0;
     static uint32_t last_servo = 0;
     static uint32_t last_encoder_tx = 0;
+    static uint32_t last_telemetry_tx = 0;
     uint32_t now = HAL_GetTick();
 
-    // 모터 PID: 100Hz (10ms)
-    if (now - last_control >= 10) {
+    // 실차에서 검증된 모터 제어 주기: 20Hz (50ms)
+    if (now - last_control >= 50) {
         Motor_PID_Task();
         last_control = now;
     }
@@ -828,6 +1168,11 @@ void Robot_MainLoop(void)
     if (now - last_encoder_tx >= 20) {
         UART_SendEncoders();
         last_encoder_tx = now;
+    }
+
+    if (now - last_telemetry_tx >= TELEMETRY_PERIOD_MS) {
+        UART_SendTelemetry();
+        last_telemetry_tx = now;
     }
 }
 

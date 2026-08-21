@@ -15,8 +15,8 @@ import math
 
 
 class EncoderOdometry:
-    def __init__(self, wheel_radius=0.05, ppr=2600.0, lx=0.10, ly=0.10,
-                 max_delta_ticks=1300):
+    def __init__(self, wheel_radius=0.05, ppr=5182.0, lx=0.10, ly=0.10,
+                 max_delta_ticks=2591):
         self.r = float(wheel_radius)
         self.ppr = float(ppr)
         self.L = float(lx) + float(ly)
@@ -34,7 +34,7 @@ class EncoderOdometry:
         self.theta = 0.0
         self.prev = None
         # 한 주기(엔코더 메시지 간)에 물리적으로 나올 수 없는 틱 변화량.
-        # 기본값 1300 = ppr(2600)의 0.5바퀴 — 로봇 최대속도(§sync_params
+        # 기본값 2591 = ppr(5182)의 0.5바퀴 — 로봇 최대속도(§sync_params
         # max_speed 0.08m/s) 기준 정상 주기당 변화량(~수십 틱)의 50배 이상
         # 여유를 둔 값이라 정상 주행/슬립은 절대 안 걸리고, 리셋/rollover
         # 같은 진짜 불연속만 걸러진다. 실측 후 필요시 조정.

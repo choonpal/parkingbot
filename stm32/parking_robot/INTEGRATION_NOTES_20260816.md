@@ -1,66 +1,78 @@
-# STM32 v1.11 제어 펌웨어 통합 기록
+# STM32 실차 코드 통합 기록 (2026-08-20 갱신)
 
 ## 적용 기준
 
-- 기준 CubeIDE 프로젝트: parking_robot_stm32cubeide_20260724.zip
-- 통합 제어 소스: Adaptive Valet Bot v1.11의 parking_robot_firmware.c
-- 대상 MCU: STM32F401RE
-- CubeIDE 원본 ZIP과 v1.11 원본 ZIP은 변경하지 않음
+- 하드웨어 기준: `real_robot_code/stm32/parking_robot_f401`
+- 통합 대상: `stm32/parking_robot`
+- `real_robot_code`는 당시 실차에서 동작한 원본 기록이므로 수정하지 않는다.
+- CubeMX의 TIM9/EXTI 초음파 상태머신은 유지하되, 모터·엔코더·서보 값은
+  실차 코드 기준으로 교체했다.
 
-## 초음파 핀 매핑
+## 실차에서 가져온 값
 
-CubeIDE의 parking_robot.ioc를 기준으로 다음처럼 연결했다.
+- 논리 모터 순서: FL=`TIM1_CH1`/`TIM5`, FR=`TIM1_CH2`/`TIM2`,
+  RL=`TIM1_CH4`/`TIM4`, RR=`TIM1_CH3`/`TIM3`
+- 방향 핀: RL=`MOTOR4/PC3`, RR=`MOTOR3/PC2`. 뒤쪽 PWM이 4/3 순서이므로
+  DIR도 같은 논리 순서로 맞춰야 한다.
+- 모터 및 엔코더 부호: `{1, -1, 1, -1}`
+- 엔코더: 출력축 1회전 5182 count, 입력 filter 15, GPIO pull-up
+- 모터 PWM: TIM1 PSC 83, ARR 999, 명령 최대 350(약 35% duty)
+- 속도 제어: 50 ms, 12 rpm 기준 feed-forward 200과 정수 PI
+- 서보: 20 ms마다 최대 30 us 이동, 실차별 pulse 제한 적용
+- 주행 명령 watchdog: 250 ms
 
-| 역할 | CubeIDE 이름 | 핀 | 설정 |
-|---|---|---|---|
-| Left TRIG | ULTRASONIC1_TRIG | PC8 | GPIO output, 초기 LOW |
-| Left ECHO | ULTRASONIC1_ECHO | PC6 | EXTI rising/falling |
-| Right TRIG | ULTRASONIC2_TRIG | PC5 | GPIO output, 초기 LOW |
-| Right ECHO | ULTRASONIC2_ECHO | PC7 | EXTI rising/falling |
+## 로봇 프로필
 
-HC-SR04 ECHO의 5V 신호를 STM32에 직접 연결하지 말고 저항분압 또는
-레벨시프터를 사용한다.
+`parking_robot_firmware.h`의 `PARKING_ROBOT_PROFILE`로 선택한다.
 
-## 모터 PWM 스케일
+| 값 | 대상 | Servo 1 범위 | Servo 2 범위 |
+|---:|---|---:|---:|
+| 1 | front / robot-2 / ArUco 장착 | 1550~2600 us | 400~1450 us |
+| 2 | rear / robot-1 | 400~1600 us | 1400~2600 us |
 
-제어기의 PID 출력 범위는 0~999이고 CubeIDE TIM1의 현재 ARR는 65535다.
-펌웨어는 아래 비율로 CCR을 계산한다.
+기본값은 1이다. Rear 바이너리를 만들 때 compiler preprocessor define에
+`PARKING_ROBOT_PROFILE=2`를 추가한다.
 
-    CCR = round(abs(command) / 999 * ARR)
+## UART 호환 방식
 
-현재 설정의 대표값은 다음과 같다.
+- 기존 실차 시험 명령 `W/S/A/D/Q/E`, 소문자 open-loop 명령,
+  `U/J/I/K/T/G/O/X`는 그대로 유지한다.
+- ROS 프레임은 단일문자 `S`, `E`와 충돌하지 않도록 `@`로 시작한다.
+  - `@V,vx,vy,w`
+  - `@S,grip` / `@S,release`
+  - `@HB,timestamp`
+  - `@ESTOP`
+- STM32는 누적 엔코더 `E,...`, 초음파 `U,...`, ACK/ERR와 함께 기존
+  14-field `T,...` telemetry도 계속 보낸다.
 
-| PID 명령 | TIM1 CCR | 대략적인 duty |
-|---:|---:|---:|
-| 0 | 0 | 0% |
-| 100 | 6560 | 10.0% |
-| 500 | 32800 | 50.1% |
-| 999 | 65535 | 약 100% |
+## PC 확인 결과
 
-ARR를 변경해도 소스가 런타임에 ARR를 읽기 때문에 duty 비율은 유지된다.
-현재 TIM1은 84 MHz, PSC 0, ARR 65535이므로 PWM 주파수는 약 1.282 kHz다.
-모터 드라이버가 20 kHz를 요구하면 PSC 0에서 ARR 4199가 되지만, 실제 변경은
-모터 드라이버 데이터시트와 발열 시험 후 결정한다.
+- Python/launch 구문 검사 통과
+- STM32·UART·엔코더·초음파 관련 테스트 32개 통과, 1개 skip
+- ROS가 필요한 테스트 3개를 제외한 전체 PC 테스트 213개 통과,
+  1개 skip. Windows에서만 의미가 다른 POSIX 실행권한/0600 권한 검사
+  2개는 실패했으며 코드 회귀가 아니다.
+- STM32CubeIDE 2.2.0 / ARM GCC 14.3으로 Front와 Rear 프로필 모두 전체
+  컴파일·링크 완료: 각각 0 errors, 0 warnings.
+- 메모리 사용량: text 33,780 B, data 92 B, bss 3,004 B.
+- 플래시용 ELF/HEX/BIN은 저장소 밖 `stm32_build_outputs/front_robot_2`,
+  `stm32_build_outputs/rear_robot_1`에 구분해 생성했다.
 
-## 제어 루프 통합
+## Front(robot-2) 실차 확인 결과
 
-- Core/Inc/parking_robot_firmware.h 추가
-- Core/Src/parking_robot_firmware.c 추가
-- 주변장치 초기화 후 Robot_Init() 호출
-- while 루프에서 Robot_MainLoop() 반복 호출
+- 최종 Front 바이너리 SHA256:
+  `8E1FE87275733603CF9FF0B9E34F04D89479CD8349C388DF8FDA28A1921E91D0`
+- 단일 바퀴 `±120 PWM`에서 RL/RR 모두 실제 방향과 엔코더 부호가 함께
+  반전됨을 확인했다.
+- 잭업 폐루프 직진 5초, 회전 12초, 횡이동 8초에서 네 바퀴가
+  `11.3~12.0 rpm`, PWM 약 `±199~212`로 안정했다.
+- 무하중 바닥에서 ROS 키보드 저속 주행과 입력 단절 정지, `Ctrl+C` 종료를
+  확인했다.
 
-## 확인 결과
+## 남는 확인
 
-- 실제 프로젝트의 STM32 HAL/CMSIS 헤더를 사용한 GNU11 구문 검사 통과
-- CubeIDE source path가 Core 전체를 포함하므로 새 C 소스는 빌드 대상
-- 이 시스템에는 ARM GNU Toolchain 또는 STM32CubeIDE 실행기가 없어 실제
-  ARM 링크, HEX 생성 및 보드 플래시는 아직 수행하지 못함
-
-## 플래시 전 확인
-
-- MOTOR1/2/3/4가 각각 FL/FR/RL/RR 배선인지 확인
-- 초음파 1이 실제 Left, 초음파 2가 실제 Right인지 확인
-- 각 바퀴의 kMotorCommandSign, kEncoderSign을 잭업 저속 시험으로 확정
-- 유효 wheel radius, encoder PPR, LX, LY 실측
-- 초음파 50/100/200 mm 측정 및 timeout 시험
-- 물리 ESTOP과 모터 전원 차단 수단 준비
+1. Rear(robot-1) 프로필을 다시 빌드해 해당 STM32에 기록한다.
+2. Rear의 단일 바퀴 방향, 잭업 폐루프 3축, 바닥 저속 주행을 같은 순서로
+   확인한다.
+3. 두 로봇의 초음파 좌/우 거리와 timeout을 최종 장착 상태에서 확인한다.
+4. 두 로봇을 최종 인양 하중에서 시험하고 전압강하와 발열을 확인한다.

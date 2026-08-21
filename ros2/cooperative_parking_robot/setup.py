@@ -29,6 +29,7 @@ setup(
             'individual_move = cooperative_parking_robot.individual_move_node:main',
             'pose_fusion = cooperative_parking_robot.pose_fusion_node:main',
             'hardware_preflight = cooperative_parking_robot.hardware_preflight:main',
+            'keyboard_teleop = cooperative_parking_robot.keyboard_teleop_node:main',
             'calibrate_camera = cooperative_parking_robot.calibrate_camera_node:main',
         ],
     },

@@ -280,6 +280,32 @@ hardware_preflight --role jetson \
 `--disable-operator-ui`, 진단 overlay 구성까지 검사할 때는
 `--enable-debug-overlay`를 사용한다.
 
+## ROS 키보드 수동조작
+
+운용 PC/Jetson과 두 Raspberry Pi에서 `ROS_DOMAIN_ID=42`를 사용한 상태로,
+조작할 로봇을 하나만 명시한다. 수동 모드가 켜지면 해당 STM32 bridge는 자동
+주행 명령을 차단한다. 키보드 노드나 Wi-Fi가 끊기면 자동주행으로 넘어가지 않고
+0속도를 유지한다.
+
+```bash
+# Front(robot-2)
+ros2 run cooperative_parking_robot keyboard_teleop --ros-args -p role:=front
+
+# Rear(robot-1)
+ros2 run cooperative_parking_robot keyboard_teleop --ros-args -p role:=rear
+```
+
+- `W/S`: 전진/후진
+- `A/D`: 좌/우 이동
+- `Q/E`: 좌/우 회전
+- `Space`: 정지
+- `T/G`: grip/release
+- `Ctrl+C`: 0속도 전송 후 수동 모드 종료
+
+기본 속도는 직선 0.0628 m/s, 회전 0.3142 rad/s이며 키 입력이 0.30초 동안
+갱신되지 않으면 자동 정지한다. 두 로봇을 동시에 한 키보드로 움직이는 기능은
+의도하지 않은 동시 거동을 피하기 위해 제공하지 않는다.
+
 ## Jetson 실행
 
 ### 이미 ROS 카메라 드라이버가 있는 경우

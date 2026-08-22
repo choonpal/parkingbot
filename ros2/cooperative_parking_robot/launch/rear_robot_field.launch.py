@@ -36,6 +36,7 @@ def generate_launch_description():
                 # Rear is the outer robot after the shared exit.  It rotates
                 # in the aisle and returns to the lower HOME before Front.
                 "exit_distance_m": "0.65",
+                "return_timeout_s": "180.0",
             }.items(),
         )
     ])

@@ -29,10 +29,13 @@ def generate_launch_description():
                 "waiting_x": "3.60",
                 "waiting_y": "0.20",
                 "simultaneous_entry": "false",
-                # Keep the axle-centre separation while both robots clear the
-                # released vehicle toward the aisle.  Rear returns after Front.
+                # Keep axle-centre separation while both robots clear the
+                # released vehicle toward the aisle.
                 "same_direction_exit": "true",
                 "same_direction_exit_sign": "-1",
+                # Rear is the outer robot after the shared exit.  It rotates
+                # in the aisle and returns to the lower HOME before Front.
+                "exit_distance_m": "0.65",
             }.items(),
         )
     ])

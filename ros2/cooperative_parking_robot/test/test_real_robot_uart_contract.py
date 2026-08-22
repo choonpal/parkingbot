@@ -40,12 +40,15 @@ def test_production_firmware_uses_real_robot_hardware_baseline():
     assert 'kMotorCommandSign[MOTOR_NUM] = {1, -1, 1, -1}' in source
     # 2026-08-20 회전 시험으로 확정한 표준 배선 기준값.
     assert 'kEncoderSign[MOTOR_NUM] = {1, -1, 1, -1}' in source
-    # 현재 보드에서 다시 실측: 물리 RL은 진단 RL(TIM4), 물리 RR은 진단
-    # RR(TIM3)에만 나타났다. 직진으로는 교차를 판정할 수 없다.
-    assert 'enc[] = {&htim5, &htim2, &htim4, &htim3}' in source
+    # 두 실차의 뒤쪽 엔코더 하네스 순서가 다르므로 프로필에서 분리한다.
+    assert '#define ENCODER_RL_TIMER htim4' in source
+    assert '#define ENCODER_RR_TIMER htim3' in source
+    assert '#define ENCODER_RL_TIMER htim3' in source
+    assert '#define ENCODER_RR_TIMER htim4' in source
+    assert '&ENCODER_RL_TIMER, &ENCODER_RR_TIMER' in source
     assert 'kEncoder16Bit[MOTOR_NUM] = {0, 0, 1, 1}' in source
-    assert 'encoder_prev[RL] = (int32_t)__HAL_TIM_GET_COUNTER(&htim4)' in source
-    assert 'encoder_prev[RR] = (int32_t)__HAL_TIM_GET_COUNTER(&htim3)' in source
+    assert '__HAL_TIM_GET_COUNTER(&ENCODER_RL_TIMER)' in source
+    assert '__HAL_TIM_GET_COUNTER(&ENCODER_RR_TIMER)' in source
     # PA10=TIM1_CH3=RR, PA11=TIM1_CH4=RL이므로 뒤쪽 두 항목의 채널 순서가
     # 앞쪽과 반대인 것이 정상이다. 2026-08-20 모터 하네스는 두 번 교체되어
     # 원래 상태로 돌아왔으므로 이 표는 원래 순서를 유지한다. 이 표만 뒤집으면

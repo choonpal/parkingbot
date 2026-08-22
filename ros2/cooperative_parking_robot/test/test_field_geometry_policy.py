@@ -14,6 +14,12 @@ from cooperative_parking_robot.field_geometry_policy import (
     projected_half_extents,
     route_is_clear,
 )
+from cooperative_parking_robot.field_map_geometry import (
+    check_oriented_box_inside_map,
+)
+from cooperative_parking_robot.vehicle_entry import (
+    exit_longitudinal_translation,
+)
 
 
 def test_vehicle_only_slot_accepts_120_by_80_demo_slot():
@@ -102,6 +108,7 @@ def test_side_by_side_home_route_avoids_vehicle_and_stationary_peer():
 
     assert route[-1] == pytest.approx(goal)
     assert route_is_clear(start, route, rectangles)
+    assert 0.40 >= 0.275 + 0.10
 
 
 def test_route_detours_when_direct_segment_crosses_vehicle():
@@ -119,39 +126,41 @@ def _default_rotation_radius():
                             0.470 + 2.0 * 0.06)
 
 
-def test_p4_rotation_stage_is_moved_inside_right_and_bottom_boundaries():
+def test_p4_rotation_stage_is_moved_inside_only_the_right_boundary():
     radius = _default_rotation_radius()
-    # P4 nominal staging: centre (3.6,2.2), yaw +90deg,
-    # slot half length .6 + loaded half .6925 + gap .1.
+    # Correct field slot: centre (3.6,3.0), entry at y=2.4.
+    nominal_y = 3.00 - (0.60 + 1.385 / 2.0 + 0.10)
     result = clamp_rotation_center(
         x_m=3.60,
-        y_m=2.20 - (0.60 + 1.385 / 2.0 + 0.10),
+        y_m=nominal_y,
         map_width_m=4.40,
-        map_height_m=3.83,
+        # OccupancyGrid truncates 3.83/0.05 to 76 cells = 3.80m.
+        map_height_m=3.80,
         rotation_radius_m=radius,
         boundary_margin_m=0.03,
         max_shift_m=0.60,
     )
+    assert nominal_y == pytest.approx(1.6075)
     assert result.inset_m == pytest.approx(radius + 0.03)
     assert result.x_m == pytest.approx(4.40 - result.inset_m)
-    assert result.y_m == pytest.approx(result.inset_m)
-    assert result.shift_m == pytest.approx(0.0490892141)
+    assert result.y_m == pytest.approx(nominal_y)
+    assert result.shift_m == pytest.approx(0.0382581580)
 
 
 def test_waiting_rotation_stage_shift_fits_field_limit():
     radius = _default_rotation_radius()
-    # waiting pose (.6,.4), yaw 180deg; nominal staging is 1.485m
-    # behind it, at x=2.085,y=.4.  Only the low-Y boundary forces a shift.
+    # Safe retrieve waiting pose (.85,.4), yaw 180deg; nominal staging is
+    # 1.485m behind it at x=2.335. Only the low-Y boundary forces a shift.
     result = clamp_rotation_center(
-        x_m=0.60 + 1.385 + 0.10,
+        x_m=0.85 + 1.385 + 0.10,
         y_m=0.40,
         map_width_m=4.40,
-        map_height_m=3.83,
+        map_height_m=3.80,
         rotation_radius_m=radius,
         boundary_margin_m=0.03,
         max_shift_m=0.60,
     )
-    assert result.x_m == pytest.approx(2.085)
+    assert result.x_m == pytest.approx(2.335)
     assert result.y_m == pytest.approx(result.inset_m)
     assert result.shift_m == pytest.approx(0.4382581580)
 
@@ -163,12 +172,12 @@ def test_rotation_stage_rejects_too_small_map_or_excessive_shift():
             0.5, 0.5, 1.5, 1.5, radius, 0.03, 0.60)
     with pytest.raises(ValueError, match="exceeds"):
         clamp_rotation_center(
-            2.085, 0.40, 4.40, 3.83, radius, 0.03, 0.20)
+            2.335, 0.40, 4.40, 3.80, radius, 0.03, 0.20)
 
 
 def test_final_approach_polyline_matches_lateral_then_longitudinal_control():
-    start = (3.56174184198, 0.83825815802)
-    goal = (3.60, 2.20)
+    start = (3.56174184198, 1.6075)
+    goal = (3.60, 3.00)
     route = final_approach_polyline(start, goal, math.pi / 2.0)
 
     assert len(route) == 2
@@ -176,8 +185,52 @@ def test_final_approach_polyline_matches_lateral_then_longitudinal_control():
     assert aligned == pytest.approx((3.60, start[1]))
     assert final == pytest.approx(goal)
 
-    # After the first leg, the goal has zero lateral error in slot frame.
     ex = goal[0] - aligned[0]
     ey = goal[1] - aligned[1]
     lateral = -ex * math.sin(math.pi / 2.0) + ey * math.cos(math.pi / 2.0)
     assert lateral == pytest.approx(0.0, abs=1e-12)
+
+
+def test_safe_waiting_target_contains_default_loaded_footprint():
+    safe = check_oriented_box_inside_map(
+        center_x_m=0.85,
+        center_y_m=0.40,
+        yaw_rad=math.pi,
+        length_m=1.385,
+        width_m=0.470,
+        map_width_m=4.40,
+        map_height_m=3.80,
+        boundary_margin_m=0.05,
+    )
+    assert safe.fits
+    assert safe.left_clearance_m == pytest.approx(0.1075)
+    assert safe.bottom_clearance_m == pytest.approx(0.115)
+
+    old_center = check_oriented_box_inside_map(
+        0.60, 0.40, math.pi, 1.385, 0.470,
+        4.40, 3.80, 0.05)
+    assert not old_center.fits
+    assert "LEFT" in old_center.reason
+
+
+def test_shared_exit_clears_both_robots_toward_aisle_for_rotation():
+    translation = exit_longitudinal_translation(
+        role="front",
+        exit_distance=0.65,
+        wheelbase=0.70,
+        same_direction=True,
+        same_direction_sign=-1,
+    )
+    assert translation == pytest.approx(-1.35)
+    assert exit_longitudinal_translation(
+        "rear", 0.65, 0.70, True, -1) == pytest.approx(-1.35)
+
+    front_s = 0.70 / 2.0 + translation
+    rear_s = -0.70 / 2.0 + translation
+    robot_rotation_radius = 0.5 * math.hypot(0.565, 0.275)
+    required_front_clearance = (
+        0.45 + robot_rotation_radius + 0.06 + 0.02)
+
+    assert front_s == pytest.approx(-1.00)
+    assert rear_s == pytest.approx(-1.70)
+    assert abs(front_s) > required_front_clearance

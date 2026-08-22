@@ -27,6 +27,8 @@ jobs:
           python -m compileall -q \
             ros2/cooperative_parking_robot/cooperative_parking_robot/field_geometry_policy.py \
             ros2/cooperative_parking_robot/cooperative_parking_robot/field_map_geometry.py \
+            ros2/cooperative_parking_robot/cooperative_parking_robot/field_heading_geometry.py \
+            ros2/cooperative_parking_robot/cooperative_parking_robot/field_cctv_merge_node.py \
             ros2/cooperative_parking_robot/cooperative_parking_robot/field_fleet_manager_node.py \
             ros2/cooperative_parking_robot/cooperative_parking_robot/field_runtime_fleet_manager_node.py \
             ros2/cooperative_parking_robot/cooperative_parking_robot/field_individual_move_node.py \
@@ -40,4 +42,5 @@ jobs:
         run: |
           pytest -q \
             ros2/cooperative_parking_robot/test/test_field_geometry_policy.py \
+            ros2/cooperative_parking_robot/test/test_field_heading_geometry.py \
             ros2/cooperative_parking_robot/test/test_field_adapter_wiring.py

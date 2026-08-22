@@ -45,6 +45,19 @@ extern TIM_HandleTypeDef htim9;       // 초음파 1 MHz free-running timebase
 extern TIM_HandleTypeDef htim10;      // 좌 서보 PWM CH1
 extern TIM_HandleTypeDef htim11;      // 우 서보 PWM CH1
 
+/* 두 실차의 뒤쪽 엔코더 하네스 순서가 다르다.
+ * Front(robot-2)는 손 회전 실측으로 RL=TIM4, RR=TIM3을 확인했다.
+ * Rear(robot-1)는 기존 실차 핀맵과 동작 코드의 RL=TIM3, RR=TIM4를 쓴다. */
+#if PARKING_ROBOT_PROFILE == PARKING_ROBOT_PROFILE_FRONT
+#define ENCODER_RL_TIMER htim4
+#define ENCODER_RR_TIMER htim3
+#elif PARKING_ROBOT_PROFILE == PARKING_ROBOT_PROFILE_REAR
+#define ENCODER_RL_TIMER htim3
+#define ENCODER_RR_TIMER htim4
+#else
+#error "PARKING_ROBOT_PROFILE must be FRONT(1) or REAR(2)"
+#endif
+
 
 /* 뒤쪽은 PCB 핀 배치가 PWM과 DIR 모두 4/3 순서다.
  *   RL = TIM1_CH4(PA11) + MOTOR4_DIR(PC3)
@@ -105,7 +118,7 @@ extern TIM_HandleTypeDef htim11;      // 우 서보 PWM CH1
 #define SPEED_KI_DIVISOR         32L
 #define SPEED_INTEGRAL_LIMIT   3200L
 #define PWM_FEEDFORWARD_AT_12RPM 200L
-#define TARGET_RAMP_RPM_X10      10
+#define TARGET_RAMP_RPM_X10      15
 /* 엔코더 부호가 뒤집히면 PID가 반대로 밀어 출력이 상한에 붙는다.
  * ramp가 끝난 정상상태에서 20cycle(1초) 동안 실제 회전이 목표와
  * 반대이면 정지시킨다. ramp 중에는 판정하지 않아 정상적인 방향
@@ -324,8 +337,10 @@ void Robot_Init(void)
     HAL_TIM_Encoder_Start(&htim5, TIM_CHANNEL_ALL);
     g_robot.encoder_prev[FL] = (int32_t)__HAL_TIM_GET_COUNTER(&htim5);
     g_robot.encoder_prev[FR] = (int32_t)__HAL_TIM_GET_COUNTER(&htim2);
-    g_robot.encoder_prev[RL] = (int32_t)__HAL_TIM_GET_COUNTER(&htim4);
-    g_robot.encoder_prev[RR] = (int32_t)__HAL_TIM_GET_COUNTER(&htim3);
+    g_robot.encoder_prev[RL] =
+        (int32_t)__HAL_TIM_GET_COUNTER(&ENCODER_RL_TIMER);
+    g_robot.encoder_prev[RR] =
+        (int32_t)__HAL_TIM_GET_COUNTER(&ENCODER_RR_TIMER);
 
     // PWM 시작
     HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);  // 모터
@@ -854,7 +869,8 @@ void Mecanum_InverseKinematics(float vx, float vy, float omega)
     g_robot.wheel_target[RR] = (vx - vy + L * omega) / WHEEL_RADIUS;
 }
 
-/* 실차에서 확인한 논리 순서는 FL=TIM5, FR=TIM2, RL=TIM3, RR=TIM4.
+/* 앞쪽 논리 순서는 FL=TIM5, FR=TIM2로 공통이며 뒤쪽은 로봇 프로필별로
+ * ENCODER_RL_TIMER/ENCODER_RR_TIMER를 선택한다.
  * TIM2/TIM5는 32비트, TIM3/TIM4는 16비트다.
  * 16비트 카운터는 0~65535를 순환하는데, 이전엔 delta를 32비트 그대로
  * 빼서(cnt-prev) 카운터가 순환하는 순간마다 실제 회전량과 정반대의 거대한
@@ -869,10 +885,9 @@ static const uint8_t kEncoder16Bit[MOTOR_NUM] = {0, 0, 1, 1};
 
 void Update_WheelSpeeds(void)
 {
-    /* 2026-08-20 현재 보드(51A2D09B...)에서 네 바퀴를 한 개씩 전진
-     * 방향으로 돌려 재확인: 물리 FL/FR/RL/RR이 각각 같은 진단 인덱스에만
-     * 음수로 나타났다. 현재 하네스에서는 RL 엔코더가 TIM4, RR이 TIM3이다. */
-    TIM_HandleTypeDef* enc[] = {&htim5, &htim2, &htim4, &htim3};
+    TIM_HandleTypeDef* enc[] = {
+        &htim5, &htim2, &ENCODER_RL_TIMER, &ENCODER_RR_TIMER
+    };
     for (int i = 0; i < MOTOR_NUM; i++) {
         uint32_t raw = __HAL_TIM_GET_COUNTER(enc[i]);
         int32_t delta;

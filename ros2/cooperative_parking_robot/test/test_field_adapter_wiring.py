@@ -30,6 +30,7 @@ def test_field_python_modules_parse():
             "field_fleet_manager_node.py",
             "field_runtime_fleet_manager_node.py",
             "field_individual_move_node.py",
+            "field_runtime_individual_move_node.py",
             "field_pose_fusion_node.py"):
         _assert_parses(PYTHON_PACKAGE / name)
 
@@ -46,8 +47,10 @@ def test_field_launch_wrappers_parse_and_use_measured_homes():
     assert '"waiting_y": "0.60"' in front_text
     assert '"waiting_x": "3.60"' in rear_text
     assert '"waiting_y": "0.20"' in rear_text
-    assert '"simultaneous_entry": "false"' in front_text
-    assert '"simultaneous_entry": "false"' in rear_text
+    for text in (front_text, rear_text):
+        assert '"simultaneous_entry": "false"' in text
+        assert '"same_direction_exit": "true"' in text
+        assert '"same_direction_exit_sign": "-1"' in text
 
 
 def test_setup_points_default_executables_to_field_adapters():
@@ -57,12 +60,13 @@ def test_setup_points_default_executables_to_field_adapters():
         "field_runtime_fleet_manager_node:main" in setup_text)
     assert (
         "individual_move = cooperative_parking_robot."
-        "field_individual_move_node:main" in setup_text)
+        "field_runtime_individual_move_node:main" in setup_text)
     assert (
         "pose_fusion = cooperative_parking_robot."
         "field_pose_fusion_node:main" in setup_text)
     assert "fleet_manager_field_policy" in setup_text
     assert "fleet_manager_legacy" in setup_text
+    assert "individual_move_field_policy" in setup_text
     assert "individual_move_legacy" in setup_text
     assert "pose_fusion_legacy" in setup_text
 

@@ -9,6 +9,9 @@ Differences from the base node:
   complete loaded footprint.
 - Front-first approach preflight accepts side-by-side HOME poses and checks
   multi-segment routes around the vehicle and stationary peer.
+- Rotation staging points are moved into the map-safe interior when the
+  registered slot/waiting centre is too close to a map boundary.  The mecanum
+  final controller then closes any lateral offset before axial insertion.
 """
 
 from __future__ import annotations
@@ -26,8 +29,16 @@ from cooperative_parking_robot.field_geometry_policy import (
     plan_route_around_rectangles,
     projected_half_extents,
 )
-from cooperative_parking_robot.parking_geometry import FitResult, Pose2D
-from cooperative_parking_robot.retrieval_planning import corridor_is_free
+from cooperative_parking_robot.parking_geometry import (
+    ApproachCandidate,
+    FitResult,
+    Pose2D,
+    make_approach_candidates as base_make_approach_candidates,
+)
+from cooperative_parking_robot.retrieval_planning import (
+    corridor_is_free,
+    make_waiting_staging as base_make_waiting_staging,
+)
 from cooperative_parking_robot.vehicle_entry import (
     approach_longitudinal,
     vehicle_to_world,
@@ -49,6 +60,8 @@ class FieldFleetManagerNode(base_fleet.FleetManagerNode):
         self.declare_parameter("slot_back_clearance_reserve_m", 0.03)
         self.declare_parameter("approach_robot_clearance_m", 0.06)
         self.declare_parameter("approach_corner_margin_m", 0.03)
+        self.declare_parameter("rotation_boundary_margin_m", 0.03)
+        self.declare_parameter("max_rotation_stage_shift_m", 0.60)
 
         gp = self.get_parameter
         self.vehicle_slot_long_margin = float(
@@ -63,6 +76,10 @@ class FieldFleetManagerNode(base_fleet.FleetManagerNode):
             gp("approach_robot_clearance_m").value)
         self.approach_corner_margin = float(
             gp("approach_corner_margin_m").value)
+        self.rotation_boundary_margin = float(
+            gp("rotation_boundary_margin_m").value)
+        self.max_rotation_stage_shift = float(
+            gp("max_rotation_stage_shift_m").value)
 
         values = (
             self.vehicle_slot_long_margin,
@@ -70,6 +87,8 @@ class FieldFleetManagerNode(base_fleet.FleetManagerNode):
             self.slot_back_clearance,
             self.slot_back_clearance_reserve,
             self.approach_robot_clearance,
+            self.rotation_boundary_margin,
+            self.max_rotation_stage_shift,
         )
         if not all(math.isfinite(value) and value >= 0.0
                    for value in values):
@@ -78,13 +97,16 @@ class FieldFleetManagerNode(base_fleet.FleetManagerNode):
         if (not math.isfinite(self.approach_corner_margin) or
                 self.approach_corner_margin <= 0.0):
             raise ValueError("approach_corner_margin_m must be positive")
+        if self.max_rotation_stage_shift <= 0.0:
+            raise ValueError("max_rotation_stage_shift_m must be positive")
 
         self.get_logger().info(
             "field slot policy | vehicle-only fit | "
             f"vehicle_margin={self.vehicle_slot_long_margin:.3f}/"
             f"{self.vehicle_slot_lat_margin:.3f}m | "
             f"back_clearance={self.slot_back_clearance:.3f}m | "
-            f"reserve={self.slot_back_clearance_reserve:.3f}m")
+            f"reserve={self.slot_back_clearance_reserve:.3f}m | "
+            f"rotation_boundary_margin={self.rotation_boundary_margin:.3f}m")
 
     def _field_slot_fit(self, slot, *_ignored_args, **_ignored_kwargs):
         """Return a FitResult while preserving the base planner interface."""
@@ -142,21 +164,87 @@ class FieldFleetManagerNode(base_fleet.FleetManagerNode):
             width_clearance_m=vehicle_fit.width_clearance_m,
         )
 
+    def _rotation_radius(self):
+        return 0.5 * math.hypot(
+            self.loaded_footprint.length_m +
+            2.0 * self.slot_fit_long_margin,
+            self.loaded_footprint.width_m +
+            2.0 * self.slot_fit_lat_margin,
+        )
+
+    def _rotation_safe_pose(self, pose, label):
+        """Clamp a staging point into the map interior for in-place rotation."""
+
+        if self.grid is None or self.grid_w <= 0 or self.grid_h <= 0:
+            raise ValueError("OccupancyGrid is required for rotation staging")
+        radius = self._rotation_radius()
+        inset = radius + self.rotation_boundary_margin
+        map_width = self.grid_w * self.resolution
+        map_height = self.grid_h * self.resolution
+        min_x, max_x = inset, map_width - inset
+        min_y, max_y = inset, map_height - inset
+        if min_x > max_x or min_y > max_y:
+            raise ValueError(
+                "map is too small for the loaded rotation envelope")
+
+        safe_x = min(max(pose.x_m, min_x), max_x)
+        safe_y = min(max(pose.y_m, min_y), max_y)
+        shift = math.hypot(safe_x - pose.x_m, safe_y - pose.y_m)
+        if shift > self.max_rotation_stage_shift + 1e-9:
+            raise ValueError(
+                f"{label} rotation-stage shift {shift:.3f}m exceeds "
+                f"limit {self.max_rotation_stage_shift:.3f}m")
+        if shift > 1e-6:
+            self.get_logger().warn(
+                f"{label} rotation stage moved "
+                f"({pose.x_m:.3f},{pose.y_m:.3f}) -> "
+                f"({safe_x:.3f},{safe_y:.3f}), "
+                f"radius={radius:.3f}m, shift={shift:.3f}m")
+        return Pose2D(safe_x, safe_y, pose.yaw_rad)
+
+    def _field_approach_candidates(
+            self, slot, loaded_length_m, gap_m, current_yaw_rad):
+        candidates = base_make_approach_candidates(
+            slot, loaded_length_m, gap_m, current_yaw_rad)
+        adjusted = []
+        for candidate in candidates:
+            safe_stage = self._rotation_safe_pose(
+                candidate.staging_pose,
+                f"slot {slot.slot_id}/{candidate.parking_direction}",
+            )
+            adjusted.append(ApproachCandidate(
+                parking_direction=candidate.parking_direction,
+                staging_pose=safe_stage,
+                target_pose=candidate.target_pose,
+                yaw_change_rad=candidate.yaw_change_rad,
+            ))
+        return adjusted
+
+    def _field_waiting_staging(
+            self, waiting_pose, loaded_length_m, staging_gap_m):
+        nominal = base_make_waiting_staging(
+            waiting_pose, loaded_length_m, staging_gap_m)
+        return self._rotation_safe_pose(nominal, "waiting")
+
     def plan_and_publish(self):
-        """Run the base planner with only its parking-slot fit hook replaced."""
+        """Run the base planner with field slot/staging hooks installed."""
 
-        if self.mission_type == "retrieve":
-            return super().plan_and_publish()
-
-        # The base node imported check_slot_fit as a module global.  Keep this
-        # adapter isolated and restore the original function even on errors.
+        # The base node imported these helpers as module globals.  Keep the
+        # field adapter isolated and restore every function even on errors.
         with self._fit_patch_lock:
-            original = base_fleet.check_slot_fit
+            original_fit = base_fleet.check_slot_fit
+            original_candidates = base_fleet.make_approach_candidates
+            original_waiting = base_fleet.make_waiting_staging
             base_fleet.check_slot_fit = self._field_slot_fit
+            base_fleet.make_approach_candidates = (
+                self._field_approach_candidates)
+            base_fleet.make_waiting_staging = self._field_waiting_staging
             try:
                 return super().plan_and_publish()
             finally:
-                base_fleet.check_slot_fit = original
+                base_fleet.check_slot_fit = original_fit
+                base_fleet.make_approach_candidates = original_candidates
+                base_fleet.make_waiting_staging = original_waiting
 
     @staticmethod
     def _pose_from_stamped(message):
@@ -175,8 +263,7 @@ class FieldFleetManagerNode(base_fleet.FleetManagerNode):
             2.0 * (qw * qz + qx * qy),
             1.0 - 2.0 * (qy * qy + qz * qz),
         )
-        pose = Pose2D(float(p.x), float(p.y), yaw)
-        return pose
+        return Pose2D(float(p.x), float(p.y), yaw)
 
     def _current_vehicle_spec(self):
         if self.active_vehicle_spec is not None:
@@ -206,8 +293,6 @@ class FieldFleetManagerNode(base_fleet.FleetManagerNode):
             0.0,
         )
 
-        # The robot turns toward target yaw while translating.  Inflate by the
-        # larger projection at the initial and aligned orientations.
         moving_start_s, moving_start_d = projected_half_extents(
             self.robot_length, self.robot_width,
             float(start_odom["yaw"]) - target.yaw_rad, 0.0)
@@ -254,8 +339,6 @@ class FieldFleetManagerNode(base_fleet.FleetManagerNode):
             ],
         ]
 
-        # Geometry avoids the target and peer; this second pass checks the
-        # actual OccupancyGrid, map boundary and any other parked vehicles.
         segment_yaw = float(start_odom["yaw"])
         for segment_start, segment_goal in zip(
                 route_world, route_world[1:]):
@@ -325,8 +408,6 @@ class FieldFleetManagerNode(base_fleet.FleetManagerNode):
         target = self._pose_from_stamped(self.target_pose)
         vehicle_spec = self._current_vehicle_spec()
         if self.simultaneous_entry:
-            # The field branch is designed for Front-first.  Do not silently
-            # approve an unvalidated simultaneous approach.
             preflight_ok = False
         else:
             preflight_ok = self._sequential_approach_preflight(
@@ -347,7 +428,9 @@ class FieldFleetManagerNode(base_fleet.FleetManagerNode):
         """Front-first preflight for side-by-side HOME poses."""
 
         if self.simultaneous_entry:
-            return super()._retrieve_approach_preflight(record)
+            self.get_logger().error(
+                "field side-by-side HOME supports Front-first entry only")
+            return False
         if record.final_vehicle_pose is None or record.vehicle_spec is None:
             return False
         return self._sequential_approach_preflight(

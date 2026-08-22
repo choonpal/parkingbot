@@ -2,9 +2,8 @@
 """Field-site wrapper for the Front robot.
 
 The physical HOME poses are side-by-side in the 4.40 m x 3.83 m map.  This
-wrapper reuses the normal Front launch but supplies the measured HOME centre;
-the ``individual_move`` executable is already mapped to the field adapter on
-this branch.
+wrapper reuses the normal Front launch but supplies the measured HOME centre
+and the field-safe shared exit toward the aisle.
 """
 
 from launch import LaunchDescription
@@ -30,6 +29,10 @@ def generate_launch_description():
                 "waiting_x": "3.60",
                 "waiting_y": "0.60",
                 "simultaneous_entry": "false",
+                # A split nearest-end exit would drive Front into the slot's
+                # 0.23m closed-end clearance.  Both robots clear toward aisle.
+                "same_direction_exit": "true",
+                "same_direction_exit_sign": "-1",
             }.items(),
         )
     ])

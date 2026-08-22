@@ -72,6 +72,40 @@ class FieldRuntimeFleetManagerNode(FieldFleetManagerNode):
                     return False
         return True
 
+    def _sequential_approach_preflight(self, target, vehicle_spec):
+        """Reject approval when either robot odometry is missing or stale."""
+
+        if self.current_virtual_start() is None:
+            self.get_logger().error(
+                "side-by-side approach preflight: fresh Front/Rear odom missing")
+            return False
+        return super()._sequential_approach_preflight(target, vehicle_spec)
+
+    def _rollback_park_approval(self, payload, reason):
+        self.ui_park_approved = False
+        self.requested_destination_slot_id = ""
+        self.active_vehicle_number = ""
+        self.active_parking_credential = None
+        self._set_request_status(payload, "REJECTED", reason)
+
+    def _handle_park_request(self, payload):
+        """Approve only when at least one selected slot fits before lifting."""
+
+        super()._handle_park_request(payload)
+        if (self.request_status is None or
+                self.request_status.get("status") != "ACCEPTED"):
+            return
+
+        candidates = list(self._eligible_park_slots())
+        if candidates and any(
+                self._field_slot_fit(slot).fits for slot in candidates):
+            return
+
+        self._rollback_park_approval(
+            payload, "DESTINATION_SLOT_UNAVAILABLE")
+        self.get_logger().error(
+            "park request rolled back: no vehicle-fit/back-clearance slot")
+
 
 def main(args=None):
     rclpy.init(args=args)

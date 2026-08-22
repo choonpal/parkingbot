@@ -146,13 +146,17 @@ def test_web_node_keeps_operator_ui_without_duplicate_yolo_inference():
     assert 'from ultralytics import YOLO' not in source
     assert 'def _run_yolo' not in source
     assert 'def _draw_yolo' not in source
+    assert 'self.process_every_n' not in source
 
 
-def test_web_monitor_is_diagnostic_not_a_mission_output_publisher():
+def test_web_monitor_only_reads_map_and_is_not_a_mission_output_publisher():
     source = (PKG / 'jetson_vision_web_node.py').read_text()
     assert '/cctv/debug/annotated' in source
+    assert "declare_parameter('map_topic', '/parking/map')" in source
+    assert 'OccupancyGrid, self.map_topic, self.map_cb' in source
+    assert 'create_publisher(OccupancyGrid' not in source
     for mission_topic in (
-            '/parking/map', '/parking/target_pose', '/parking/empty_slots',
+            '/parking/target_pose', '/parking/empty_slots',
             '/front/cctv_pose', '/rear/cctv_pose'):
         assert mission_topic not in source
 

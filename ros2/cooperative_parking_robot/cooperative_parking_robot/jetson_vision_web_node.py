@@ -21,6 +21,7 @@ Endpoints:
 from __future__ import annotations
 
 import json
+import math
 import queue
 import threading
 import time
@@ -32,6 +33,7 @@ from rclpy.qos import (
     DurabilityPolicy, QoSProfile, ReliabilityPolicy,
     qos_profile_sensor_data,
 )
+from nav_msgs.msg import OccupancyGrid
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, String
 
@@ -43,6 +45,10 @@ from cooperative_parking_robot.camera_calibration import (
 from cooperative_parking_robot.parking_registry import (
     normalize_vehicle_number,
     validate_parking_password,
+)
+from cooperative_parking_robot.parking_geometry import (
+    parse_registered_slots,
+    slot_polygon,
 )
 from cooperative_parking_robot.vision_utils import (
     parse_class_ids,
@@ -252,6 +258,163 @@ poll();setInterval(poll,500);
 </script></body></html>"""
 
 
+MAP_PAGE = """<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Parkingbot BEV Map</title><style>
+*{box-sizing:border-box}html,body{width:100%;height:100%;margin:0}
+body{background:#0b1118;color:#e5edf5;font-family:"Noto Sans KR","Malgun Gothic",
+ sans-serif;display:flex;flex-direction:column;overflow:hidden}
+header{height:58px;display:flex;align-items:center;gap:18px;padding:0 20px;
+ background:#141e29;border-bottom:1px solid #334155}
+h1{font-size:21px;margin:0}#state{font-weight:800;color:#f59e0b}
+.legend{margin-left:auto;display:flex;gap:14px;font-size:14px;color:#cbd5e1}
+.key:before{content:"";display:inline-block;width:13px;height:13px;margin-right:5px;
+ vertical-align:-2px;border-radius:2px}.waiting:before{background:#16a34a}
+.slot:before{background:#0ea5e9}.start:before{background:#f59e0b}
+.occupied:before{background:#ef4444}
+main{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;
+ padding:12px}img{max-width:100%;max-height:100%;object-fit:contain;
+ border:1px solid #334155;border-radius:8px;background:#111827}
+@media(max-width:760px){header{height:72px;flex-wrap:wrap;gap:5px 12px;padding:7px 12px}
+h1{font-size:17px}.legend{width:100%;margin:0;font-size:11px;gap:9px}}
+</style></head><body><header><h1>Parkingbot 실시간 BEV / Occupancy Map</h1>
+<span id="state">맵 대기 중</span><div class="legend">
+<span class="key waiting">WAITING</span><span class="key slot">P1–P4</span>
+<span class="key start">ROBOT START</span><span class="key occupied">OCCUPIED</span>
+</div></header><main><img src="/map_feed" alt="실시간 주차장 맵"></main>
+<script>
+function poll(){fetch('/api/map_status').then(function(r){return r.json();})
+.then(function(s){var e=document.getElementById('state');
+ if(!s.received){e.textContent='맵 대기 중';e.style.color='#f59e0b';}
+ else if(s.fresh){e.textContent='LIVE · '+s.sequence;e.style.color='#22c55e';}
+ else{e.textContent='STALE · '+s.age_s.toFixed(1)+'초';e.style.color='#ef4444';}})
+.catch(function(){var e=document.getElementById('state');e.textContent='연결 끊김';
+e.style.color='#ef4444';});}poll();setInterval(poll,500);
+</script></body></html>"""
+
+
+def _polygon_from_flat(values, name, minimum_points=3):
+    values = [float(value) for value in values]
+    if len(values) < 2 * minimum_points or len(values) % 2:
+        raise ValueError(
+            f'{name} must contain x,y pairs for at least '
+            f'{minimum_points} points')
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError(f'{name} must contain only finite values')
+    return [tuple(values[index:index + 2])
+            for index in range(0, len(values), 2)]
+
+
+def render_occupancy_map(
+        data, width, height, resolution, origin_x, origin_y,
+        waiting_polygon, slots, robot_start_polygon, robot_starts,
+        pixels_per_m=120, received=True):
+    """OccupancyGrid와 현장 layout을 한 장의 BGR 이미지로 렌더링한다."""
+    width, height = int(width), int(height)
+    resolution = float(resolution)
+    pixels_per_m = int(pixels_per_m)
+    if width <= 0 or height <= 0 or resolution <= 0.0:
+        raise ValueError('invalid OccupancyGrid metadata')
+    if pixels_per_m < 20:
+        raise ValueError('pixels_per_m must be at least 20')
+    grid = np.asarray(data, dtype=np.int16)
+    if grid.size != width * height:
+        raise ValueError(
+            f'OccupancyGrid size mismatch: {grid.size} != {width * height}')
+    grid = grid.reshape((height, width))
+
+    # ROS OccupancyGrid의 첫 행은 y가 가장 작은 행이다. 화면에서는 y가 위로
+    # 증가하도록 뒤집어 map frame의 방향을 그대로 보존한다.
+    colors = np.zeros((height, width, 3), dtype=np.uint8)
+    colors[:] = (43, 52, 64)
+    colors[grid < 0] = (76, 82, 91)
+    colors[(grid >= 0) & (grid < 50)] = (30, 41, 53)
+    colors[grid >= 50] = (52, 68, 220)
+
+    plot_w = max(1, int(round(width * resolution * pixels_per_m)))
+    plot_h = max(1, int(round(height * resolution * pixels_per_m)))
+    left, right, top, bottom = 58, 20, 42, 48
+    canvas = np.full(
+        (top + plot_h + bottom, left + plot_w + right, 3),
+        (11, 17, 24), dtype=np.uint8)
+    resized = cv2.resize(
+        np.flipud(colors), (plot_w, plot_h), interpolation=cv2.INTER_NEAREST)
+    canvas[top:top + plot_h, left:left + plot_w] = resized
+
+    def world_to_pixel(point):
+        x_m, y_m = point
+        return (
+            int(round(left + (x_m - origin_x) * pixels_per_m)),
+            int(round(top + plot_h - (y_m - origin_y) * pixels_per_m)),
+        )
+
+    # 40 cm 바닥 타일 격자를 얇게 표시해 homography 스케일도 눈으로 확인한다.
+    x_min, x_max = origin_x, origin_x + width * resolution
+    y_min, y_max = origin_y, origin_y + height * resolution
+    tile = 0.4
+    for index in range(int(math.ceil((x_max - x_min) / tile)) + 1):
+        x_m = x_min + index * tile
+        p1, p2 = world_to_pixel((x_m, y_min)), world_to_pixel((x_m, y_max))
+        cv2.line(canvas, p1, p2, (55, 68, 82), 1, cv2.LINE_AA)
+    for index in range(int(math.ceil((y_max - y_min) / tile)) + 1):
+        y_m = y_min + index * tile
+        p1, p2 = world_to_pixel((x_min, y_m)), world_to_pixel((x_max, y_m))
+        cv2.line(canvas, p1, p2, (55, 68, 82), 1, cv2.LINE_AA)
+
+    def draw_zone(polygon, color, label, alpha=0.20):
+        points = np.asarray(
+            [world_to_pixel(point) for point in polygon], dtype=np.int32)
+        overlay = canvas.copy()
+        cv2.fillPoly(overlay, [points], color)
+        cv2.addWeighted(overlay, alpha, canvas, 1.0 - alpha, 0.0, canvas)
+        cv2.polylines(canvas, [points], True, color, 2, cv2.LINE_AA)
+        center = tuple(np.mean(points, axis=0).astype(int))
+        size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)[0]
+        cv2.putText(
+            canvas, label, (center[0] - size[0] // 2, center[1] + size[1] // 2),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (238, 245, 252), 2,
+            cv2.LINE_AA)
+
+    draw_zone(waiting_polygon, (55, 176, 76), 'WAITING')
+    for slot_id, polygon in slots:
+        draw_zone(polygon, (235, 165, 14), str(slot_id), alpha=0.12)
+    draw_zone(robot_start_polygon, (11, 158, 245), 'ROBOT START', alpha=0.15)
+
+    for role, (x_m, y_m, yaw_deg) in robot_starts:
+        center = world_to_pixel((x_m, y_m))
+        yaw = math.radians(float(yaw_deg))
+        tip = world_to_pixel((
+            x_m + 0.28 * math.cos(yaw),
+            y_m + 0.28 * math.sin(yaw)))
+        cv2.circle(canvas, center, 8, (11, 158, 245), -1, cv2.LINE_AA)
+        cv2.arrowedLine(
+            canvas, center, tip, (255, 255, 255), 2, cv2.LINE_AA,
+            tipLength=0.35)
+        cv2.putText(
+            canvas, str(role).upper(), (center[0] + 10, center[1] - 9),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 224, 160), 1,
+            cv2.LINE_AA)
+
+    cv2.rectangle(
+        canvas, (left, top), (left + plot_w, top + plot_h),
+        (148, 163, 184), 1)
+    title = (
+        f"{'LIVE' if received else 'WAITING'} /parking/map  "
+        f'{width * resolution:.2f} x {height * resolution:.2f} m  '
+        f'{resolution:.3f} m/cell')
+    cv2.putText(
+        canvas, title, (left, 27), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+        (209, 250, 229) if received else (120, 190, 255), 1, cv2.LINE_AA)
+    cv2.putText(
+        canvas, 'X [m]', (left + plot_w - 48, top + plot_h + 34),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 193, 207), 1, cv2.LINE_AA)
+    cv2.putText(
+        canvas, 'Y', (18, top + 14), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+        (180, 193, 207), 1, cv2.LINE_AA)
+    return canvas
+
+
 class JetsonVisionWebNode(Node):
     def __init__(self):
         super().__init__('jetson_vision_web_node')
@@ -279,6 +442,28 @@ class JetsonVisionWebNode(Node):
         self.declare_parameter('status_stale_s', 3.0)
         self.declare_parameter('ui_button_cooldown_s', 2.0)
         self.declare_parameter('localization_warning_streak', 5)
+        # ===== 실제 BEV/Occupancy 맵 화면 =====
+        self.declare_parameter('map_topic', '/parking/map')
+        self.declare_parameter('map_pixels_per_m', 120)
+        self.declare_parameter('map_stale_s', 3.0)
+        self.declare_parameter('map_resolution', 0.05)
+        self.declare_parameter('map_width_m', 6.0)
+        self.declare_parameter('map_height_m', 4.0)
+        self.declare_parameter(
+            'waiting_polygon',
+            [0.0, 0.0, 1.2, 0.0, 1.2, 0.8, 0.0, 0.8])
+        self.declare_parameter('slot_ids', ['P1', 'P2', 'P3', 'P4'])
+        self.declare_parameter(
+            'slot_coords', [1.2, 2.2, 2.0, 2.2, 2.8, 2.2, 3.6, 2.2])
+        self.declare_parameter(
+            'slot_sizes', [1.2, 0.8, 1.2, 0.8, 1.2, 0.8, 1.2, 0.8])
+        self.declare_parameter('slot_yaws_deg', [90.0, 90.0, 90.0, 90.0])
+        self.declare_parameter('slot_polygons', [0.0])
+        self.declare_parameter(
+            'robot_start_polygon',
+            [3.2, 0.0, 4.0, 0.0, 4.0, 0.8, 3.2, 0.8])
+        self.declare_parameter('front_start_pose', [3.6, 0.6, 180.0])
+        self.declare_parameter('rear_start_pose', [3.6, 0.2, 180.0])
 
         if not WEB_DEPS_OK:
             raise RuntimeError(
@@ -314,10 +499,57 @@ class JetsonVisionWebNode(Node):
             self.get_parameter('ui_button_cooldown_s').value)
         self.localization_warning_streak = int(
             self.get_parameter('localization_warning_streak').value)
+        self.map_topic = str(self.get_parameter('map_topic').value)
+        self.map_pixels_per_m = int(
+            self.get_parameter('map_pixels_per_m').value)
+        self.map_stale_s = float(self.get_parameter('map_stale_s').value)
+        self.map_resolution = float(
+            self.get_parameter('map_resolution').value)
+        self.map_width_m = float(self.get_parameter('map_width_m').value)
+        self.map_height_m = float(self.get_parameter('map_height_m').value)
         if self.status_stale_s <= 0.0 or self.ui_button_cooldown < 0.0:
             raise ValueError('invalid UI status/cooldown parameters')
         if self.localization_warning_streak <= 0:
             raise ValueError('localization_warning_streak must be positive')
+        if (not self.map_topic or self.map_pixels_per_m < 20 or
+                self.map_stale_s <= 0.0 or self.map_resolution <= 0.0 or
+                self.map_width_m <= 0.0 or self.map_height_m <= 0.0):
+            raise ValueError('invalid map viewer parameters')
+
+        self.waiting_polygon = _polygon_from_flat(
+            self.get_parameter('waiting_polygon').value,
+            'waiting_polygon')
+        slots = parse_registered_slots(
+            self.get_parameter('slot_ids').value,
+            self.get_parameter('slot_coords').value,
+            self.get_parameter('slot_sizes').value,
+            self.get_parameter('slot_yaws_deg').value)
+        polygon_flat = list(self.get_parameter('slot_polygons').value)
+        if len(polygon_flat) == 1 and float(polygon_flat[0]) == 0.0:
+            polygons = [slot_polygon(slot) for slot in slots]
+        elif len(polygon_flat) == 8 * len(slots):
+            polygons = [
+                _polygon_from_flat(
+                    polygon_flat[index * 8:(index + 1) * 8],
+                    f'slot_polygons[{index}]', minimum_points=4)
+                for index in range(len(slots))]
+        else:
+            raise ValueError(
+                'slot_polygons must contain eight values per slot')
+        self.map_slots = [
+            (slot.slot_id, polygon)
+            for slot, polygon in zip(slots, polygons)]
+        self.robot_start_polygon = _polygon_from_flat(
+            self.get_parameter('robot_start_polygon').value,
+            'robot_start_polygon')
+        self.robot_starts = []
+        for role, parameter in (
+                ('front', 'front_start_pose'), ('rear', 'rear_start_pose')):
+            pose = [float(value) for value in
+                    self.get_parameter(parameter).value]
+            if len(pose) != 3 or not all(math.isfinite(value) for value in pose):
+                raise ValueError(f'{parameter} must contain finite x,y,yaw_deg')
+            self.robot_starts.append((role, tuple(pose)))
 
         if not self.image_topic or not self.annotated_topic:
             raise ValueError('image and annotated topics must not be empty')
@@ -378,6 +610,8 @@ class JetsonVisionWebNode(Node):
                 Image, self.annotated_topic, qos_profile_sensor_data)
         self.create_subscription(
             Image, self.image_topic, self.image_cb, qos_profile_sensor_data)
+        self.create_subscription(
+            OccupancyGrid, self.map_topic, self.map_cb, 10)
 
         self._frame_condition = threading.Condition()
         self._latest_frame = None
@@ -387,8 +621,30 @@ class JetsonVisionWebNode(Node):
         self._jpeg_condition = threading.Condition()
         self._latest_jpeg = None
         self._jpeg_sequence = 0
+        self._map_condition = threading.Condition()
+        self._latest_map_jpeg = None
+        self._map_sequence = 0
+        self._map_received = False
+        self._last_map_time = None
         self._stop_event = threading.Event()
         self._last_process_time = None
+
+        placeholder_width = max(
+            1, int(round(self.map_width_m / self.map_resolution)))
+        placeholder_height = max(
+            1, int(round(self.map_height_m / self.map_resolution)))
+        placeholder = render_occupancy_map(
+            [-1] * (placeholder_width * placeholder_height),
+            placeholder_width, placeholder_height, self.map_resolution,
+            0.0, 0.0, self.waiting_polygon, self.map_slots,
+            self.robot_start_polygon, self.robot_starts,
+            self.map_pixels_per_m, received=False)
+        ok, buffer = cv2.imencode(
+            '.jpg', placeholder,
+            [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality])
+        if ok:
+            self._latest_map_jpeg = buffer.tobytes()
+            self._map_sequence = 1
 
         # ===== 터치 UI 상태/발행 =====
         self._status_lock = threading.Lock()
@@ -431,8 +687,8 @@ class JetsonVisionWebNode(Node):
             f'{mode} web listening on http://{self.web_host}:'
             f'{self.web_port}/ without authentication; trusted LAN only')
         self.get_logger().info(
-            f'Jetson vision web monitor: {self.image_topic} -> '
-            f'{self.annotated_topic}, every_n={self.process_every_n}')
+            f'Jetson vision web monitor: camera={self.image_topic}, '
+            f'map={self.map_topic} -> /map')
 
     # ==================================================
     # 터치 UI — 상태 수집
@@ -747,6 +1003,46 @@ class JetsonVisionWebNode(Node):
                 self._mjpeg_stream(),
                 mimetype='multipart/x-mixed-replace; boundary=frame')
 
+        @app.route('/map')
+        def map_page():
+            return Response(MAP_PAGE, mimetype='text/html')
+
+        @app.route('/map_feed')
+        def map_feed():
+            return Response(
+                self._map_mjpeg_stream(),
+                mimetype='multipart/x-mixed-replace; boundary=frame')
+
+        @app.route('/map_snapshot.jpg')
+        def map_snapshot():
+            with self._map_condition:
+                jpeg = self._latest_map_jpeg
+            if jpeg is None:
+                return ('map not ready', 503)
+            return Response(
+                jpeg, mimetype='image/jpeg',
+                headers={'Cache-Control': 'no-store, max-age=0'})
+
+        @app.route('/api/map_status')
+        def api_map_status():
+            now = time.monotonic()
+            with self._map_condition:
+                received = self._map_received
+                sequence = self._map_sequence
+                last_map_time = self._last_map_time
+            age_s = (
+                None if last_map_time is None
+                else max(0.0, now - last_map_time))
+            return jsonify({
+                'received': received,
+                'fresh': bool(
+                    received and age_s is not None and
+                    age_s <= self.map_stale_s),
+                'age_s': age_s,
+                'sequence': sequence,
+                'map_topic': self.map_topic,
+            })
+
         @app.route('/kiosk')
         def kiosk():
             if not self.enable_operator_ui:
@@ -801,12 +1097,18 @@ class JetsonVisionWebNode(Node):
             with self._jpeg_condition:
                 ready = self._latest_jpeg is not None
                 sequence = self._jpeg_sequence
+            with self._map_condition:
+                map_received = self._map_received
+                map_sequence = self._map_sequence
             return jsonify({
                 'ready': ready,
                 'sequence': sequence,
                 'image_topic': self.image_topic,
                 'debug_overlay': self.enable_debug_overlay,
                 'aruco': self.enable_aruco,
+                'map_received': map_received,
+                'map_sequence': map_sequence,
+                'map_topic': self.map_topic,
             })
 
         return app
@@ -829,6 +1131,57 @@ class JetsonVisionWebNode(Node):
                 b'--frame\r\n'
                 b'Content-Type: image/jpeg\r\n\r\n'
                 + jpeg + b'\r\n')
+
+    def _map_mjpeg_stream(self):
+        last_sequence = -1
+        while not self._stop_event.is_set():
+            with self._map_condition:
+                self._map_condition.wait_for(
+                    lambda: self._stop_event.is_set()
+                    or (self._latest_map_jpeg is not None
+                        and self._map_sequence != last_sequence),
+                    timeout=1.0,
+                )
+                if self._stop_event.is_set():
+                    break
+                jpeg = self._latest_map_jpeg
+                last_sequence = self._map_sequence
+            yield (
+                b'--frame\r\n'
+                b'Content-Type: image/jpeg\r\n\r\n'
+                + jpeg + b'\r\n')
+
+    def map_cb(self, message: OccupancyGrid) -> None:
+        try:
+            image = render_occupancy_map(
+                message.data,
+                message.info.width,
+                message.info.height,
+                message.info.resolution,
+                message.info.origin.position.x,
+                message.info.origin.position.y,
+                self.waiting_polygon,
+                self.map_slots,
+                self.robot_start_polygon,
+                self.robot_starts,
+                self.map_pixels_per_m,
+                received=True)
+            ok, buffer = cv2.imencode(
+                '.jpg', image,
+                [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality])
+            if not ok:
+                raise ValueError('JPEG encoding failed')
+        except (TypeError, ValueError) as exc:
+            self.get_logger().warn(
+                f'OccupancyGrid 렌더링 실패: {exc}',
+                throttle_duration_sec=3.0)
+            return
+        with self._map_condition:
+            self._latest_map_jpeg = buffer.tobytes()
+            self._map_sequence += 1
+            self._map_received = True
+            self._last_map_time = time.monotonic()
+            self._map_condition.notify_all()
 
     def image_cb(self, message: Image) -> None:
         frame = self.bridge.imgmsg_to_cv2(message, desired_encoding='bgr8')
@@ -955,6 +1308,8 @@ class JetsonVisionWebNode(Node):
             self._frame_condition.notify_all()
         with self._jpeg_condition:
             self._jpeg_condition.notify_all()
+        with self._map_condition:
+            self._map_condition.notify_all()
         try:
             self._web_server.shutdown()
         except Exception:

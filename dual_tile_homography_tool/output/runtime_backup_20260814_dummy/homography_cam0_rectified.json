@@ -1,0 +1,60 @@
+{
+  "format": "pixel_to_map_metre_homography_v1",
+  "synthetic": true,
+  "note": "scripts/make_dummy_calibration.py가 만든 임시 파일. 실제 렌즈/설치각과 무관하므로 좌표값은 의미 없음.",
+  "camera_label": "cam0",
+  "image_width_px": 1280,
+  "image_height_px": 720,
+  "homography_scale_to_m": 1.0,
+  "references": [
+    {
+      "pixel": [
+        0.0,
+        0.0
+      ],
+      "world": [
+        0.0,
+        4.0
+      ]
+    },
+    {
+      "pixel": [
+        1279.0,
+        0.0
+      ],
+      "world": [
+        3.4,
+        4.0
+      ]
+    },
+    {
+      "pixel": [
+        1279.0,
+        719.0
+      ],
+      "world": [
+        3.4,
+        0.0
+      ]
+    },
+    {
+      "pixel": [
+        0.0,
+        719.0
+      ],
+      "world": [
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "reprojection_errors_m": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "reprojection_rms_m": 0.0,
+  "reprojection_max_m": 0.0,
+  "layout_file": "/home/guitest/.ros/adaptive_valet_bot/parking_layout.yaml"
+}

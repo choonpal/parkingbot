@@ -7,6 +7,8 @@ from types import SimpleNamespace
 from cooperative_parking_robot.jetson_vision_web_node import (
     JetsonVisionWebNode,
     KIOSK_PAGE,
+    MAP_PAGE,
+    render_occupancy_map,
 )
 
 
@@ -90,6 +92,35 @@ def test_kiosk_layout_supports_seven_inch_touch_viewports():
     assert '@media (max-width:900px)' in KIOSK_PAGE
     assert '@media (max-height:520px)' in KIOSK_PAGE
     assert 'body{width:1024px;height:600px' not in KIOSK_PAGE
+
+
+def test_live_map_page_uses_the_occupancy_grid_stream():
+    assert 'src="/map_feed"' in MAP_PAGE
+    assert '/api/map_status' in MAP_PAGE
+    assert 'WAITING' in MAP_PAGE
+    assert 'P1–P4' in MAP_PAGE
+    assert 'ROBOT START' in MAP_PAGE
+
+
+def test_map_renderer_keeps_ros_positive_y_pointing_up():
+    # OccupancyGrid index 0 is the lower-left cell in map coordinates.
+    data = [100] + [0] * 11
+    image = render_occupancy_map(
+        data, width=4, height=3, resolution=0.1,
+        origin_x=0.0, origin_y=0.0,
+        waiting_polygon=[(-2.0, -2.0), (-1.9, -2.0),
+                         (-1.9, -1.9), (-2.0, -1.9)],
+        slots=[],
+        robot_start_polygon=[(-2.0, -2.0), (-1.9, -2.0),
+                             (-1.9, -1.9), (-2.0, -1.9)],
+        robot_starts=[], pixels_per_m=100)
+
+    # plot margins are left=58/top=42; the occupied y=0 cell must be near
+    # the bottom, while the corresponding top cell remains free/dark.
+    bottom_left = image[67, 63]
+    top_left = image[47, 63]
+    assert int(bottom_left[2]) > 150
+    assert int(top_left[2]) < 100
 
 
 def test_mission_publish_log_excludes_vehicle_number_and_password():

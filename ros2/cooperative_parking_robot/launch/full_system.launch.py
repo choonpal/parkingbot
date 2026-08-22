@@ -299,7 +299,7 @@ def generate_launch_description():
             executable='jetson_vision_web',
             name='jetson_vision_web_node',
             condition=IfCondition(enable_web),
-            parameters=[{
+            parameters=[layout_config, {
                 'image_topic': LaunchConfiguration('cctv_rect_topic'),
                 'enable_aruco': True,
                 'aruco_dict': LaunchConfiguration('aruco_dict'),

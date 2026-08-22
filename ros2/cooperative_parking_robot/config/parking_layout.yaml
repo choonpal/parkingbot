@@ -1,71 +1,99 @@
-# 예시 주차장 배치. 현장에서는 bev_layout_calibrator가 생성한 YAML로 교체한다.
-# 모든 좌표/크기는 map frame의 metre, Yaw는 통로에서 슬롯 안쪽 방향의 degree다.
-# single/dual CCTV의 node name과 무관하게 perception 공용 값을 적용한다.
+# 40 cm 타일 기준 현장 배치 템플릿.
+# 패키지 기본 파일은 오동작 방지를 위해 비활성화하며, 실제 실행은
+# ~/.ros/adaptive_valet_bot/parking_layout.yaml의 등록본을 사용한다.
+# 모든 좌표/크기는 Homography와 같은 map frame의 metre 단위다.
+#
+# 차량 WAITING ZONE: (0.0,0.0) ~ (1.2,0.8), 중심 (0.6,0.4)
+# 주차로봇 출발영역: (3.2,0.0) ~ (4.0,0.8)
+#   Front 시작 중심: (3.6,0.6)
+#   Rear  시작 중심: (3.6,0.2)
+# 차량과 로봇의 앞머리는 WAITING ZONE 방향(-X, yaw=180 deg)을 향한다.
+#
+# 같은 index의 ID / 중심(x,y) / 길이·폭 / 통로->안쪽 Yaw가 한 슬롯이다.
 /**:
   ros__parameters:
-    # 이 파일은 시연용 예시이므로 실차 mission launch에서는 거부된다.
     layout_registered: false
-    map_resolution: 0.05
-    map_width_m: 6.0
-    map_height_m: 4.0
-    # 차량 장애물 fallback 정사각형 한 변. Seg mask가 있으면 점유는 mask로 계산한다.
-    car_size_m: 0.90
-    # 차량 대기영역 네 모서리 + 기존 축정렬 코드와의 호환 bounding box.
-    waiting_polygon: [2.10, 0.30, 2.50, 0.30, 2.50, 0.90, 2.10, 0.90]
-    waiting_zone: [2.10, 0.30, 2.50, 0.90]
-    # 같은 index의 ID / 중심(x,y) / 길이·폭 / 통로->안쪽 Yaw가 한 슬롯이다.
+    map_resolution: 0.050000
+    map_width_m: 6.000000
+    map_height_m: 4.000000
+    car_size_m: 0.900000
+
+    # 차량 중심 detection ROI. 꼭짓점은 자기교차가 없도록 CCW로 정렬했다.
+    waiting_polygon: [0.000000, 0.000000, 1.200000, 0.000000, 1.200000, 0.800000, 0.000000, 0.800000]
+    waiting_zone: [0.000000, 0.000000, 1.200000, 0.800000]
+
+    # 두 로봇은 나란히 서서 -X(대기공간) 방향을 바라본다.
+    robot_start_polygon: [3.200000, 0.000000, 4.000000, 0.000000, 4.000000, 0.800000, 3.200000, 0.800000]
+    front_start_pose: [3.600000, 0.600000, 180.000000]
+    rear_start_pose: [3.600000, 0.200000, 180.000000]
+
+    # P1 -> P4는 +X 방향 순서다. 긴 축은 +Y이고 입구는 y=1.6 쪽이다.
     slot_ids: ["P1", "P2", "P3", "P4"]
-    slot_coords: [1.5, 3.0, 2.5, 3.0, 3.5, 3.0, 4.5, 3.0]
-    slot_sizes: [1.80, 0.70, 1.80, 0.70, 1.80, 0.70, 1.80, 0.70]
-    slot_yaws_deg: [90.0, 90.0, 90.0, 90.0]
-    slot_polygons: [1.85, 2.10, 1.85, 3.90, 1.15, 3.90, 1.15, 2.10,
-                    2.85, 2.10, 2.85, 3.90, 2.15, 3.90, 2.15, 2.10,
-                    3.85, 2.10, 3.85, 3.90, 3.15, 3.90, 3.15, 2.10,
-                    4.85, 2.10, 4.85, 3.90, 4.15, 3.90, 4.15, 2.10]
+    slot_coords: [1.200000, 2.200000, 2.000000, 2.200000, 2.800000, 2.200000, 3.600000, 2.200000]
+    slot_sizes: [1.200000, 0.800000, 1.200000, 0.800000, 1.200000, 0.800000, 1.200000, 0.800000]
+    slot_yaws_deg: [90.000000, 90.000000, 90.000000, 90.000000]
+    slot_polygons: [0.800000, 1.600000, 1.600000, 1.600000, 1.600000, 2.800000, 0.800000, 2.800000,
+                    1.600000, 1.600000, 2.400000, 1.600000, 2.400000, 2.800000, 1.600000, 2.800000,
+                    2.400000, 1.600000, 3.200000, 1.600000, 3.200000, 2.800000, 2.400000, 2.800000,
+                    3.200000, 1.600000, 4.000000, 1.600000, 4.000000, 2.800000, 3.200000, 2.800000]
     use_fixed_slots: true
-    # 차량 mask가 슬롯 면적의 10% 이상을 차지하면 점유로 판정한다.
-    slot_occupancy_overlap_ratio: 0.10
+    slot_occupancy_overlap_ratio: 0.100000
     slot_empty_confirm_frames: 5
-    slot_occupied_hold_s: 0.75
-    vehicle_feedback_association_gate_m: 0.45
+    slot_occupied_hold_s: 0.750000
+    vehicle_feedback_association_gate_m: 0.450000
     use_mask_vehicle_dimensions: true
 
 fleet_manager_node:
   ros__parameters:
     layout_registered: false
-    waiting_x: 2.3
-    waiting_y: 0.6
-    waiting_yaw_deg: 0.0
-    # 차량 중심 detection ROI. 물리적인 loaded-footprint 경계가 아니다.
-    waiting_polygon: [2.10, 0.30, 2.50, 0.30, 2.50, 0.90, 2.10, 0.90]
-    map_resolution: 0.05
+    map_resolution: 0.050000
+    waiting_x: 0.600000
+    waiting_y: 0.400000
+    waiting_yaw_deg: 180.000000
+    waiting_polygon: [0.000000, 0.000000, 1.200000, 0.000000, 1.200000, 0.800000, 0.000000, 0.800000]
+    source_vehicle_fallback_mask_m: 0.900000
     slot_ids: ["P1", "P2", "P3", "P4"]
-    slot_coords: [1.5, 3.0, 2.5, 3.0, 3.5, 3.0, 4.5, 3.0]
-    slot_sizes: [1.80, 0.70, 1.80, 0.70, 1.80, 0.70, 1.80, 0.70]
-    slot_yaws_deg: [90.0, 90.0, 90.0, 90.0]
-    # 로봇 1대 실측 외곽. +x=차량 앞뒤, +y=차량 좌우.
-    robot_length_m: 0.565
-    robot_width_m: 0.275
-    minimum_inter_robot_gap_m: 0.10
-    # 모형차 placeholder. YOLO vehicle_spec의 mask 치수가 들어오면 임무 전에 갱신된다.
-    default_wheelbase_m: 0.70
-    default_vehicle_length_m: 0.90
-    default_vehicle_width_m: 0.35
-    # Perception의 polygon 없는 차량 0.90m 정사각형 raster와 동일한 source mask.
-    source_vehicle_fallback_mask_m: 0.90
-    footprint_safety_margin_m: 0.06
-    # 슬롯 적합성은 Front+차량+Rear 결합 footprint에 아래 양측 여유를 더해 검사한다.
-    slot_fit_longitudinal_margin_m: 0.06
-    slot_fit_lateral_margin_m: 0.06
-    slot_staging_gap_m: 0.10
-    initial_target_offset_gate_m: 0.50
+    slot_coords: [1.200000, 2.200000, 2.000000, 2.200000, 2.800000, 2.200000, 3.600000, 2.200000]
+    slot_sizes: [1.200000, 0.800000, 1.200000, 0.800000, 1.200000, 0.800000, 1.200000, 0.800000]
+    slot_yaws_deg: [90.000000, 90.000000, 90.000000, 90.000000]
+
+    robot_length_m: 0.565000
+    robot_width_m: 0.275000
+    minimum_inter_robot_gap_m: 0.100000
+    default_wheelbase_m: 0.700000
+    default_vehicle_length_m: 0.900000
+    default_vehicle_width_m: 0.350000
+    footprint_safety_margin_m: 0.060000
+    slot_fit_longitudinal_margin_m: 0.060000
+    slot_fit_lateral_margin_m: 0.060000
+    slot_staging_gap_m: 0.100000
+    initial_target_offset_gate_m: 0.500000
     use_staged_slot_entry: true
-    # 이번 demo의 retrieve 후방 접근 재사용 조건.
     parking_direction: "forward"
-    # 실증 P1~P4는 동시 접근 간격을 만족하지 않아 기존 Front-first를 사용한다.
     simultaneous_entry: false
     unknown_is_occupied: true
-    odom_timeout_s: 0.5
-    # IndividualMoveNode의 접근 yaw controller 기본값과 preflight를 일치시킨다.
-    approach_yaw_gain: 1.5
-    approach_max_yaw_rate_rps: 0.15
+    odom_timeout_s: 0.500000
+    approach_yaw_gain: 1.500000
+    approach_max_yaw_rate_rps: 0.150000
+
+# 듀얼 CCTV의 최종 슬롯 점유 판정 노드. `/**`와 같은 현장 좌표를 명시한다.
+cctv_merge_node:
+  ros__parameters:
+    layout_registered: false
+    map_resolution: 0.050000
+    map_width_m: 6.000000
+    map_height_m: 4.000000
+    car_size_m: 0.900000
+    waiting_polygon: [0.000000, 0.000000, 1.200000, 0.000000, 1.200000, 0.800000, 0.000000, 0.800000]
+    slot_ids: ["P1", "P2", "P3", "P4"]
+    slot_coords: [1.200000, 2.200000, 2.000000, 2.200000, 2.800000, 2.200000, 3.600000, 2.200000]
+    slot_sizes: [1.200000, 0.800000, 1.200000, 0.800000, 1.200000, 0.800000, 1.200000, 0.800000]
+    slot_yaws_deg: [90.000000, 90.000000, 90.000000, 90.000000]
+    slot_polygons: [0.800000, 1.600000, 1.600000, 1.600000, 1.600000, 2.800000, 0.800000, 2.800000,
+                    1.600000, 1.600000, 2.400000, 1.600000, 2.400000, 2.800000, 1.600000, 2.800000,
+                    2.400000, 1.600000, 3.200000, 1.600000, 3.200000, 2.800000, 2.400000, 2.800000,
+                    3.200000, 1.600000, 4.000000, 1.600000, 4.000000, 2.800000, 3.200000, 2.800000]
+    slot_occupancy_overlap_ratio: 0.100000
+    slot_empty_confirm_frames: 5
+    slot_occupied_hold_s: 0.750000
+    vehicle_feedback_association_gate_m: 0.450000

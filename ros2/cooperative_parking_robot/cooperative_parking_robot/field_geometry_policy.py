@@ -60,6 +60,16 @@ class LoadedOverhangCheck:
 
 
 @dataclass(frozen=True)
+class RotationStageClamp:
+    """A staging centre moved into the map-safe rotation interior."""
+
+    x_m: float
+    y_m: float
+    shift_m: float
+    inset_m: float
+
+
+@dataclass(frozen=True)
 class AxisAlignedRect:
     """Axis-aligned protected rectangle in the vehicle (s,d) frame."""
 
@@ -159,6 +169,83 @@ def check_loaded_overhang_clearance(
         available_back_clearance_m=back_clearance,
         clearance_m=clearance,
     )
+
+
+def clamp_rotation_center(
+        x_m: float,
+        y_m: float,
+        map_width_m: float,
+        map_height_m: float,
+        rotation_radius_m: float,
+        boundary_margin_m: float = 0.03,
+        max_shift_m: float | None = None) -> RotationStageClamp:
+    """Move a rotation centre far enough from every map boundary.
+
+    The loaded assembly sweeps a circle with ``rotation_radius_m``.  The centre
+    therefore has to remain inside ``radius + margin`` on all four sides.  This
+    helper only addresses map boundaries; the caller must still check occupied
+    cells with the actual OccupancyGrid.
+    """
+
+    x = _finite("x_m", x_m)
+    y = _finite("y_m", y_m)
+    width = _positive("map_width_m", map_width_m)
+    height = _positive("map_height_m", map_height_m)
+    radius = _positive("rotation_radius_m", rotation_radius_m)
+    margin = _nonnegative("boundary_margin_m", boundary_margin_m)
+    maximum = (None if max_shift_m is None else
+               _nonnegative("max_shift_m", max_shift_m))
+
+    inset = radius + margin
+    if width + 1e-9 < 2.0 * inset or height + 1e-9 < 2.0 * inset:
+        raise ValueError(
+            "map is too small for the loaded rotation envelope")
+
+    safe_x = min(max(x, inset), width - inset)
+    safe_y = min(max(y, inset), height - inset)
+    shift = math.hypot(safe_x - x, safe_y - y)
+    if maximum is not None and shift > maximum + 1e-9:
+        raise ValueError(
+            f"rotation-stage shift {shift:.3f}m exceeds "
+            f"limit {maximum:.3f}m")
+    return RotationStageClamp(
+        x_m=safe_x,
+        y_m=safe_y,
+        shift_m=shift,
+        inset_m=inset,
+    )
+
+
+def final_approach_polyline(
+        start: Sequence[float],
+        goal: Sequence[float],
+        axis_yaw_rad: float) -> list[Point2D]:
+    """Return the mecanum final-approach path used by the controller.
+
+    After rotating at staging, the controller first closes lateral error in the
+    slot frame, then inserts along the slot longitudinal axis.  The returned
+    points exclude ``start`` and include ``goal``.  Zero-length legs are omitted.
+    """
+
+    sx = _finite("start.x", start[0])
+    sy = _finite("start.y", start[1])
+    gx = _finite("goal.x", goal[0])
+    gy = _finite("goal.y", goal[1])
+    yaw = _finite("axis_yaw_rad", axis_yaw_rad)
+    c, s = math.cos(yaw), math.sin(yaw)
+    ex, ey = gx - sx, gy - sy
+    lateral = -ex * s + ey * c
+
+    aligned = (sx - s * lateral, sy + c * lateral)
+    result: list[Point2D] = []
+    current = (sx, sy)
+    if math.dist(current, aligned) > 1e-9:
+        result.append(aligned)
+        current = aligned
+    goal_point = (gx, gy)
+    if math.dist(current, goal_point) > 1e-9:
+        result.append(goal_point)
+    return result
 
 
 def projected_half_extents(

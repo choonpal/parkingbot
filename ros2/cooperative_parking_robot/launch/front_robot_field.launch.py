@@ -33,6 +33,10 @@ def generate_launch_description():
                 # 0.23m closed-end clearance.  Both robots clear toward aisle.
                 "same_direction_exit": "true",
                 "same_direction_exit_sign": "-1",
+                # 0.65m leaves the inner Front robot far enough outside the
+                # released vehicle to rotate in the open aisle.  Rear parks
+                # first; Front then enters the upper HOME.
+                "exit_distance_m": "0.65",
             }.items(),
         )
     ])

@@ -1,18 +1,21 @@
 # 40 cm 타일 기준 현장 배치 템플릿.
 # 패키지 기본 파일은 오동작 방지를 위해 비활성화하며, 실제 실행은
 # ~/.ros/adaptive_valet_bot/parking_layout.yaml의 등록본을 사용한다.
-# 모든 좌표/크기는 Homography와 같은 map frame의 metre 단위다.
+# 모든 좌표/크기는 물리 map frame의 metre 단위다.
 #
-# 물리 차량 WAITING 테이프: (0.0,0.0) ~ (1.2,0.8)
-# 안전 target-centre ROI: (0.82,0.32) ~ (1.10,0.48)
-# retrieve waiting centre: (0.85,0.40)
-# 주차로봇 출발영역: (3.2,0.0) ~ (4.0,0.8)
-#   Front 시작 중심: (3.6,0.6)
-#   Rear  시작 중심: (3.6,0.2)
-# 차량과 로봇의 앞머리는 WAITING ZONE 방향(-X, yaw=180 deg)을 향한다.
+# Homography GUI의 Tile j=0 선은 물리 map 하단 경계보다 0.80m 위에 있다.
+# 저장된 H 파일은 그대로 두고 field vision adapter가 모든 CCTV 좌표에
+# field_map_offset_y_m=0.80을 더한다.
 #
-# 주차 슬롯은 y=2.4~3.6m이며, 맵 끝 y=3.83m까지 실제 뒤 여유 0.23m다.
-# 같은 index의 ID / 중심(x,y) / 길이·폭 / 통로->안쪽 Yaw가 한 슬롯이다.
+# 물리 차량 WAITING 테이프: x=0.0~1.2, y=0.8~1.6
+# 안전 target-centre ROI: x=0.76~0.84, y=1.0~1.4
+# retrieve waiting centre: (0.80,1.20)
+# 주차로봇 출발영역: x=3.2~4.0, y=0.8~1.6
+#   Front 시작 중심: (3.60,1.40)
+#   Rear  시작 중심: (3.60,1.00)
+# 차량과 로봇의 앞머리는 WAITING ZONE 방향(-X, yaw=180deg)을 향한다.
+#
+# 주차 슬롯은 y=2.4~3.6m이며, map 끝 y=3.83m까지 실제 뒤 여유 0.23m다.
 /**:
   ros__parameters:
     layout_registered: false
@@ -20,16 +23,18 @@
     map_width_m: 4.400000
     map_height_m: 3.830000
     car_size_m: 0.900000
+    field_map_offset_x_m: 0.000000
+    field_map_offset_y_m: 0.800000
 
     # 물리 테이프는 1.20x0.80m지만 target centre는 loaded footprint가
-    # x=0/y=0 map 경계 밖으로 나가지 않는 안쪽 ROI에서만 latch한다.
-    waiting_polygon: [0.820000, 0.320000, 1.100000, 0.320000, 1.100000, 0.480000, 0.820000, 0.480000]
-    waiting_zone: [0.000000, 0.000000, 1.200000, 0.800000]
+    # x=0 map 경계 밖으로 나가지 않는 안쪽 ROI에서만 latch한다.
+    waiting_polygon: [0.760000, 1.000000, 0.840000, 1.000000, 0.840000, 1.400000, 0.760000, 1.400000]
+    waiting_zone: [0.000000, 0.800000, 1.200000, 1.600000]
 
     # 두 로봇은 나란히 서서 -X(대기공간) 방향을 바라본다.
-    robot_start_polygon: [3.200000, 0.000000, 4.000000, 0.000000, 4.000000, 0.800000, 3.200000, 0.800000]
-    front_start_pose: [3.600000, 0.600000, 180.000000]
-    rear_start_pose: [3.600000, 0.200000, 180.000000]
+    robot_start_polygon: [3.200000, 0.800000, 4.000000, 0.800000, 4.000000, 1.600000, 3.200000, 1.600000]
+    front_start_pose: [3.600000, 1.400000, 180.000000]
+    rear_start_pose: [3.600000, 1.000000, 180.000000]
 
     # P1 -> P4는 +X 방향 순서다. 긴 축은 +Y이고 입구는 y=2.4 쪽이다.
     slot_ids: ["P1", "P2", "P3", "P4"]
@@ -51,10 +56,10 @@ fleet_manager_node:
   ros__parameters:
     layout_registered: false
     map_resolution: 0.050000
-    waiting_x: 0.850000
-    waiting_y: 0.400000
+    waiting_x: 0.800000
+    waiting_y: 1.200000
     waiting_yaw_deg: 180.000000
-    waiting_polygon: [0.820000, 0.320000, 1.100000, 0.320000, 1.100000, 0.480000, 0.820000, 0.480000]
+    waiting_polygon: [0.760000, 1.000000, 0.840000, 1.000000, 0.840000, 1.400000, 0.760000, 1.400000]
     source_vehicle_fallback_mask_m: 0.900000
     slot_ids: ["P1", "P2", "P3", "P4"]
     slot_coords: [1.200000, 3.000000, 2.000000, 3.000000, 2.800000, 3.000000, 3.600000, 3.000000]
@@ -69,7 +74,7 @@ fleet_manager_node:
     default_vehicle_width_m: 0.350000
     footprint_safety_margin_m: 0.060000
 
-    # 실제 테이프 슬롯은 차량 본체만 들어가는 1.20 x 0.80 m 영역이다.
+    # 실제 테이프 슬롯은 차량 본체만 들어가는 1.20x0.80m 영역이다.
     vehicle_slot_longitudinal_margin_m: 0.050000
     vehicle_slot_lateral_margin_m: 0.050000
     slot_back_clearance_m: 0.230000
@@ -92,7 +97,6 @@ fleet_manager_node:
     approach_yaw_gain: 1.500000
     approach_max_yaw_rate_rps: 0.150000
 
-# 듀얼 CCTV의 최종 슬롯 점유 판정 노드. `/**`와 같은 현장 좌표를 명시한다.
 cctv_merge_node:
   ros__parameters:
     layout_registered: false
@@ -101,7 +105,7 @@ cctv_merge_node:
     map_height_m: 3.830000
     car_size_m: 0.900000
     waiting_yaw_deg: 180.000000
-    waiting_polygon: [0.820000, 0.320000, 1.100000, 0.320000, 1.100000, 0.480000, 0.820000, 0.480000]
+    waiting_polygon: [0.760000, 1.000000, 0.840000, 1.000000, 0.840000, 1.400000, 0.760000, 1.400000]
     slot_ids: ["P1", "P2", "P3", "P4"]
     slot_coords: [1.200000, 3.000000, 2.000000, 3.000000, 2.800000, 3.000000, 3.600000, 3.000000]
     slot_sizes: [1.200000, 0.800000, 1.200000, 0.800000, 1.200000, 0.800000, 1.200000, 0.800000]

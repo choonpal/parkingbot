@@ -87,6 +87,8 @@ http://JETSON_IP:5001
 ## 현장 좌표계
 
 바닥의 한 타일 꼭짓점을 공통 원점으로 정합니다.
+현재 parkingbot 현장 맵의 실측 크기는 가로 4.40m × 세로 3.83m이며,
+이 값이 도구의 기본 BEV 크기로 설정되어 있습니다.
 
 ```text
 Tile(0,0) = (0.0, 0.0)m
@@ -114,6 +116,29 @@ GUI에서는 X,Y를 직접 입력하지 않고 `Tile i`, `Tile j`만 입력합�
 13. CAM2로 바꿔 같은 물리 꼭짓점을 클릭
 14. CAM0↔CAM2 오차 확인
 15. `H0 + H2 저장`
+
+## CAM2만 다시 맞추기 (CAM0 잠금)
+
+CAM0 정합이 정상이고 CAM2만 틀어진 경우에는 다음 모드로 실행합니다.
+
+```bash
+./run_dual.sh --cam2-only
+```
+
+이 모드는 `output/homography_cam0_rectified.npy`를 시작할 때 불러오며,
+CAM0 H 계산과 전체 저장 API를 백엔드에서도 차단합니다.
+
+1. `두 영상 정지(H 보존)`을 누릅니다.
+2. CAM2 화면에 새 기준점 8~12개를 등록합니다.
+3. `현재 CAM H 계산`을 누릅니다.
+4. `CAM0 + CAM2 합성`에서 청록(CAM0)과 빨강(CAM2) 구조가 회색으로
+   포개지는지 확인합니다.
+5. RMS/최대 오차와 겹침 검증점 차이를 확인합니다.
+6. `CAM2만 저장`을 누릅니다.
+
+저장 전에 이전 CAM2 H·스냅샷·summary가 `output/backups/`에 복사됩니다.
+저장 과정에서는 CAM0 `.npy`의 SHA-256을 전후 비교하여 파일이 바뀌지
+않았는지도 검증합니다.
 
 ## 기준점 추천
 
@@ -172,6 +197,12 @@ homography_cam2_rectified.npy
 ```bash
 chmod +x copy_results_to_project.sh
 ./copy_results_to_project.sh
+```
+
+CAM2만 다시 등록했다면 CAM0와 배치 파일을 건드리지 않고 적용합니다.
+
+```bash
+./copy_results_to_project.sh --cam2-only
 ```
 
 다른 주차로봇 폴더로 복사:

@@ -95,8 +95,8 @@ class CctvMergeNode(Node):
 
         # ===== 맵 =====
         self.declare_parameter('map_resolution', 0.05)
-        self.declare_parameter('map_width_m', 6.0)
-        self.declare_parameter('map_height_m', 4.0)
+        self.declare_parameter('map_width_m', 4.40)
+        self.declare_parameter('map_height_m', 3.83)
         self.declare_parameter('car_size_m', 0.90)
         self.declare_parameter('target_mask_radius_m', 0.30)
         self.declare_parameter('robot_mask_radius_m', 0.32)

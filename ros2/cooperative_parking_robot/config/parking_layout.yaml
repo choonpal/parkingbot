@@ -14,8 +14,8 @@
   ros__parameters:
     layout_registered: false
     map_resolution: 0.050000
-    map_width_m: 6.000000
-    map_height_m: 4.000000
+    map_width_m: 4.400000
+    map_height_m: 3.830000
     car_size_m: 0.900000
 
     # 차량 중심 detection ROI. 꼭짓점은 자기교차가 없도록 CCW로 정렬했다.
@@ -81,8 +81,8 @@ cctv_merge_node:
   ros__parameters:
     layout_registered: false
     map_resolution: 0.050000
-    map_width_m: 6.000000
-    map_height_m: 4.000000
+    map_width_m: 4.400000
+    map_height_m: 3.830000
     car_size_m: 0.900000
     waiting_polygon: [0.000000, 0.000000, 1.200000, 0.000000, 1.200000, 0.800000, 0.000000, 0.800000]
     slot_ids: ["P1", "P2", "P3", "P4"]

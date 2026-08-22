@@ -69,19 +69,52 @@ visibility-graph 경로를 만든다.
 Fleet Manager도 입차 승인 전과 출차 승인 전에 같은 순서로 경로를
 preflight한다. 지도 경계, 다른 주차 차량, unknown 셀까지 통과해야 승인된다.
 
-## 실행 엔트리
+## 좁은 맵 경계와 회전 staging
 
-이 브랜치의 기본 console script는 field adapter를 사용한다.
+기존 공식대로 슬롯 앞 staging을 계산하면 기본 형상에서 슬롯 진입 staging의
+`y`가 약 `0.8075 m`가 된다. 하지만 loaded footprint의 최종 충돌 margin까지
+포함한 회전 반경은 약 `0.8083 m`이고, 경계 reserve `0.03 m`를 더하면 회전
+중심은 모든 map 경계에서 최소 약 `0.8383 m` 떨어져야 한다.
+
+따라서 field runtime adapter는 nominal staging을 map-safe interior로 옮긴다.
 
 ```text
-fleet_manager  -> field_fleet_manager_node
-individual_move -> field_individual_move_node
-pose_fusion -> field_pose_fusion_node
+P1~P3 nominal stage y  0.8075 -> safe y 약 0.8383 m
+P4 nominal stage       (3.6000,0.8075)
+P4 safe stage          약 (3.5617,0.8383)
+P4 stage 이동량        약 0.0491 m
 ```
 
-기존 구현도 롤백용으로 남겼다.
+출차 후 WAITING ZONE으로 돌아갈 때 nominal staging은 `(2.085,0.400)`이지만,
+아래쪽 map 경계 때문에 safe staging은 약 `(2.085,0.8383)`으로 이동한다.
+이동량은 약 `0.4383 m`이며 기본 `max_rotation_stage_shift_m=0.60` 안이다.
+
+staging을 옮겼다고 슬롯 중심까지 대각선으로 바로 들어가지는 않는다. 실제
+`RigidBodySync`와 동일하게 다음 순서로 corridor를 검사한다.
 
 ```text
+safe staging에서 슬롯 yaw로 회전
+-> 메카넘 횡이동으로 슬롯 중심선 정렬
+-> 슬롯 종축을 따라 차량 중심까지 직선 삽입
+```
+
+A*·회전원·횡이동·종방향 삽입의 모든 표본에서 loaded footprint 전체가
+OccupancyGrid와 겹치지 않아야 해당 슬롯이 선택된다.
+
+## 실행 엔트리
+
+이 브랜치의 기본 console script는 최종 field adapter를 사용한다.
+
+```text
+fleet_manager   -> field_runtime_fleet_manager_node
+individual_move -> field_individual_move_node
+pose_fusion     -> field_pose_fusion_node
+```
+
+중간 정책 계층과 기존 구현도 롤백용으로 남겼다.
+
+```text
+fleet_manager_field_policy
 fleet_manager_legacy
 individual_move_legacy
 pose_fusion_legacy
@@ -98,8 +131,8 @@ colcon build --symlink-install --packages-select cooperative_parking_robot
 source install/setup.bash
 ```
 
-Jetson은 기존 듀얼 CCTV launch를 사용한다. `fleet_manager` 엔트리가 field
-adapter로 연결되어 있으므로 별도 Jetson launch 복사는 필요 없다.
+Jetson은 기존 듀얼 CCTV launch를 사용한다. `fleet_manager` 엔트리가 최종
+field runtime adapter로 연결되어 있으므로 별도 Jetson launch 복사는 필요 없다.
 
 ```bash
 ros2 launch cooperative_parking_robot cctv_server_dual.launch.py \
@@ -135,6 +168,8 @@ slot_back_clearance_m              = 0.23
 slot_back_clearance_reserve_m      = 0.03
 approach_robot_clearance_m         = 0.06
 approach_corner_margin_m           = 0.03
+rotation_boundary_margin_m         = 0.03
+max_rotation_stage_shift_m         = 0.60
 ```
 
 Individual Move:
@@ -162,3 +197,5 @@ field_initial_yaw_deg              = 180.0
 - 첫 시험은 차량 없이 Front 단독 접근 → Rear 단독 접근 → 두 로봇 순차 접근
   → 차량 인양 없는 슬롯 삽입 순으로 한다.
 - `simultaneous_entry`는 이 현장 branch에서 사용하지 않는다.
+- 패키지 템플릿의 `layout_registered`는 의도적으로 false다. 현장 등록 GUI가
+  생성한 runtime YAML만 true로 바꿔 사용한다.

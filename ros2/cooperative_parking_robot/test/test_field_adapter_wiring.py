@@ -27,6 +27,7 @@ def _assert_parses(path: Path) -> None:
 def test_field_python_modules_parse():
     for name in (
             "field_geometry_policy.py",
+            "field_map_geometry.py",
             "field_fleet_manager_node.py",
             "field_runtime_fleet_manager_node.py",
             "field_individual_move_node.py",
@@ -51,6 +52,7 @@ def test_field_launch_wrappers_parse_and_use_measured_homes():
         assert '"simultaneous_entry": "false"' in text
         assert '"same_direction_exit": "true"' in text
         assert '"same_direction_exit_sign": "-1"' in text
+        assert '"exit_distance_m": "0.65"' in text
 
 
 def test_setup_points_default_executables_to_field_adapters():
@@ -71,10 +73,19 @@ def test_setup_points_default_executables_to_field_adapters():
     assert "pose_fusion_legacy" in setup_text
 
 
-def test_field_layout_declares_vehicle_only_slot_policy():
+def test_field_layout_declares_measured_map_and_vehicle_only_slot_policy():
     layout = _source(CONFIG_DIR / "parking_layout.yaml")
     assert "map_width_m: 4.400000" in layout
     assert "map_height_m: 3.830000" in layout
+    assert "waiting_x: 0.850000" in layout
+    assert (
+        "waiting_polygon: [0.820000, 0.320000, 1.100000, 0.320000, "
+        "1.100000, 0.480000, 0.820000, 0.480000]" in layout)
+    assert (
+        "slot_coords: [1.200000, 3.000000, 2.000000, 3.000000, "
+        "2.800000, 3.000000, 3.600000, 3.000000]" in layout)
+    assert "0.800000, 2.400000, 1.600000, 2.400000" in layout
+    assert "1.600000, 3.600000, 0.800000, 3.600000" in layout
     assert "slot_back_clearance_m: 0.230000" in layout
     assert "slot_back_clearance_reserve_m: 0.030000" in layout
     assert "vehicle_slot_longitudinal_margin_m: 0.050000" in layout

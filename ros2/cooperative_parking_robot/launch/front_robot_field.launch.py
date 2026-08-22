@@ -37,6 +37,9 @@ def generate_launch_description():
                 # released vehicle to rotate in the open aisle.  Rear parks
                 # first; Front then enters the upper HOME.
                 "exit_distance_m": "0.65",
+                # Front waits for Rear to park and then returns, so the former
+                # 90s single-robot return timeout is too short.
+                "return_timeout_s": "180.0",
             }.items(),
         )
     ])

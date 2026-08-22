@@ -64,9 +64,19 @@ fleet_manager_node:
     default_vehicle_length_m: 0.900000
     default_vehicle_width_m: 0.350000
     footprint_safety_margin_m: 0.060000
+
+    # 실제 테이프 슬롯은 차량 본체만 들어가는 1.20 x 0.80 m 영역이다.
+    vehicle_slot_longitudinal_margin_m: 0.050000
+    vehicle_slot_lateral_margin_m: 0.050000
+    slot_back_clearance_m: 0.230000
+    slot_back_clearance_reserve_m: 0.030000
+
+    # 이동 중에는 계속 Front+차량+Rear loaded footprint를 사용한다.
     slot_fit_longitudinal_margin_m: 0.060000
     slot_fit_lateral_margin_m: 0.060000
     slot_staging_gap_m: 0.100000
+    approach_robot_clearance_m: 0.060000
+    approach_corner_margin_m: 0.030000
     initial_target_offset_gate_m: 0.500000
     use_staged_slot_entry: true
     parking_direction: "forward"

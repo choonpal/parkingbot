@@ -28,6 +28,8 @@ def test_field_python_modules_parse():
     for name in (
             "field_geometry_policy.py",
             "field_map_geometry.py",
+            "field_heading_geometry.py",
+            "field_cctv_merge_node.py",
             "field_fleet_manager_node.py",
             "field_runtime_fleet_manager_node.py",
             "field_individual_move_node.py",
@@ -71,11 +73,15 @@ def test_setup_points_default_executables_to_field_adapters():
         "fleet_manager = cooperative_parking_robot."
         "field_runtime_fleet_manager_node:main" in setup_text)
     assert (
+        "cctv_merge = cooperative_parking_robot."
+        "field_cctv_merge_node:main" in setup_text)
+    assert (
         "individual_move = cooperative_parking_robot."
         "field_runtime_individual_move_node:main" in setup_text)
     assert (
         "pose_fusion = cooperative_parking_robot."
         "field_pose_fusion_node:main" in setup_text)
+    assert "cctv_merge_legacy" in setup_text
     assert "fleet_manager_field_policy" in setup_text
     assert "fleet_manager_legacy" in setup_text
     assert "individual_move_field_policy" in setup_text
@@ -88,6 +94,7 @@ def test_field_layout_declares_measured_map_and_vehicle_only_slot_policy():
     assert "map_width_m: 4.400000" in layout
     assert "map_height_m: 3.830000" in layout
     assert "waiting_x: 0.850000" in layout
+    assert "waiting_yaw_deg: 180.000000" in layout
     assert (
         "waiting_polygon: [0.820000, 0.320000, 1.100000, 0.320000, "
         "1.100000, 0.480000, 0.820000, 0.480000]" in layout)

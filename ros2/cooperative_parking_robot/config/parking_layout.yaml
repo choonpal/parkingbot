@@ -77,6 +77,8 @@ fleet_manager_node:
     slot_staging_gap_m: 0.100000
     approach_robot_clearance_m: 0.060000
     approach_corner_margin_m: 0.030000
+    rotation_boundary_margin_m: 0.030000
+    max_rotation_stage_shift_m: 0.600000
     initial_target_offset_gate_m: 0.500000
     use_staged_slot_entry: true
     parking_direction: "forward"

@@ -20,6 +20,9 @@ from cooperative_parking_robot.field_geometry_policy import (
     clamp_rotation_center,
     final_approach_polyline,
 )
+from cooperative_parking_robot.field_map_geometry import (
+    check_oriented_box_inside_map,
+)
 from cooperative_parking_robot.parking_geometry import Pose2D
 
 
@@ -88,12 +91,43 @@ class FieldRuntimeFleetManagerNode(FieldFleetManagerNode):
         self.active_parking_credential = None
         self._set_request_status(payload, "REJECTED", reason)
 
+    def _target_loaded_pose_inside_map(self, target):
+        if (target is None or self.grid_w <= 0 or self.grid_h <= 0 or
+                self.grid is None):
+            return False
+        fit = check_oriented_box_inside_map(
+            target.x_m,
+            target.y_m,
+            target.yaw_rad,
+            self.loaded_footprint.length_m,
+            self.loaded_footprint.width_m,
+            self.grid_w * self.resolution,
+            self.grid_h * self.resolution,
+            # Match AStar's ceil-to-cell boundary strip conservatively.
+            boundary_margin_m=self.resolution,
+        )
+        if not fit.fits:
+            self.get_logger().error(
+                "waiting target cannot hold loaded footprint: "
+                f"{fit.reason} | clearances L/R/B/T="
+                f"{fit.left_clearance_m:+.3f}/"
+                f"{fit.right_clearance_m:+.3f}/"
+                f"{fit.bottom_clearance_m:+.3f}/"
+                f"{fit.top_clearance_m:+.3f}m")
+        return fit.fits
+
     def _handle_park_request(self, payload):
-        """Approve only when at least one selected slot fits before lifting."""
+        """Approve only when start geometry and a destination both fit."""
 
         super()._handle_park_request(payload)
         if (self.request_status is None or
                 self.request_status.get("status") != "ACCEPTED"):
+            return
+
+        target = self._pose_from_stamped(self.target_pose)
+        if not self._target_loaded_pose_inside_map(target):
+            self._rollback_park_approval(
+                payload, "APPROACH_CORRIDOR_BLOCKED")
             return
 
         candidates = list(self._eligible_park_slots())

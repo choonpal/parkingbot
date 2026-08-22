@@ -29,6 +29,7 @@ jobs:
             ros2/cooperative_parking_robot/cooperative_parking_robot/field_fleet_manager_node.py \
             ros2/cooperative_parking_robot/cooperative_parking_robot/field_runtime_fleet_manager_node.py \
             ros2/cooperative_parking_robot/cooperative_parking_robot/field_individual_move_node.py \
+            ros2/cooperative_parking_robot/cooperative_parking_robot/field_runtime_individual_move_node.py \
             ros2/cooperative_parking_robot/cooperative_parking_robot/field_pose_fusion_node.py \
             ros2/cooperative_parking_robot/launch/front_robot_field.launch.py \
             ros2/cooperative_parking_robot/launch/rear_robot_field.launch.py

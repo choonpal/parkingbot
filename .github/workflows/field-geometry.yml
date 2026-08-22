@@ -1,0 +1,41 @@
+name: Field geometry branch checks
+
+on:
+  push:
+    branches:
+      - feature/side-by-side-home-vehicle-only-slots
+  pull_request:
+    paths:
+      - 'ros2/cooperative_parking_robot/cooperative_parking_robot/field_*.py'
+      - 'ros2/cooperative_parking_robot/launch/*_field.launch.py'
+      - 'ros2/cooperative_parking_robot/config/parking_layout.yaml'
+      - 'ros2/cooperative_parking_robot/test/test_field_*.py'
+      - 'ros2/cooperative_parking_robot/setup.py'
+
+jobs:
+  pure-python-field-tests:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install test dependency
+        run: python -m pip install --upgrade pytest
+      - name: Compile field Python and launch files
+        run: |
+          python -m compileall -q \
+            ros2/cooperative_parking_robot/cooperative_parking_robot/field_geometry_policy.py \
+            ros2/cooperative_parking_robot/cooperative_parking_robot/field_fleet_manager_node.py \
+            ros2/cooperative_parking_robot/cooperative_parking_robot/field_runtime_fleet_manager_node.py \
+            ros2/cooperative_parking_robot/cooperative_parking_robot/field_individual_move_node.py \
+            ros2/cooperative_parking_robot/cooperative_parking_robot/field_pose_fusion_node.py \
+            ros2/cooperative_parking_robot/launch/front_robot_field.launch.py \
+            ros2/cooperative_parking_robot/launch/rear_robot_field.launch.py
+      - name: Run ROS-independent field tests
+        env:
+          PYTHONPATH: ros2/cooperative_parking_robot
+        run: |
+          pytest -q \
+            ros2/cooperative_parking_robot/test/test_field_geometry_policy.py \
+            ros2/cooperative_parking_robot/test/test_field_adapter_wiring.py

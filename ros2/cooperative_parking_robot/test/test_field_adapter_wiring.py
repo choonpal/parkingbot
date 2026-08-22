@@ -53,6 +53,16 @@ def test_field_launch_wrappers_parse_and_use_measured_homes():
         assert '"same_direction_exit": "true"' in text
         assert '"same_direction_exit_sign": "-1"' in text
         assert '"exit_distance_m": "0.65"' in text
+        assert '"return_timeout_s": "180.0"' in text
+
+
+def test_runtime_return_policy_is_rear_first_and_restores_home_yaw():
+    runtime = _source(
+        PYTHON_PACKAGE / "field_runtime_individual_move_node.py")
+    assert 'self.is_front and' in runtime
+    assert 'self.set_phase("WAIT_REAR_HOME")' in runtime
+    assert 'self.field_home_yaw' in runtime
+    assert 'same_direction_exit_sign != -1' in runtime
 
 
 def test_setup_points_default_executables_to_field_adapters():

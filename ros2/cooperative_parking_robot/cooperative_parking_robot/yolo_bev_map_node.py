@@ -101,8 +101,8 @@ class YoloBevMapNode(Node):
         # 브라우저 등록 도구가 저장한 H는 픽셀->metre를 직접 출력한다.
         self.declare_parameter('homography_scale_to_m', 1.0)
         self.declare_parameter('map_resolution', 0.05)
-        self.declare_parameter('map_width_m', 6.0)
-        self.declare_parameter('map_height_m', 4.0)
+        self.declare_parameter('map_width_m', 4.40)
+        self.declare_parameter('map_height_m', 3.83)
         self.declare_parameter('confidence', 0.4)
         # Vehicle-axis estimate from a segmentation-mask PCA. A plain COCO
         # detection model has no mask and therefore retains the safe yaw=0

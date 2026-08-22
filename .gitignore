@@ -6,6 +6,9 @@
 **/.pytest_cache/
 *.py[cod]
 
+# Homography GUI creates recoverable local backups before overwriting a camera H.
+/dual_tile_homography_tool/output/backups/
+
 # STM32CubeIDE local build/index files
 /stm32/parking_robot/Debug/
 /stm32/parking_robot/.settings/language.settings.xml

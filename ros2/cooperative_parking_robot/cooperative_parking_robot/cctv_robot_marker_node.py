@@ -131,8 +131,11 @@ class CctvRobotMarkerNode(Node):
         self.declare_parameter('aruco_dict', 'DICT_4X4_50')
         self.declare_parameter('front_marker_id', 10)
         self.declare_parameter('rear_marker_id', 11)
-        self.declare_parameter('min_marker_area_px', 1000.0)
-        self.declare_parameter('min_marker_area_ratio', 0.0)
+        # 현장 640x480 영상에서 정상 17.5cm 마커는 약 11~30px/변이다.
+        # 고정값과 프레임 면적 비율 중 큰 값을 써 해상도가 바뀌어도 같은
+        # 각크기 기준을 유지한다(640x480에서는 100px²).
+        self.declare_parameter('min_marker_area_px', 100.0)
+        self.declare_parameter('min_marker_area_ratio', 0.0003)
         # 부착각 실측 오차 보정 — 실측 전엔 0.0 (§calibration 참조)
         self.declare_parameter('front_yaw_offset_deg', 0.0)
         self.declare_parameter('rear_yaw_offset_deg', 0.0)

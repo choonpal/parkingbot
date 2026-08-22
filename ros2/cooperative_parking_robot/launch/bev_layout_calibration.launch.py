@@ -89,8 +89,8 @@ def generate_launch_description():
         DeclareLaunchArgument('web_port', default_value='5001'),
         DeclareLaunchArgument('jpeg_quality', default_value='88'),
         DeclareLaunchArgument('preview_pixels_per_m', default_value='120'),
-        DeclareLaunchArgument('map_width_m', default_value='6.0'),
-        DeclareLaunchArgument('map_height_m', default_value='4.0'),
+        DeclareLaunchArgument('map_width_m', default_value='4.40'),
+        DeclareLaunchArgument('map_height_m', default_value='3.83'),
         # --- v1.11 천장 카메라 2대 ---
         DeclareLaunchArgument(
             'camera_label', default_value='cam0',

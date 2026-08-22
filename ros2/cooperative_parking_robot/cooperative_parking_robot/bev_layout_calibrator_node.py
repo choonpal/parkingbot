@@ -152,10 +152,10 @@ _HTML = r'''<!doctype html>
 
     <h2>5. 저장</h2>
     <div class="row">
-      <label>맵 폭(m) <input id="mapW" type="number" value="6.0" step="0.1"></label>
-      <label>맵 높이(m) <input id="mapH" type="number" value="4.0" step="0.1"></label>
+      <label>맵 폭(m) <input id="mapW" type="number" value="4.40" step="0.01"></label>
+      <label>맵 높이(m) <input id="mapH" type="number" value="3.83" step="0.01"></label>
       <label>해상도(m) <input id="mapRes" type="number" value="0.05" step="0.01"></label>
-      <label>출차 최종 Yaw(°) <input id="waitingYaw" type="number" value="0" step="1"></label>
+      <label>출차 최종 Yaw(°) <input id="waitingYaw" type="number" value="180" step="1"></label>
     </div>
     <div class="row"><button class="warn" onclick="saveAll()">H + YAML 저장</button></div>
     <div id="status">먼저 현재 영상을 정지하세요.</div>
@@ -266,8 +266,8 @@ class BevLayoutCalibratorNode(Node):
         self.declare_parameter('web_port', 5001)
         self.declare_parameter('jpeg_quality', 88)
         self.declare_parameter('preview_pixels_per_m', 120)
-        self.declare_parameter('default_map_width_m', 6.0)
-        self.declare_parameter('default_map_height_m', 4.0)
+        self.declare_parameter('default_map_width_m', 4.40)
+        self.declare_parameter('default_map_height_m', 3.83)
         # --- v1.11 천장 카메라 2대 등록 ---
         # 화면 제목과 로그에 표시할 카메라 이름(어느 카메라를 등록 중인지 혼동 방지)
         self.declare_parameter('camera_label', 'cam0')

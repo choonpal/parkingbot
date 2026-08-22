@@ -19,6 +19,29 @@ from cooperative_parking_robot.parking_geometry import build_slot
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_checked_in_site_layout_matches_measured_map_and_zones():
+    parsed = yaml.safe_load(
+        (ROOT / 'config' / 'parking_layout.yaml').read_text(encoding='utf-8'))
+    vision = parsed['/**']['ros__parameters']
+    fleet = parsed['fleet_manager_node']['ros__parameters']
+    merge = parsed['cctv_merge_node']['ros__parameters']
+
+    assert vision['map_width_m'] == pytest.approx(4.40)
+    assert vision['map_height_m'] == pytest.approx(3.83)
+    assert merge['map_width_m'] == pytest.approx(4.40)
+    assert merge['map_height_m'] == pytest.approx(3.83)
+    assert vision['waiting_polygon'] == pytest.approx(
+        [0.0, 0.0, 1.2, 0.0, 1.2, 0.8, 0.0, 0.8])
+    assert vision['robot_start_polygon'] == pytest.approx(
+        [3.2, 0.0, 4.0, 0.0, 4.0, 0.8, 3.2, 0.8])
+    assert vision['front_start_pose'] == pytest.approx([3.6, 0.6, 180.0])
+    assert vision['rear_start_pose'] == pytest.approx([3.6, 0.2, 180.0])
+    assert fleet['waiting_yaw_deg'] == pytest.approx(180.0)
+    assert vision['slot_ids'] == ['P1', 'P2', 'P3', 'P4']
+    assert vision['slot_coords'] == pytest.approx(
+        [1.2, 2.2, 2.0, 2.2, 2.8, 2.2, 3.6, 2.2])
+
+
 def test_pixel_to_metre_homography_and_reprojection_error():
     # 100px가 1m인 단순 H. 새 도구의 출력 단위는 cm가 아니라 metre다.
     matrix = np.array([

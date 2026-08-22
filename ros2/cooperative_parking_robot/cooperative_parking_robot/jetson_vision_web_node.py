@@ -425,9 +425,9 @@ class JetsonVisionWebNode(Node):
         self.declare_parameter('aruco_dict', 'DICT_4X4_50')
         self.declare_parameter('front_marker_id', 10)
         self.declare_parameter('rear_marker_id', 11)
-        self.declare_parameter('marker_size_m', 0.18)
-        self.declare_parameter('min_marker_area_px', 1000.0)
-        self.declare_parameter('min_marker_area_ratio', 0.0)
+        self.declare_parameter('marker_size_m', 0.175)
+        self.declare_parameter('min_marker_area_px', 100.0)
+        self.declare_parameter('min_marker_area_ratio', 0.0003)
         self.declare_parameter(
             'camera_calib', 'cctv_camera_calibration.npz')
         self.declare_parameter('calibration_width_px', 0)
@@ -447,8 +447,8 @@ class JetsonVisionWebNode(Node):
         self.declare_parameter('map_pixels_per_m', 120)
         self.declare_parameter('map_stale_s', 3.0)
         self.declare_parameter('map_resolution', 0.05)
-        self.declare_parameter('map_width_m', 6.0)
-        self.declare_parameter('map_height_m', 4.0)
+        self.declare_parameter('map_width_m', 4.40)
+        self.declare_parameter('map_height_m', 3.83)
         self.declare_parameter(
             'waiting_polygon',
             [0.0, 0.0, 1.2, 0.0, 1.2, 0.8, 0.0, 0.8])

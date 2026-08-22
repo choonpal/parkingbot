@@ -119,6 +119,22 @@ def test_dual_cctv_provisional_camera_and_calibration_resolution_is_640x480():
     assert "'calibration_height_px', default_value='480'" in source
 
 
+def test_site_aruco_measurements_are_launch_defaults():
+    launch_dir = ROOT / 'launch'
+    for name in (
+            'cctv_server.launch.py',
+            'cctv_server_dual.launch.py',
+            'full_system.launch.py'):
+        source = (launch_dir / name).read_text(encoding='utf-8')
+        assert "'marker_size_m', default_value='0.175'" in source
+        assert "'min_marker_area_px', default_value='100.0'" in source
+        assert "'min_marker_area_ratio', default_value='0.0003'" in source
+
+    marker = (PKG / 'cctv_robot_marker_node.py').read_text(encoding='utf-8')
+    assert "declare_parameter('min_marker_area_px', 100.0)" in marker
+    assert "declare_parameter('min_marker_area_ratio', 0.0003)" in marker
+
+
 def test_operator_ui_launch_is_independent_from_debug_overlay():
     launch_dir = ROOT / 'launch'
     for name in (

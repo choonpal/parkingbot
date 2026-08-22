@@ -364,8 +364,13 @@ ros2 launch cooperative_parking_robot cctv_server.launch.py \
 - 천장 CCTV 마커: Front 상판 ID10, Rear 상판 ID11
 - Rear 로봇 카메라가 보는 Front 후면 마커: ID0
 - ID10/ID11은 천장 절대 pose, ID0은 로봇 간 상대 pose용이다.
-- `min_marker_area_px:=1000`은 1280×720 실험값이므로 실제 설치 높이에서 조정한다.
-- `marker_size_m:=0.18`은 웹 PnP 거리 표시용이며 인쇄한 검은 정사각형 변 길이와 같아야 한다.
+- 현장 맵 실측 크기는 가로 4.40m × 세로 3.83m다.
+- 천장 CCTV용 ArUco의 실측 검은 정사각형 변 길이는 `marker_size_m:=0.175`다.
+- 640×480 현장 영상에서 정상 마커가 약 11~30px/변으로 관측되어
+  `min_marker_area_px:=100`, `min_marker_area_ratio:=0.0003`을 기본값으로 쓴다.
+  두 기준 중 큰 값이 적용되므로 해상도가 바뀌어도 비슷한 각크기를 유지한다.
+- 초점은 소프트웨어 threshold보다 먼저 맞춘다. cam2는 1280×960 원본에서도
+  디코딩이 안 되면 렌즈 배럴을 조절하고, 프리뷰에서 ID가 연속 유지되는지 확인한다.
 - Mission 절대 위치는 PnP가 아니라 rectified Homography를 사용한다.
 
 ## 실행 전 아직 필요한 것

@@ -3,8 +3,14 @@ import math
 import time
 from types import SimpleNamespace
 
-from cooperative_parking_robot.fleet_manager_node import FleetManagerNode
-from cooperative_parking_robot.parking_geometry import Pose2D
+import pytest
+
+import cooperative_parking_robot.fleet_manager_node as fleet_manager_module
+from cooperative_parking_robot.fleet_manager_node import (
+    FleetManagerNode,
+    normalize_planning_validation_mode,
+)
+from cooperative_parking_robot.parking_geometry import Pose2D, RegisteredSlot
 from cooperative_parking_robot.parking_registry import (
     ParkingCredential,
     ParkingRegistry,
@@ -30,6 +36,44 @@ VEHICLE_NUMBER = '12가3456'
 PASSWORD = '2468'
 
 
+def test_planning_validation_mode_accepts_only_explicit_contract_values():
+    assert normalize_planning_validation_mode('ENFORCE') == 'enforce'
+    assert normalize_planning_validation_mode(' warn_only ') == 'warn_only'
+    with pytest.raises(ValueError, match='planning_validation_mode'):
+        normalize_planning_validation_mode('disabled')
+
+
+def test_enforce_candidate_finding_waits_for_final_global_blocker():
+    fleet = FleetManagerNode.__new__(FleetManagerNode)
+    fleet.planning_validation_mode = 'enforce'
+    fleet.validation_warnings = []
+    fleet.planning_blocker = None
+    published = []
+    fleet.publish_state = lambda: published.append(True)
+
+    assert not fleet._validation_allows(
+        False, 'PARK_ROTATION_SPACE_BLOCKED', 'PLAN_PATH')
+    assert fleet.planning_blocker is None
+    assert published == []
+
+
+def test_warn_only_warnings_are_deduplicated_and_bounded():
+    fleet = FleetManagerNode.__new__(FleetManagerNode)
+    fleet.planning_validation_mode = 'warn_only'
+    fleet.validation_warnings = []
+    fleet.get_logger = lambda: SimpleNamespace(
+        warn=lambda *args, **kwargs: None)
+
+    for index in range(20):
+        assert fleet._validation_allows(
+            False, f'CHECK_{index}', 'PLAN_PATH')
+    assert fleet._validation_allows(False, 'CHECK_19', 'PLAN_PATH')
+
+    assert len(fleet.validation_warnings) == 16
+    assert fleet.validation_warnings[0]['code'] == 'CHECK_4'
+    assert fleet.validation_warnings[-1]['code'] == 'CHECK_19'
+
+
 class RecordingPublisher:
     def __init__(self):
         self.messages = []
@@ -49,6 +93,46 @@ class AdjustableClock:
             to_msg=lambda: SimpleNamespace(
                 sec=nanoseconds // 1_000_000_000,
                 nanosec=nanoseconds % 1_000_000_000))
+
+
+class RecordingPlanner:
+    def __init__(self):
+        self.map_geometry = None
+
+    def set_map_geometry(self, resolution, origin_x_m, origin_y_m):
+        self.map_geometry = (resolution, origin_x_m, origin_y_m)
+
+
+class DirectPlanner:
+    def __init__(self):
+        self.footprint = None
+
+    def set_footprint(self, half_length, half_width):
+        self.footprint = (half_length, half_width)
+
+    def plan(self, grid, width, height, start, goal):
+        return [start, goal]
+
+
+def test_fleet_uses_occupancy_grid_origin_for_world_planning():
+    fleet = FleetManagerNode.__new__(FleetManagerNode)
+    fleet.planner = RecordingPlanner()
+    fleet.get_logger = lambda: SimpleNamespace(warn=lambda *args, **kwargs: None)
+    message = SimpleNamespace(
+        info=SimpleNamespace(
+            width=96,
+            height=77,
+            resolution=0.05,
+            origin=SimpleNamespace(
+                position=SimpleNamespace(x=-0.40, y=0.0))),
+        data=[0] * (96 * 77),
+    )
+
+    fleet.map_cb(message)
+
+    assert fleet.grid_origin_x_m == -0.40
+    assert fleet.grid_origin_y_m == 0.0
+    assert fleet.planner.map_geometry == (0.05, -0.40, 0.0)
 
 
 def occupied(direction='forward'):
@@ -77,6 +161,15 @@ def request_harness(registry):
     fleet.destination_kind = ''
     fleet.active_parking_direction = ''
     fleet.active_vehicle_spec = None
+    fleet.grid = [0]
+    now = time.monotonic()
+    fleet.front_odom = {
+        'x': 0.0, 'y': 0.0, 'yaw': 0.0, 'receipt': now,
+    }
+    fleet.rear_odom = {
+        'x': 0.0, 'y': 0.7, 'yaw': 0.0, 'receipt': now,
+    }
+    fleet.odom_timeout = 10.0
     fleet.publish_count = 0
     fleet.publish_state = lambda: setattr(
         fleet, 'publish_count', fleet.publish_count + 1)
@@ -85,7 +178,9 @@ def request_harness(registry):
     fleet._publish_retrieve_target = lambda pose: pose
     fleet.get_clock = lambda: SimpleNamespace(
         now=lambda: SimpleNamespace(nanoseconds=123456789))
-    fleet.get_logger = lambda: SimpleNamespace(info=lambda *args: None)
+    fleet.get_logger = lambda: SimpleNamespace(
+        info=lambda *args: None,
+        warn=lambda *args, **kwargs: None)
     return fleet
 
 
@@ -166,6 +261,174 @@ def test_park_planning_candidates_are_limited_to_requested_empty_slot():
     assert [slot.slot_id for slot in candidates] == ['A2']
 
 
+def park_plan_harness(validation_mode):
+    fleet = FleetManagerNode.__new__(FleetManagerNode)
+    slot = RegisteredSlot('P2', 2.0, 2.2, 1.2, 0.8, math.pi / 2.0)
+    fleet.mission_type = 'park'
+    fleet.mission_id = 'park-warn-only'
+    fleet.grid_w = 120
+    fleet.grid_h = 100
+    fleet.resolution = 0.05
+    fleet.grid = [0] * (fleet.grid_w * fleet.grid_h)
+    fleet.grid_origin_x_m = 0.0
+    fleet.grid_origin_y_m = 0.0
+    fleet.empty_slots = [slot]
+    fleet.registered_slots = [slot]
+    fleet.registry = ParkingRegistry(['P2'])
+    fleet.requested_destination_slot_id = 'P2'
+    fleet.current_virtual_start = lambda: Pose2D(0.6, 0.4, math.pi)
+    fleet.target_pose = None
+    fleet.current_wheelbase = SPEC['wheelbase']
+    fleet.robot_length = 0.565
+    fleet.robot_width = 0.275
+    fleet.vehicle_length = SPEC['vehicle_length_m']
+    fleet.vehicle_width = SPEC['vehicle_width_m']
+    fleet.footprint_margin = 0.06
+    fleet.vehicle_center_offset_body = [0.0, 0.0]
+    fleet.loaded_footprint = compute_loaded_footprint(
+        fleet.current_wheelbase,
+        fleet.robot_length,
+        fleet.robot_width,
+        fleet.vehicle_length,
+        fleet.vehicle_width,
+        fleet.footprint_margin)
+    fleet.slot_fit_long_margin = 0.06
+    fleet.slot_fit_lat_margin = 0.06
+    fleet.slot_staging_gap = 0.10
+    fleet.use_staged_slot_entry = True
+    fleet.parking_direction = 'forward'
+    fleet.initial_target_offset_gate = 0.50
+    fleet.planner = DirectPlanner()
+    fleet._rotation_space_free = lambda x, y: True
+    fleet._insertion_corridor_free = lambda start, goal: True
+    fleet.active_vehicle_spec = dict(SPEC)
+    fleet.active_vehicle_number = VEHICLE_NUMBER
+    fleet.active_parking_credential = ParkingCredential.create(PASSWORD)
+    fleet.active_destination_slot_id = ''
+    fleet.destination_kind = ''
+    fleet.active_parking_direction = ''
+    fleet.path_published = False
+    fleet.active_plan_stamp_ns = 0
+    fleet.pub_slot_pose = RecordingPublisher()
+    fleet.pub_waypoints = RecordingPublisher()
+    fleet.publish_state = lambda: None
+    fleet.get_clock = lambda: AdjustableClock(1_000_000_000)
+    fleet.get_logger = lambda: SimpleNamespace(
+        info=lambda *args, **kwargs: None,
+        warn=lambda *args, **kwargs: None,
+        error=lambda *args, **kwargs: None)
+    fleet.planning_validation_mode = validation_mode
+    fleet.validation_warnings = []
+    return fleet
+
+
+def test_warn_only_park_keeps_too_short_slot_and_publishes_existing_path():
+    fleet = park_plan_harness('warn_only')
+
+    planned = fleet.plan_and_publish()
+
+    assert planned
+    assert fleet.active_destination_slot_id == 'P2'
+    assert len(fleet.pub_waypoints.messages) == 1
+    assert fleet.validation_warnings == [
+        {
+            'code': 'SLOT_TOO_SHORT',
+            'mission_phase': 'PLAN_PATH',
+        }
+    ]
+
+
+def test_enforce_park_rejects_too_short_slot_with_visible_blocker():
+    fleet = park_plan_harness('enforce')
+
+    planned = fleet.plan_and_publish()
+
+    assert not planned
+    assert fleet.pub_waypoints.messages == []
+    assert fleet.planning_blocker == {
+        'code': 'PARK_SLOT_FIT_BLOCKED',
+        'mission_phase': 'PLAN_PATH',
+    }
+
+
+def test_warn_only_park_reports_rotation_and_insertion_but_publishes():
+    fleet = park_plan_harness('warn_only')
+    # Isolate this slice from the already-covered slot-fit warning.
+    fleet.registered_slots[0] = RegisteredSlot(
+        'P2', 2.0, 2.2, 2.0, 0.8, math.pi / 2.0)
+    fleet.empty_slots = list(fleet.registered_slots)
+    fleet._rotation_space_free = lambda x, y: False
+    fleet._insertion_corridor_free = lambda start, goal: False
+
+    planned = fleet.plan_and_publish()
+
+    assert planned
+    assert [warning['code'] for warning in fleet.validation_warnings] == [
+        'PARK_ROTATION_SPACE_BLOCKED',
+        'PARK_INSERTION_CORRIDOR_BLOCKED',
+    ]
+
+
+def retrieve_plan_harness(validation_mode):
+    fleet = park_plan_harness(validation_mode)
+    slot = RegisteredSlot('P2', 2.0, 2.2, 1.2, 0.8, math.pi / 2.0)
+    registry = ParkingRegistry(['P2'])
+    registry.reserve_park(
+        'P2', 'park-1', VEHICLE_NUMBER,
+        ParkingCredential.create(PASSWORD))
+    registry.complete_park(
+        'P2', 'park-1', Pose2D(2.0, 2.2, math.pi / 2.0),
+        'forward', SPEC)
+    registry.reserve_retrieve('P2', 'retrieve-warn-only')
+    fleet.registry = registry
+    fleet.registered_slots = [slot]
+    fleet.mission_type = 'retrieve'
+    fleet.mission_id = 'retrieve-warn-only'
+    fleet.active_source_slot_id = 'P2'
+    fleet.rigid_body_lookahead = 0.15
+    fleet.source_vehicle_fallback_mask = 0.90
+    fleet.unknown_is_occupied = True
+    fleet.wait_x = 0.6
+    fleet.wait_y = 0.4
+    fleet.wait_yaw = math.pi
+    fleet.pub_slot_pose = RecordingPublisher()
+    fleet.pub_waypoints = RecordingPublisher()
+    fleet.validation_warnings = []
+    return fleet
+
+
+def test_warn_only_retrieve_reports_corridors_but_publishes(monkeypatch):
+    fleet = retrieve_plan_harness('warn_only')
+    fleet._rotation_space_free = lambda x, y: False
+    monkeypatch.setattr(
+        fleet_manager_module, 'corridor_is_free',
+        lambda *args, **kwargs: False)
+
+    planned = fleet.plan_retrieve_and_publish()
+
+    assert planned
+    assert len(fleet.pub_waypoints.messages) == 1
+    assert [warning['code'] for warning in fleet.validation_warnings] == [
+        'RETRIEVE_EXTRACTION_CORRIDOR_BLOCKED',
+        'WAITING_ROTATION_SPACE_BLOCKED',
+        'WAITING_INSERTION_CORRIDOR_BLOCKED',
+    ]
+
+
+def test_warn_only_still_refuses_missing_astar_path_and_reports_blocker():
+    fleet = park_plan_harness('warn_only')
+    fleet.planner.plan = lambda *args, **kwargs: None
+
+    planned = fleet.plan_and_publish()
+
+    assert not planned
+    assert fleet.pub_waypoints.messages == []
+    assert fleet.planning_blocker == {
+        'code': 'ASTAR_NO_PATH',
+        'mission_phase': 'PLAN_PATH',
+    }
+
+
 def request(slot_id='A1', request_id='ui-1'):
     return {
         'type': 'retrieve',
@@ -220,6 +483,66 @@ def test_source_slot_only_request_cannot_bypass_vehicle_password():
     assert fleet.request_status['status'] == 'REJECTED'
     assert fleet.request_status['reason'] == 'VEHICLE_OR_PASSWORD_INVALID'
     assert fleet.registry.lifecycle('A1') is SlotLifecycle.OCCUPIED
+
+
+def test_retrieve_approach_preflight_is_blocking_in_enforce_mode():
+    fleet = request_harness(occupied())
+    fleet.planning_validation_mode = 'enforce'
+    fleet.validation_warnings = []
+    fleet._retrieve_approach_preflight = lambda record: False
+
+    fleet._handle_retrieve_request(authenticated_request())
+
+    assert fleet.request_status['status'] == 'REJECTED'
+    assert fleet.request_status['reason'] == 'APPROACH_CORRIDOR_BLOCKED'
+    assert fleet.registry.lifecycle('A1') is SlotLifecycle.OCCUPIED
+
+
+def test_retrieve_approach_preflight_warn_only_starts_mission_with_warning():
+    fleet = request_harness(occupied())
+    fleet.planning_validation_mode = 'warn_only'
+    fleet.validation_warnings = []
+    fleet._retrieve_approach_preflight = lambda record: False
+
+    fleet._handle_retrieve_request(authenticated_request())
+
+    assert fleet.request_status['status'] == 'ACCEPTED'
+    assert fleet.state == 'WAIT_LIFT'
+    assert fleet.registry.lifecycle('A1') is SlotLifecycle.EXIT_RESERVED
+    assert fleet.validation_warnings == [
+        {
+            'code': 'APPROACH_CORRIDOR_BLOCKED',
+            'mission_phase': 'REQUEST',
+        }
+    ]
+
+
+def test_warn_only_retrieve_rejects_missing_map_before_model_preflight():
+    fleet = request_harness(occupied())
+    fleet.planning_validation_mode = 'warn_only'
+    fleet.validation_warnings = []
+    fleet.grid = None
+
+    fleet._handle_retrieve_request(authenticated_request())
+
+    assert fleet.request_status['status'] == 'REJECTED'
+    assert fleet.request_status['reason'] == 'MAP_MISSING'
+    assert fleet.registry.lifecycle('A1') is SlotLifecycle.OCCUPIED
+    assert fleet.validation_warnings == []
+
+
+def test_warn_only_retrieve_rejects_missing_odom_before_model_preflight():
+    fleet = request_harness(occupied())
+    fleet.planning_validation_mode = 'warn_only'
+    fleet.validation_warnings = []
+    fleet.front_odom = None
+
+    fleet._handle_retrieve_request(authenticated_request())
+
+    assert fleet.request_status['status'] == 'REJECTED'
+    assert fleet.request_status['reason'] == 'ODOM_MISSING_OR_STALE'
+    assert fleet.registry.lifecycle('A1') is SlotLifecycle.OCCUPIED
+    assert fleet.validation_warnings == []
 
 
 def test_retrieve_request_accepts_only_complete_forward_occupied_record():
@@ -422,9 +745,9 @@ def test_demo_p1_p4_preflight_uses_front_first_clearance_policy():
     fleet.odom_timeout = 1.0
     now = time.monotonic()
     fleet.front_odom = {
-        'x': 1.15, 'y': 0.60, 'yaw': 0.0, 'receipt': now}
+        'x': 3.60, 'y': 0.60, 'yaw': math.pi, 'receipt': now}
     fleet.rear_odom = {
-        'x': 0.45, 'y': 0.60, 'yaw': 0.0, 'receipt': now}
+        'x': 3.60, 'y': 0.20, 'yaw': math.pi, 'receipt': now}
     fleet.entry_standoff = 0.85
     fleet.robot_length = 0.565
     fleet.robot_width = 0.275
@@ -435,8 +758,8 @@ def test_demo_p1_p4_preflight_uses_front_first_clearance_policy():
     fleet.minimum_inter_robot_gap = 0.10
 
     records = [SimpleNamespace(
-        final_vehicle_pose=Pose2D(x, 3.0, math.pi / 2.0),
-        vehicle_spec=SPEC) for x in (1.5, 2.5, 3.5, 4.5)]
+        final_vehicle_pose=Pose2D(x, 2.20, math.pi / 2.0),
+        vehicle_spec=SPEC) for x in (1.20, 2.00, 2.80, 3.60)]
 
     fleet.simultaneous_entry = True
     assert not any(fleet._retrieve_approach_preflight(r) for r in records)
@@ -514,6 +837,15 @@ def test_complete_park_home_ui_retrieve_home_cycle():
     assert fleet.registry.authenticate_vehicle(
         VEHICLE_NUMBER, PASSWORD).slot_id == 'A1'
 
+    fleet.grid = [0]
+    odom_receipt = time.monotonic()
+    fleet.front_odom = {
+        'x': 0.0, 'y': 0.0, 'yaw': 0.0, 'receipt': odom_receipt,
+    }
+    fleet.rear_odom = {
+        'x': 0.0, 'y': 0.7, 'yaw': 0.0, 'receipt': odom_receipt,
+    }
+    fleet.odom_timeout = 10.0
     fleet._retrieve_approach_preflight = lambda record: True
     fleet._apply_active_vehicle_spec = lambda: None
     fleet._publish_retrieve_target = lambda pose: pose

@@ -1,3 +1,4 @@
+import math
 from pathlib import Path
 
 import pytest
@@ -123,6 +124,35 @@ def test_start_or_goal_whose_footprint_crosses_map_edge_is_rejected():
 
     assert planner.plan(
         grid, 5, 5, (0.5, 2.5), (2.5, 2.5)) is None
+
+
+def test_negative_map_origin_keeps_waiting_vehicle_pose_plannable():
+    """Map coverage, not the vehicle pose, defines the physical boundary."""
+    footprint = compute_loaded_footprint(
+        wheelbase_m=0.70,
+        robot_length_m=0.565,
+        robot_width_m=0.275,
+        vehicle_length_m=0.90,
+        vehicle_width_m=0.35,
+        safety_margin_m=0.06,
+    )
+    planner = AStarPlanner(
+        resolution=0.05,
+        footprint_half_length_m=footprint.half_length_m,
+        footprint_half_width_m=footprint.half_width_m,
+        origin_x_m=-0.40,
+        origin_y_m=0.0,
+    )
+    width, height = 96, 77  # world x range: -0.40 .. 4.40 m
+    grid = [0] * (width * height)
+
+    path = planner.plan(
+        grid, width, height, (0.60, 0.40), (1.20, 1.20))
+
+    assert path is not None
+    half_cell_diagonal = 0.05 / math.sqrt(2.0) + 1e-9
+    assert math.dist(path[0], (0.60, 0.40)) <= half_cell_diagonal
+    assert math.dist(path[-1], (1.20, 1.20)) <= half_cell_diagonal
 
 
 def test_current_six_by_four_map_accepts_default_start_and_first_slot():

@@ -152,8 +152,10 @@ _HTML = r'''<!doctype html>
 
     <h2>5. 저장</h2>
     <div class="row">
-      <label>맵 폭(m) <input id="mapW" type="number" value="4.40" step="0.01"></label>
-      <label>맵 높이(m) <input id="mapH" type="number" value="3.83" step="0.01"></label>
+      <label>맵 원점 X(m) <input id="mapOriginX" type="number" value="-0.40" step="0.01"></label>
+      <label>맵 원점 Y(m) <input id="mapOriginY" type="number" value="-0.80" step="0.01"></label>
+      <label>맵 폭(m) <input id="mapW" type="number" value="4.80" step="0.01"></label>
+      <label>맵 높이(m) <input id="mapH" type="number" value="4.63" step="0.01"></label>
       <label>해상도(m) <input id="mapRes" type="number" value="0.05" step="0.01"></label>
       <label>출차 최종 Yaw(°) <input id="waitingYaw" type="number" value="180" step="1"></label>
     </div>
@@ -173,6 +175,7 @@ _HTML = r'''<!doctype html>
 const canvas=document.getElementById('canvas'), ctx=canvas.getContext('2d');
 const image=new Image(); let snapshotSeq=0, mode='reference', pending=null;
 let references=[], slotClicks=[], waitingClicks=[];
+let mapFieldsInitialized=false;
 
 function status(message, bad=false){ const el=document.getElementById('status');
   el.textContent=message; el.style.color=bad?'var(--red)':'#b9c8da'; }
@@ -236,9 +239,18 @@ async function registerWaiting(){try{if(waitingClicks.length!==4)throw new Error
 async function loadState(){try{const s=await api('/api/state');
   document.getElementById('slotList').innerHTML=s.slots.length?s.slots.map(v=>
     `<span class="tag">${v.slot_id} ${v.length_m.toFixed(2)}×${v.width_m.toFixed(2)}m / ${v.entry_yaw_deg.toFixed(1)}°</span>`).join(''):'등록 슬롯 없음';
+  if(!mapFieldsInitialized){
+    document.getElementById('mapOriginX').value=s.map_origin_x_m;
+    document.getElementById('mapOriginY').value=s.map_origin_y_m;
+    document.getElementById('mapW').value=s.map_width_m;
+    document.getElementById('mapH').value=s.map_height_m;
+    mapFieldsInitialized=true;
+  }
 }catch(e){status(e.message,true);} }
 function refreshPreview(){document.getElementById('preview').src='/api/preview.jpg?sequence='+snapshotSeq+'&t='+Date.now();}
 async function saveAll(){try{const out=await post('/api/save',{
+  map_origin_x_m:Number(document.getElementById('mapOriginX').value),
+  map_origin_y_m:Number(document.getElementById('mapOriginY').value),
   map_width_m:Number(document.getElementById('mapW').value),
   map_height_m:Number(document.getElementById('mapH').value),
   map_resolution_m:Number(document.getElementById('mapRes').value),
@@ -266,8 +278,10 @@ class BevLayoutCalibratorNode(Node):
         self.declare_parameter('web_port', 5001)
         self.declare_parameter('jpeg_quality', 88)
         self.declare_parameter('preview_pixels_per_m', 120)
-        self.declare_parameter('default_map_width_m', 4.40)
-        self.declare_parameter('default_map_height_m', 3.83)
+        self.declare_parameter('default_map_origin_x_m', -0.40)
+        self.declare_parameter('default_map_origin_y_m', -0.80)
+        self.declare_parameter('default_map_width_m', 4.80)
+        self.declare_parameter('default_map_height_m', 4.63)
         # --- v1.11 천장 카메라 2대 등록 ---
         # 화면 제목과 로그에 표시할 카메라 이름(어느 카메라를 등록 중인지 혼동 방지)
         self.declare_parameter('camera_label', 'cam0')
@@ -289,6 +303,10 @@ class BevLayoutCalibratorNode(Node):
         self.jpeg_quality = int(self.get_parameter('jpeg_quality').value)
         self.preview_ppm = int(
             self.get_parameter('preview_pixels_per_m').value)
+        self.map_origin_x_m = float(
+            self.get_parameter('default_map_origin_x_m').value)
+        self.map_origin_y_m = float(
+            self.get_parameter('default_map_origin_y_m').value)
         self.map_width_m = float(
             self.get_parameter('default_map_width_m').value)
         self.map_height_m = float(
@@ -297,6 +315,13 @@ class BevLayoutCalibratorNode(Node):
             self.get_parameter('camera_label').value).strip() or 'cam0'
         self.append_existing_layout = bool(
             self.get_parameter('append_existing_layout').value)
+        if self.append_existing_layout:
+            existing_layout = load_layout_yaml(str(self.layout_path))
+            if existing_layout is not None:
+                self.map_origin_x_m = existing_layout['map_origin_x_m']
+                self.map_origin_y_m = existing_layout['map_origin_y_m']
+                self.map_width_m = existing_layout['map_width_m']
+                self.map_height_m = existing_layout['map_height_m']
         if not self.image_topic:
             raise ValueError('image_topic must not be empty')
         if not 1 <= self.web_port <= 65535:
@@ -501,6 +526,10 @@ class BevLayoutCalibratorNode(Node):
                     'homography_ready': self._homography is not None,
                     'slots': slots,
                     'waiting_ready': self._waiting_world is not None,
+                    'map_origin_x_m': self.map_origin_x_m,
+                    'map_origin_y_m': self.map_origin_y_m,
+                    'map_width_m': self.map_width_m,
+                    'map_height_m': self.map_height_m,
                 })
 
         @app.get('/api/preview.jpg')
@@ -514,6 +543,10 @@ class BevLayoutCalibratorNode(Node):
         def save():
             try:
                 payload = request.get_json(force=True) or {}
+                map_origin_x = float(payload.get(
+                    'map_origin_x_m', self.map_origin_x_m))
+                map_origin_y = float(payload.get(
+                    'map_origin_y_m', self.map_origin_y_m))
                 map_width = float(payload.get('map_width_m', self.map_width_m))
                 map_height = float(payload.get('map_height_m', self.map_height_m))
                 map_resolution = float(payload.get('map_resolution_m', 0.05))
@@ -544,10 +577,16 @@ class BevLayoutCalibratorNode(Node):
                 layout_text = render_parking_layout_yaml(
                     merged_slots, merged_waiting,
                     slot_polygons=merged_polygons,
+                    map_origin_x_m=map_origin_x,
+                    map_origin_y_m=map_origin_y,
                     map_width_m=map_width,
                     map_height_m=map_height,
                     map_resolution_m=map_resolution,
                     waiting_yaw_deg=waiting_yaw_deg)
+                self.map_origin_x_m = map_origin_x
+                self.map_origin_y_m = map_origin_y
+                self.map_width_m = map_width
+                self.map_height_m = map_height
                 self._save_npy_atomic(self.homography_path, matrix)
                 write_text_atomic(str(self.layout_path), layout_text)
                 metadata_path = self.homography_path.with_suffix('.json')
@@ -569,6 +608,10 @@ class BevLayoutCalibratorNode(Node):
                     'reprojection_max_m': maximum,
                     'slots': slot_metadata,
                     'waiting_polygon_m': waiting_world,
+                    'map_origin_x_m': map_origin_x,
+                    'map_origin_y_m': map_origin_y,
+                    'map_width_m': map_width,
+                    'map_height_m': map_height,
                     'layout_file': str(self.layout_path),
                 }
                 write_text_atomic(
@@ -613,16 +656,21 @@ class BevLayoutCalibratorNode(Node):
         height = max(1, int(round(self.map_height_m * self.preview_ppm)))
         # ROS map처럼 원점은 좌하단, +Y는 위쪽으로 보이도록 표시 좌표만 뒤집는다.
         metre_to_preview = np.array([
-            [self.preview_ppm, 0.0, 0.0],
-            [0.0, -self.preview_ppm, height - 1.0],
+            [self.preview_ppm, 0.0,
+             -self.map_origin_x_m * self.preview_ppm],
+            [0.0, -self.preview_ppm,
+             height - 1.0 + self.map_origin_y_m * self.preview_ppm],
             [0.0, 0.0, 1.0],
         ], dtype=np.float64)
         preview = cv2.warpPerspective(
             frame, metre_to_preview @ matrix, (width, height))
 
         def to_px(point):
-            return (int(round(point[0] * self.preview_ppm)),
-                    int(round(height - 1.0 - point[1] * self.preview_ppm)))
+            return (int(round(
+                        (point[0] - self.map_origin_x_m) * self.preview_ppm)),
+                    int(round(
+                        height - 1.0 -
+                        (point[1] - self.map_origin_y_m) * self.preview_ppm)))
 
         # 1m 격자와 0.5m 보조선을 그려 축척이 맞는지 눈으로 확인하게 한다.
         half_step = max(1, int(round(0.5 * self.preview_ppm)))
@@ -656,7 +704,9 @@ class BevLayoutCalibratorNode(Node):
             polygon = np.asarray([to_px(point) for point in waiting], np.int32)
             cv2.polylines(preview, [cv2.convexHull(polygon)], True,
                           (40, 170, 255), 2)
-        cv2.putText(preview, 'origin (0,0)', (6, height - 8),
+        origin_label = (
+            f'origin ({self.map_origin_x_m:.2f},{self.map_origin_y_m:.2f})')
+        cv2.putText(preview, origin_label, (6, height - 8),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
         return preview
 

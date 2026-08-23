@@ -218,7 +218,8 @@ function renderSlots(slots){var previous=parkSlot.value;
 function render(s){
   latestStatus=s;
   banner.textContent=s.banner;
-  banner.className=s.fault?'alert':(s.localization_warning?'warn':'');
+  banner.className=(s.fault||s.planning_blocker)?'alert':
+    ((s.localization_warning||s.planning_warning)?'warn':'');
   if(s.localization_warning&&!s.fault){
     banner.textContent=s.banner+' / 위치추정 경고';}
   robot('rf',s.front);robot('rr',s.rear);renderSlots(s.parking_slots||[]);
@@ -832,6 +833,18 @@ class JetsonVisionWebNode(Node):
         localization_warning = any(
             count >= self.localization_warning_streak
             for count in self._localization_reject_streak.values())
+        planning_blocker = fleet.get('planning_blocker')
+        if not isinstance(planning_blocker, dict):
+            planning_blocker = None
+        validation_warnings = [
+            {
+                'code': str(value.get('code', 'UNKNOWN')),
+                'mission_phase': str(value.get('mission_phase', '')),
+            }
+            for value in fleet.get('validation_warnings', [])
+            if isinstance(value, dict)
+        ]
+        planning_warning = bool(validation_warnings)
 
         idle = all(robots[role]['state'] == 'IDLE'
                    for role in ('front', 'rear'))
@@ -865,6 +878,14 @@ class JetsonVisionWebNode(Node):
             banner = f"오류: {fault['source']} — {fault['reason']}"
         elif not common_fresh:
             banner = '일부 노드와 통신이 끊겼습니다'
+        elif planning_blocker is not None:
+            banner = (
+                '경로 생성 불가: '
+                f"{planning_blocker.get('code', 'UNKNOWN')}")
+        elif planning_warning:
+            banner = (
+                '경고 운행 중: ' +
+                ', '.join(value['code'] for value in validation_warnings))
         elif fleet_state != 'WAIT_TARGET':
             banner = self._PHASE_TEXT.get(fleet_state, fleet_state)
         elif park_enabled and retrieve_enabled:
@@ -901,6 +922,11 @@ class JetsonVisionWebNode(Node):
             'last_completed': fleet.get('last_completed'),
             'fault': fault,
             'localization_warning': localization_warning,
+            'planning_validation_mode': fleet.get(
+                'planning_validation_mode', 'enforce'),
+            'validation_warnings': validation_warnings,
+            'planning_warning': planning_warning,
+            'planning_blocker': planning_blocker,
             'banner': banner,
         }
 

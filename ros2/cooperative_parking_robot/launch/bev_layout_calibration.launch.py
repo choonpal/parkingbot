@@ -89,8 +89,10 @@ def generate_launch_description():
         DeclareLaunchArgument('web_port', default_value='5001'),
         DeclareLaunchArgument('jpeg_quality', default_value='88'),
         DeclareLaunchArgument('preview_pixels_per_m', default_value='120'),
-        DeclareLaunchArgument('map_width_m', default_value='4.40'),
-        DeclareLaunchArgument('map_height_m', default_value='3.83'),
+        DeclareLaunchArgument('map_origin_x_m', default_value='-0.40'),
+        DeclareLaunchArgument('map_origin_y_m', default_value='-0.80'),
+        DeclareLaunchArgument('map_width_m', default_value='4.80'),
+        DeclareLaunchArgument('map_height_m', default_value='4.63'),
         # --- v1.11 천장 카메라 2대 ---
         DeclareLaunchArgument(
             'camera_label', default_value='cam0',
@@ -147,6 +149,8 @@ def generate_launch_description():
                 'web_port': _int('web_port'),
                 'jpeg_quality': _int('jpeg_quality'),
                 'preview_pixels_per_m': _int('preview_pixels_per_m'),
+                'default_map_origin_x_m': _float('map_origin_x_m'),
+                'default_map_origin_y_m': _float('map_origin_y_m'),
                 'default_map_width_m': _float('map_width_m'),
                 'default_map_height_m': _float('map_height_m'),
                 'camera_label': LaunchConfiguration('camera_label'),

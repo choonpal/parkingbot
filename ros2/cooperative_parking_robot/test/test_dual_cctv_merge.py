@@ -10,8 +10,10 @@
 import math
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+import numpy as np
 
 from cooperative_parking_robot.bev_fusion_core import (
     DETECTION_ENVELOPE_VERSION,
@@ -27,8 +29,19 @@ from cooperative_parking_robot.bev_fusion_core import (
     slot_observability,
     summarize_merge,
 )
+from cooperative_parking_robot.cctv_merge_node import CctvMergeNode
+import cooperative_parking_robot.yolo_bev_map_node as yolo_module
+from cooperative_parking_robot.yolo_bev_map_node import YoloBevMapNode
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class RecordingPublisher:
+    def __init__(self):
+        self.messages = []
+
+    def publish(self, message):
+        self.messages.append(message)
 
 SLOT_POLYGONS = {
     # cam0 시야 안쪽
@@ -38,6 +51,60 @@ SLOT_POLYGONS = {
 }
 COVERAGE_CAM0 = [(0.0, 0.0), (3.5, 0.0), (3.5, 4.0), (0.0, 4.0)]
 COVERAGE_CAM2 = [(2.5, 0.0), (6.5, 0.0), (6.5, 4.0), (2.5, 4.0)]
+
+
+def test_merged_occupancy_grid_raster_and_metadata_share_map_origin():
+    node = CctvMergeNode.__new__(CctvMergeNode)
+    node.resolution = 0.05
+    node.map_origin_x_m = -0.40
+    node.map_origin_y_m = -0.80
+    node.grid_w = 96
+    node.grid_h = 93
+    node.car_size = 0.10
+    node.target_mask_radius = 0.30
+    node.robot_mask_radius = 0.32
+    node.robot_pose = {'front': None, 'rear': None}
+    node.pub_map = RecordingPublisher()
+    node.get_clock = lambda: SimpleNamespace(
+        now=lambda: SimpleNamespace(to_msg=lambda: SimpleNamespace()))
+    detection = CameraDetection('cam0', (0.625, 0.425))
+
+    node._publish_map([detection], latched=None)
+
+    message = node.pub_map.messages[-1]
+    assert message.info.origin.position.x == pytest.approx(-0.40)
+    assert message.info.origin.position.y == pytest.approx(-0.80)
+    assert message.data[24 * node.grid_w + 20] == 100
+
+
+def test_single_camera_occupancy_grid_uses_the_same_map_origin_contract(
+        monkeypatch):
+    # ultralytics/cv_bridge are deliberately optional in the unit-test host;
+    # this method only needs NumPy for the no-polygon fallback exercised here.
+    monkeypatch.setattr(yolo_module, 'DEPS_OK', True)
+    monkeypatch.setattr(yolo_module, 'np', np, raising=False)
+    node = YoloBevMapNode.__new__(YoloBevMapNode)
+    node.resolution = 0.05
+    node.map_origin_x_m = -0.40
+    node.map_origin_y_m = -0.80
+    node.grid_w = 96
+    node.grid_h = 93
+    node.car_size = 0.10
+    node.robot_mask_radius = 0.32
+    node.robot_pose = {'front': None, 'rear': None}
+    node.latest_obstacles = [{'center': (0.625, 0.425), 'polygon': None}]
+    node.target_latched = None
+    node.pub_map = RecordingPublisher()
+    node.pub_target_ready = RecordingPublisher()
+    node.get_clock = lambda: SimpleNamespace(
+        now=lambda: SimpleNamespace(to_msg=lambda: SimpleNamespace()))
+
+    node.publish_map_periodic()
+
+    message = node.pub_map.messages[-1]
+    assert message.info.origin.position.x == pytest.approx(-0.40)
+    assert message.info.origin.position.y == pytest.approx(-0.80)
+    assert message.data[24 * node.grid_w + 20] == 100
 
 
 # ======================================================================

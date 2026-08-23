@@ -77,6 +77,25 @@ def test_source_mask_covers_perception_fallback_square_only():
     assert grid[15 * width + 15] == 100
 
 
+def test_source_vehicle_mask_uses_occupancy_grid_origin():
+    resolution = 0.05
+    width, height = 96, 30
+    grid = [0] * (width * height)
+    source_index = 8 * width + 20  # world cell center: (0.625, 0.425)
+    other_index = 8 * width + 50
+    grid[source_index] = 100
+    grid[other_index] = 100
+
+    masked = clear_source_vehicle(
+        grid, width, height, resolution,
+        Pose2D(0.60, 0.40, math.pi),
+        length_m=0.90, width_m=0.35,
+        origin_x_m=-0.40, origin_y_m=0.0)
+
+    assert masked[source_index] == 0
+    assert masked[other_index] == 100
+
+
 def test_corridor_checks_oriented_body_against_obstacle_and_boundary():
     grid, width, height = open_grid(30, 20)
     resolution = 0.1
@@ -92,6 +111,22 @@ def test_corridor_checks_oriented_body_against_obstacle_and_boundary():
     assert not corridor_is_free(
         grid, width, height, resolution,
         (0.05, 0.05), (0.5, 0.05), 0.0, 0.3, 0.2)
+
+
+def test_negative_map_origin_covers_waiting_insertion_without_moving_vehicle():
+    resolution = 0.05
+    width, height = 96, 77  # world x range: -0.40 .. 4.40 m
+    grid = [0] * (width * height)
+    start = (2.085, 0.40)
+    waiting = (0.60, 0.40)
+
+    assert not corridor_is_free(
+        grid, width, height, resolution,
+        start, waiting, math.pi, 1.385, 0.47, margin_m=0.06)
+    assert corridor_is_free(
+        grid, width, height, resolution,
+        start, waiting, math.pi, 1.385, 0.47, margin_m=0.06,
+        origin_x_m=-0.40, origin_y_m=0.0)
 
 
 def test_approach_corridor_tracks_rotation_toward_staging_yaw():
@@ -128,9 +163,10 @@ def test_simultaneous_approach_uses_time_not_segment_intersection_only():
 
 
 def test_demo_p1_p4_require_existing_front_first_approach():
-    front_home = (1.15, 0.60)
-    rear_home = (0.45, 0.60)
-    slot_y = 3.0
+    front_home = (3.60, 0.60)
+    rear_home = (3.60, 0.20)
+    home_yaw = math.pi
+    slot_y = 2.20
     slot_yaw = math.pi / 2.0
     wheelbase = 0.70
     entry_standoff = 0.85
@@ -141,7 +177,7 @@ def test_demo_p1_p4_require_existing_front_first_approach():
         'minimum_gap_m': 0.10,
     }
 
-    for slot_x in (1.5, 2.5, 3.5, 4.5):
+    for slot_x in (1.20, 2.00, 2.80, 3.60):
         front_goal = vehicle_to_world(
             approach_longitudinal('front', entry_standoff, wheelbase),
             0.0, slot_x, slot_y, slot_yaw)
@@ -153,16 +189,44 @@ def test_demo_p1_p4_require_existing_front_first_approach():
 
         assert not simultaneous_routes_clear(
             front_route, rear_route,
+            front_yaw_rad=home_yaw,
+            rear_yaw_rad=home_yaw,
             front_goal_yaw_rad=slot_yaw,
             rear_goal_yaw_rad=slot_yaw,
             yaw_gain=1.5, max_yaw_rate=0.15,
             **kwargs), slot_x
         assert sequential_routes_clear(
             front_route, rear_route,
+            front_yaw_rad=home_yaw,
+            rear_yaw_rad=home_yaw,
             front_goal_yaw_rad=slot_yaw,
             rear_goal_yaw_rad=slot_yaw,
             yaw_gain=1.5, max_yaw_rate=0.15,
             **kwargs), slot_x
+
+
+def test_rotated_rectangles_use_actual_body_clearance_not_axis_inflation():
+    safe_rear_yaw = 2.3407111886170404
+    common = {
+        'speed_mps': 0.035,
+        'robot_length_m': 0.565,
+        'robot_width_m': 0.275,
+        'minimum_gap_m': 0.10,
+        'front_yaw_rad': math.pi / 2.0,
+        'rear_yaw_rad': safe_rear_yaw,
+        'front_goal_yaw_rad': math.pi / 2.0,
+        'rear_goal_yaw_rad': safe_rear_yaw,
+    }
+
+    # Worked geometry: the closest corners/edges are about 0.119 m apart.
+    assert simultaneous_routes_clear(
+        ((0.0, 0.70), (0.0, 0.70)),
+        ((0.0, 0.0), (0.0, 0.0)),
+        **common)
+    assert not simultaneous_routes_clear(
+        ((0.0, 0.67), (0.0, 0.67)),
+        ((0.0, 0.0), (0.0, 0.0)),
+        **common)
 
 
 def test_waiting_staging_and_insertion_corridor_are_explicit():

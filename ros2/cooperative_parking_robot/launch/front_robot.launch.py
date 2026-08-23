@@ -3,7 +3,9 @@
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import (
+    LaunchConfiguration, PathJoinSubstitution, PythonExpression,
+)
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
@@ -25,6 +27,13 @@ def generate_launch_description():
     wheelbase = _float("wheelbase")
     waiting_x = _float("waiting_x")
     waiting_y = _float("waiting_y")
+    home_yaw_deg = _float("home_yaw_deg")
+    home_yaw_rad = ParameterValue(
+        PythonExpression([
+            "float(", LaunchConfiguration("home_yaw_deg"),
+            ") * 0.017453292519943295",
+        ]),
+        value_type=float)
     wheel_radius = _float("wheel_radius")
     encoder_ppr = _float("encoder_ppr")
     lx = _float("lx")
@@ -78,6 +87,7 @@ def generate_launch_description():
         "cctv_marker_timeout_s": _float("cctv_marker_timeout_s"),
         "relative_lateral_tolerance_m": _float(
             "relative_lateral_tolerance_m"),
+        "home_yaw_deg": home_yaw_deg,
     }
 
     return LaunchDescription([
@@ -173,8 +183,11 @@ def generate_launch_description():
             "align_timeout_s", default_value="120.0"),
         DeclareLaunchArgument(
             "return_timeout_s", default_value="90.0"),
-        DeclareLaunchArgument("waiting_x", default_value="1.15"),
+        DeclareLaunchArgument("waiting_x", default_value="3.60"),
         DeclareLaunchArgument("waiting_y", default_value="0.60"),
+        DeclareLaunchArgument(
+            "home_yaw_deg", default_value="180.0",
+            description="Robot HOME heading in the map frame [deg]"),
         DeclareLaunchArgument("wheel_radius", default_value="0.05"),
         DeclareLaunchArgument("encoder_ppr", default_value="5182.0"),
         DeclareLaunchArgument("lx", default_value="0.10"),
@@ -285,7 +298,7 @@ def generate_launch_description():
                 "role": "front",
                 "init_x": waiting_x,
                 "init_y": waiting_y,
-                "init_yaw": 0.0,
+                "init_yaw": home_yaw_rad,
             }],
             output="screen"),
     ])

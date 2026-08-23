@@ -19,7 +19,8 @@ import math
 class AStarPlanner:
     def __init__(self, resolution=0.05, robot_radius_cells=None,
                  footprint_half_length_m=None, footprint_half_width_m=None,
-                 unknown_is_occupied=True):
+                 unknown_is_occupied=True, origin_x_m=0.0,
+                 origin_y_m=0.0):
         """Create a fixed-yaw rectangular-footprint A* planner.
 
         ``footprint_half_length_m`` is the front/rear (+x) half extent and
@@ -28,6 +29,8 @@ class AStarPlanner:
         only as a backwards-compatible way to request a square footprint.
         """
         self.resolution = self._positive("resolution", resolution)
+        self.origin_x_m = self._finite("origin_x_m", origin_x_m)
+        self.origin_y_m = self._finite("origin_y_m", origin_y_m)
         self.unknown_is_occupied = bool(unknown_is_occupied)
 
         if footprint_half_length_m is None and footprint_half_width_m is None:
@@ -58,6 +61,19 @@ class AStarPlanner:
         if not math.isfinite(value) or value < 0.0:
             raise ValueError(f'{name} must be finite and non-negative')
         return value
+
+    @staticmethod
+    def _finite(name, value):
+        value = float(value)
+        if not math.isfinite(value):
+            raise ValueError(f'{name} must be finite')
+        return value
+
+    def set_map_geometry(self, resolution, origin_x_m=0.0, origin_y_m=0.0):
+        """Synchronize world-to-grid geometry from an OccupancyGrid."""
+        self.resolution = self._positive("resolution", resolution)
+        self.origin_x_m = self._finite("origin_x_m", origin_x_m)
+        self.origin_y_m = self._finite("origin_y_m", origin_y_m)
 
     def set_footprint(self, half_length_m, half_width_m):
         """Update the mission footprint without rebuilding the planner."""
@@ -153,12 +169,16 @@ class AStarPlanner:
         return None  # 경로 없음
 
     def _to_cell(self, pos_m):
-        return (math.floor(pos_m[0] / self.resolution),
-                math.floor(pos_m[1] / self.resolution))
+        return (
+            math.floor((pos_m[0] - self.origin_x_m) / self.resolution),
+            math.floor((pos_m[1] - self.origin_y_m) / self.resolution),
+        )
 
     def _to_world(self, cell):
-        return (cell[0] * self.resolution + self.resolution/2,
-                cell[1] * self.resolution + self.resolution/2)
+        return (
+            self.origin_x_m + cell[0] * self.resolution + self.resolution / 2,
+            self.origin_y_m + cell[1] * self.resolution + self.resolution / 2,
+        )
 
     def _valid(self, cell, width, height):
         return 0 <= cell[0] < width and 0 <= cell[1] < height

@@ -26,10 +26,14 @@ def test_checked_in_site_layout_matches_measured_map_and_zones():
     fleet = parsed['fleet_manager_node']['ros__parameters']
     merge = parsed['cctv_merge_node']['ros__parameters']
 
-    assert vision['map_width_m'] == pytest.approx(4.40)
-    assert vision['map_height_m'] == pytest.approx(3.83)
-    assert merge['map_width_m'] == pytest.approx(4.40)
-    assert merge['map_height_m'] == pytest.approx(3.83)
+    assert vision['map_origin_x_m'] == pytest.approx(-0.40)
+    assert vision['map_origin_y_m'] == pytest.approx(-0.80)
+    assert vision['map_width_m'] == pytest.approx(4.80)
+    assert vision['map_height_m'] == pytest.approx(4.63)
+    assert merge['map_origin_x_m'] == pytest.approx(-0.40)
+    assert merge['map_origin_y_m'] == pytest.approx(-0.80)
+    assert merge['map_width_m'] == pytest.approx(4.80)
+    assert merge['map_height_m'] == pytest.approx(4.63)
     assert vision['waiting_polygon'] == pytest.approx(
         [0.0, 0.0, 1.2, 0.0, 1.2, 0.8, 0.0, 0.8])
     assert vision['robot_start_polygon'] == pytest.approx(
@@ -37,6 +41,37 @@ def test_checked_in_site_layout_matches_measured_map_and_zones():
     assert vision['front_start_pose'] == pytest.approx([3.6, 0.6, 180.0])
     assert vision['rear_start_pose'] == pytest.approx([3.6, 0.2, 180.0])
     assert fleet['waiting_yaw_deg'] == pytest.approx(180.0)
+    assert vision['slot_ids'] == ['P1', 'P2', 'P3', 'P4']
+    assert vision['slot_coords'] == pytest.approx(
+        [1.2, 2.2, 2.0, 2.2, 2.8, 2.2, 3.6, 2.2])
+
+
+def test_checked_in_registered_runtime_layout_matches_current_site_authority():
+    runtime_path = (
+        ROOT.parents[1] / 'dual_tile_homography_tool' /
+        'output' / 'parking_layout.yaml')
+    parsed = yaml.safe_load(runtime_path.read_text(encoding='utf-8'))
+    vision = parsed['/**']['ros__parameters']
+    fleet = parsed['fleet_manager_node']['ros__parameters']
+    merge = parsed['cctv_merge_node']['ros__parameters']
+
+    assert vision['layout_registered'] is True
+    assert fleet['layout_registered'] is True
+    assert vision['map_origin_x_m'] == pytest.approx(-0.40)
+    assert vision['map_origin_y_m'] == pytest.approx(-0.80)
+    assert vision['map_width_m'] == pytest.approx(4.80)
+    assert vision['map_height_m'] == pytest.approx(4.63)
+    assert merge['map_origin_x_m'] == pytest.approx(-0.40)
+    assert merge['map_origin_y_m'] == pytest.approx(-0.80)
+    assert merge['map_width_m'] == pytest.approx(4.80)
+    assert merge['map_height_m'] == pytest.approx(4.63)
+    assert vision['front_start_pose'] == pytest.approx([3.6, 0.6, 180.0])
+    assert vision['rear_start_pose'] == pytest.approx([3.6, 0.2, 180.0])
+    assert fleet['waiting_x'] == pytest.approx(0.6)
+    assert fleet['waiting_y'] == pytest.approx(0.4)
+    assert fleet['waiting_yaw_deg'] == pytest.approx(180.0)
+    assert fleet['simultaneous_entry'] is False
+    assert fleet['planning_validation_mode'] == 'warn_only'
     assert vision['slot_ids'] == ['P1', 'P2', 'P3', 'P4']
     assert vision['slot_coords'] == pytest.approx(
         [1.2, 2.2, 2.0, 2.2, 2.8, 2.2, 3.6, 2.2])
@@ -103,6 +138,7 @@ def test_generated_layout_is_valid_ros_parameter_yaml():
     assert fleet['use_staged_slot_entry'] is True
     assert fleet['parking_direction'] == 'forward'
     assert fleet['simultaneous_entry'] is False
+    assert fleet['planning_validation_mode'] == 'warn_only'
     assert fleet['waiting_x'] == pytest.approx(2.3)
     assert fleet['waiting_y'] == pytest.approx(0.6)
     assert fleet['waiting_yaw_deg'] == pytest.approx(0.0)
@@ -164,6 +200,32 @@ def test_layout_rejects_slot_outside_zero_origin_occupancy_grid():
             map_resolution_m=0.05)
 
 
+def test_generated_layout_serializes_nonzero_map_origin(tmp_path):
+    slot = build_slot(
+        'P1', center=(1.2, 2.2), size=(1.2, 0.8), yaw_deg=90.0)
+    text = render_parking_layout_yaml(
+        [slot], [(0.0, 0.0), (1.2, 0.0), (1.2, 0.8), (0.0, 0.8)],
+        map_origin_x_m=-0.4,
+        map_origin_y_m=-0.8,
+        map_width_m=4.8,
+        map_height_m=4.63,
+        map_resolution_m=0.05)
+
+    parsed = yaml.safe_load(text)
+    vision = parsed['/**']['ros__parameters']
+    merge = parsed['cctv_merge_node']['ros__parameters']
+    assert vision['map_origin_x_m'] == pytest.approx(-0.4)
+    assert vision['map_origin_y_m'] == pytest.approx(-0.8)
+    assert merge['map_origin_x_m'] == pytest.approx(-0.4)
+    assert merge['map_origin_y_m'] == pytest.approx(-0.8)
+
+    path = tmp_path / 'layout.yaml'
+    path.write_text(text, encoding='utf-8')
+    loaded = load_layout_yaml(str(path))
+    assert loaded['map_origin_x_m'] == pytest.approx(-0.4)
+    assert loaded['map_origin_y_m'] == pytest.approx(-0.8)
+
+
 def test_browser_uses_original_image_coordinates_and_no_direct_camera_open():
     source = (
         ROOT / 'cooperative_parking_robot' /
@@ -173,6 +235,30 @@ def test_browser_uses_original_image_coordinates_and_no_direct_camera_open():
     assert 'cv2.VideoCapture' not in source
     assert "'/cctv/image_rect'" in source
     assert "web_port', 5001" in source
+
+
+def test_calibration_ui_round_trips_nonzero_map_origin():
+    source = (
+        ROOT / 'cooperative_parking_robot' /
+        'bev_layout_calibrator_node.py').read_text(encoding='utf-8')
+
+    assert "default_map_origin_x_m', -0.40" in source
+    assert "default_map_origin_y_m', -0.80" in source
+    assert 'map_origin_x_m:Number(' in source
+    assert 'map_origin_y_m:Number(' in source
+    assert 'map_origin_x_m=map_origin_x' in source
+    assert 'map_origin_y_m=map_origin_y' in source
+    assert '-self.map_origin_x_m * self.preview_ppm' in source
+    assert '+ self.map_origin_y_m * self.preview_ppm' in source
+
+    launch = (ROOT / 'launch' / 'bev_layout_calibration.launch.py').read_text(
+        encoding='utf-8')
+    assert "'map_origin_x_m', default_value='-0.40'" in launch
+    assert "'map_origin_y_m', default_value='-0.80'" in launch
+    assert "'map_width_m', default_value='4.80'" in launch
+    assert "'map_height_m', default_value='4.63'" in launch
+    assert "'default_map_origin_x_m': _float('map_origin_x_m')" in launch
+    assert "'default_map_origin_y_m': _float('map_origin_y_m')" in launch
 
 
 def test_registered_slot_yaw_reaches_staged_rigid_body_controller():

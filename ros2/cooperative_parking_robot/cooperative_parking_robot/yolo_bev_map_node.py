@@ -49,6 +49,7 @@ from cooperative_parking_robot.vision_utils import (
     principal_axis_yaw,
 )
 from cooperative_parking_robot.parking_geometry import (
+    grid_cell_count,
     parse_registered_slots,
     polygon_overlap_ratio,
     slot_polygon,
@@ -101,6 +102,8 @@ class YoloBevMapNode(Node):
         # 브라우저 등록 도구가 저장한 H는 픽셀->metre를 직접 출력한다.
         self.declare_parameter('homography_scale_to_m', 1.0)
         self.declare_parameter('map_resolution', 0.05)
+        self.declare_parameter('map_origin_x_m', 0.0)
+        self.declare_parameter('map_origin_y_m', 0.0)
         self.declare_parameter('map_width_m', 4.40)
         self.declare_parameter('map_height_m', 3.83)
         self.declare_parameter('confidence', 0.4)
@@ -175,6 +178,10 @@ class YoloBevMapNode(Node):
         if self.homography_scale_to_m <= 0.0:
             raise ValueError('homography_scale_to_m must be positive')
         self.resolution = float(self.get_parameter('map_resolution').value)
+        self.map_origin_x_m = float(
+            self.get_parameter('map_origin_x_m').value)
+        self.map_origin_y_m = float(
+            self.get_parameter('map_origin_y_m').value)
         self.map_w_m = float(self.get_parameter('map_width_m').value)
         self.map_h_m = float(self.get_parameter('map_height_m').value)
         self.conf = float(self.get_parameter('confidence').value)
@@ -225,14 +232,17 @@ class YoloBevMapNode(Node):
         self.waiting_polygon = [
             (float(waiting_flat[index]), float(waiting_flat[index + 1]))
             for index in range(0, 8, 2)]
+        if (not math.isfinite(self.map_origin_x_m) or
+                not math.isfinite(self.map_origin_y_m)):
+            raise ValueError('map origin must be finite')
         if self.resolution <= 0.0 or self.map_w_m <= 0.0 or self.map_h_m <= 0.0:
             raise ValueError('map resolution/width/height must be positive')
         if len(self.waiting_zone) != 4:
             raise ValueError('waiting_zone must be [x1,y1,x2,y2]')
         if not (0.0 < self.conf <= 1.0):
             raise ValueError('confidence must be in (0,1]')
-        self.grid_w = int(self.map_w_m / self.resolution)
-        self.grid_h = int(self.map_h_m / self.resolution)
+        self.grid_w = grid_cell_count(self.map_w_m, self.resolution)
+        self.grid_h = grid_cell_count(self.map_h_m, self.resolution)
         self.stationary_tol = float(
             self.get_parameter('stationary_tolerance_m').value)
         self.stationary_hold = float(
@@ -1170,15 +1180,15 @@ class YoloBevMapNode(Node):
             polygon = obstacle.get('polygon')
             if polygon is not None and len(polygon) >= 3:
                 contour = np.asarray([
-                    [int(round(x / self.resolution)),
-                     int(round(y / self.resolution))]
+                    [int(round((x - self.map_origin_x_m) / self.resolution)),
+                     int(round((y - self.map_origin_y_m) / self.resolution))]
                     for x, y in polygon
                 ], dtype=np.int32)
                 cv2.fillPoly(grid, [contour], 100)
                 continue
             wx, wy = obstacle['center']
-            gx = int(wx / self.resolution)
-            gy = int(wy / self.resolution)
+            gx = int((wx - self.map_origin_x_m) / self.resolution)
+            gy = int((wy - self.map_origin_y_m) / self.resolution)
             half = car_px // 2
             y1 = max(0, gy-half); y2 = min(self.grid_h, gy+half)
             x1 = max(0, gx-half); x2 = min(self.grid_w, gx+half)
@@ -1189,8 +1199,8 @@ class YoloBevMapNode(Node):
         for pose in self.robot_pose.values():
             if pose is None:
                 continue
-            gx = int(pose[0] / self.resolution)
-            gy = int(pose[1] / self.resolution)
+            gx = int((pose[0] - self.map_origin_x_m) / self.resolution)
+            gy = int((pose[1] - self.map_origin_y_m) / self.resolution)
             y1 = max(0, gy - mask_cells)
             y2 = min(self.grid_h, gy + mask_cells + 1)
             x1 = max(0, gx - mask_cells)
@@ -1203,6 +1213,8 @@ class YoloBevMapNode(Node):
         msg.info.resolution = self.resolution
         msg.info.width = self.grid_w
         msg.info.height = self.grid_h
+        msg.info.origin.position.x = self.map_origin_x_m
+        msg.info.origin.position.y = self.map_origin_y_m
         msg.info.origin.orientation.w = 1.0
         msg.data = grid.flatten().tolist()
         self.pub_map.publish(msg)

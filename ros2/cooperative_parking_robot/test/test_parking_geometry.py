@@ -13,6 +13,7 @@ from cooperative_parking_robot.parking_geometry import (
     check_slot_fit,
     choose_target_yaw,
     footprint_extents_in_slot_axes,
+    grid_cell_count,
     make_approach_candidates,
     nearest_axis_yaw,
     parse_registered_slots,
@@ -22,6 +23,12 @@ from cooperative_parking_robot.parking_geometry import (
     slot_from_corners,
     slot_polygon,
 )
+
+
+def test_grid_cell_count_covers_requested_metric_extent():
+    assert grid_cell_count(4.80, 0.05) == 96
+    assert grid_cell_count(4.63, 0.05) == 93
+    assert grid_cell_count(4.801, 0.05) == 97
 
 
 def test_clicked_corners_create_metre_slot_directed_from_aisle():

@@ -42,6 +42,13 @@ def _positive(name, value):
     return value
 
 
+def grid_cell_count(extent_m, resolution_m):
+    """요청한 metric 범위를 빠짐없이 덮는 OccupancyGrid 셀 수."""
+    extent = _positive("extent_m", extent_m)
+    resolution = _positive("resolution_m", resolution_m)
+    return max(1, int(math.ceil(extent / resolution)))
+
+
 def _nonnegative(name, value):
     value = _finite(name, value)
     if value < 0.0:

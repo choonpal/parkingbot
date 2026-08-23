@@ -90,6 +90,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'simultaneous_entry', default_value='false',
             description='Fleet retrieve preflight entry timing policy'),
+        DeclareLaunchArgument(
+            'planning_validation_mode', default_value='warn_only',
+            description='MVP model-based planning checks: enforce or warn_only'),
 
         DeclareLaunchArgument(
             'enable_cctv_robot_markers', default_value='true'),
@@ -197,6 +200,8 @@ def generate_launch_description():
                 'require_ui_confirmation': _bool('require_ui_confirmation'),
                 'ui_request_timeout_s': _float('ui_request_timeout_s'),
                 'simultaneous_entry': _bool('simultaneous_entry'),
+                'planning_validation_mode': LaunchConfiguration(
+                    'planning_validation_mode'),
                 'parking_registry_db_path': LaunchConfiguration(
                     'parking_registry_db_path'),
             }],

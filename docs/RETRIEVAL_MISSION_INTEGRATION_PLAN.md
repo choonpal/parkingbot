@@ -32,6 +32,9 @@
 - 신규 park 운용값은 `parking_direction=forward`다. reverse/unknown 차량의 출차 접근은 제외한다.
 - `waiting_polygon`은 vehicle-center detection ROI다. 물리적 parking boundary가 아니다.
 - 새 ROS topic, service, action, retrieve 전용 Robot FSM state를 만들지 않는다.
+- MVP launch는 `planning_validation_mode=warn_only`를 사용한다. 모델 기반
+  slot-fit/접근/회전/삽입/추출 검사는 경고를 남기고 계산 가능한 기존 경로를
+  실행한다. A* 경로 부재, 데이터·미션 무결성과 런타임 비상 안전은 완화하지 않는다.
 
 > Stable EMPTY/OCCUPIED Registry records survive Fleet restart; unfinished
 > missions require operator recovery.
@@ -192,8 +195,13 @@ matching retrieve RETURN commit
 - `parking_slots: [{slot_id, lifecycle, retrievable}]`
 - `request_status: {request_id, type, source_slot_id?, destination_slot_id?, status, reason}`
 - `last_completed: {completion_sequence, mission_id, mission_type, source_slot_id?, stamp_ns}`
+- `planning_validation_mode: enforce|warn_only`
+- `validation_warnings: [{code, mission_phase}]`
+- `planning_blocker: {code, mission_phase} | null`
 
 Registry 변경, 요청 승인/거부, mission start/reset과 completion 시 timer를 기다리지 않고 한 번 즉시 발행한다. 기존 `empty_count`는 유지한다.
+모델 기반 경고와 실제 경로 생성 불가도 즉시 발행해 UI가 `PLAN_PATH` 정지를
+단순 대기로 표시하지 않게 한다.
 
 ### `/sync/error_state`
 

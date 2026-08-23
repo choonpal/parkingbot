@@ -67,6 +67,7 @@ class IndividualMoveNode(Node):
         self.declare_parameter("centerline_speed", 0.035)
         self.declare_parameter("waiting_x", 0.3)
         self.declare_parameter("waiting_y", 0.3)
+        self.declare_parameter("home_yaw_deg", 0.0)
         self.declare_parameter("default_wheelbase", DEFAULT_WHEELBASE_M)
         self.declare_parameter("use_vehicle_spec_wheelbase", True)
 
@@ -148,6 +149,8 @@ class IndividualMoveNode(Node):
             float(gp("waiting_x").value),
             float(gp("waiting_y").value),
         )
+        self.home_yaw = angle_norm(math.radians(
+            float(gp("home_yaw_deg").value)))
         self.wheelbase = float(gp("default_wheelbase").value)
         self.use_vehicle_spec_wheelbase = bool(
             gp("use_vehicle_spec_wheelbase").value)
@@ -401,6 +404,8 @@ class IndividualMoveNode(Node):
         if (not math.isfinite(self.future_tolerance) or
                 self.future_tolerance < 0.0):
             raise ValueError("future_tolerance_s must be finite and non-negative")
+        if not math.isfinite(self.home_yaw):
+            raise ValueError("home_yaw_deg must be finite")
         if self.entry_side not in (-1, 1):
             raise ValueError("entry_side must be -1 or 1")
         if self.same_direction_exit_sign not in (-1, 1):
@@ -1065,7 +1070,14 @@ class IndividualMoveNode(Node):
             return
         if self.phase == "TO_REAR_STAGING":
             yaw = self.active_target[2]
-            if self.advance_route(self.centerline_speed, goal_yaw=yaw):
+            # In Front-first mode the peer remains at HOME while Front leaves.
+            # Keep the current body axis during that close-proximity
+            # translation; the existing ALIGN/PRE_ALIGN phase owns target-yaw
+            # convergence once staging clearance exists. Simultaneous mode
+            # preserves its established translate-and-yaw behavior.
+            staging_yaw = yaw if self.simultaneous_entry else None
+            if self.advance_route(
+                    self.centerline_speed, goal_yaw=staging_yaw):
                 self.stop()
                 self.set_phase("READY_TO_SCAN")
                 if not self.approach_sent:
@@ -1314,7 +1326,11 @@ class IndividualMoveNode(Node):
                 self.plan_return_home()
             return
         if self.phase == "RETURN_HOME":
-            if self.advance_route(self.max_speed):
+            # HOME means the configured pose, not position alone. Apply the
+            # original HOME axis on the final route leg so return_done cannot
+            # leave a rotated footprint blocking the next Front-first mission.
+            goal_yaw = self.home_yaw if len(self.route) <= 1 else None
+            if self.advance_route(self.max_speed, goal_yaw=goal_yaw):
                 self.stop()
                 self.set_phase("RETURNED")
                 if not self.return_sent:

@@ -57,6 +57,7 @@ from cooperative_parking_robot.bev_fusion_core import (
     summarize_merge,
 )
 from cooperative_parking_robot.parking_geometry import (
+    grid_cell_count,
     parse_registered_slots,
     slot_polygon,
 )
@@ -95,6 +96,8 @@ class CctvMergeNode(Node):
 
         # ===== 맵 =====
         self.declare_parameter('map_resolution', 0.05)
+        self.declare_parameter('map_origin_x_m', 0.0)
+        self.declare_parameter('map_origin_y_m', 0.0)
         self.declare_parameter('map_width_m', 4.40)
         self.declare_parameter('map_height_m', 3.83)
         self.declare_parameter('car_size_m', 0.90)
@@ -190,12 +193,20 @@ class CctvMergeNode(Node):
             raise ValueError('duplicate_center_blend must be in [0,0.5]')
 
         self.resolution = float(self.get_parameter('map_resolution').value)
+        self.map_origin_x_m = float(
+            self.get_parameter('map_origin_x_m').value)
+        self.map_origin_y_m = float(
+            self.get_parameter('map_origin_y_m').value)
         self.map_w_m = float(self.get_parameter('map_width_m').value)
         self.map_h_m = float(self.get_parameter('map_height_m').value)
-        if self.resolution <= 0.0 or self.map_w_m <= 0.0 or self.map_h_m <= 0.0:
+        if (not all(math.isfinite(value) for value in (
+                self.resolution, self.map_origin_x_m,
+                self.map_origin_y_m, self.map_w_m, self.map_h_m)) or
+                self.resolution <= 0.0 or self.map_w_m <= 0.0 or
+                self.map_h_m <= 0.0):
             raise ValueError('map resolution/width/height must be positive')
-        self.grid_w = int(self.map_w_m / self.resolution)
-        self.grid_h = int(self.map_h_m / self.resolution)
+        self.grid_w = grid_cell_count(self.map_w_m, self.resolution)
+        self.grid_h = grid_cell_count(self.map_h_m, self.resolution)
         self.car_size = float(self.get_parameter('car_size_m').value)
         self.target_mask_radius = float(
             self.get_parameter('target_mask_radius_m').value)
@@ -613,14 +624,20 @@ class CctvMergeNode(Node):
                 continue
             if detection.polygon is not None and len(detection.polygon) >= 3:
                 contour = np.asarray([
-                    [int(round(x / self.resolution)),
-                     int(round(y / self.resolution))]
+                    [int(round(
+                        (x - self.map_origin_x_m) / self.resolution)),
+                     int(round(
+                        (y - self.map_origin_y_m) / self.resolution))]
                     for x, y in detection.polygon
                 ], dtype=np.int32)
                 cv2.fillPoly(grid, [contour], 100)
                 continue
-            gx = int(detection.center[0] / self.resolution)
-            gy = int(detection.center[1] / self.resolution)
+            gx = int(
+                (detection.center[0] - self.map_origin_x_m) /
+                self.resolution)
+            gy = int(
+                (detection.center[1] - self.map_origin_y_m) /
+                self.resolution)
             half = car_px // 2
             y1 = max(0, gy - half)
             y2 = min(self.grid_h, gy + half)
@@ -633,8 +650,8 @@ class CctvMergeNode(Node):
         for pose in self.robot_pose.values():
             if pose is None:
                 continue
-            gx = int(pose[0] / self.resolution)
-            gy = int(pose[1] / self.resolution)
+            gx = int((pose[0] - self.map_origin_x_m) / self.resolution)
+            gy = int((pose[1] - self.map_origin_y_m) / self.resolution)
             y1 = max(0, gy - mask_cells)
             y2 = min(self.grid_h, gy + mask_cells + 1)
             x1 = max(0, gx - mask_cells)
@@ -647,6 +664,8 @@ class CctvMergeNode(Node):
         msg.info.resolution = self.resolution
         msg.info.width = self.grid_w
         msg.info.height = self.grid_h
+        msg.info.origin.position.x = self.map_origin_x_m
+        msg.info.origin.position.y = self.map_origin_y_m
         msg.info.origin.orientation.w = 1.0
         msg.data = grid.flatten().tolist()
         self.pub_map.publish(msg)

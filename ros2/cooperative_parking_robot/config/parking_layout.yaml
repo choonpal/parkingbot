@@ -2,6 +2,8 @@
 # 패키지 기본 파일은 오동작 방지를 위해 비활성화하며, 실제 실행은
 # ~/.ros/adaptive_valet_bot/parking_layout.yaml의 등록본을 사용한다.
 # 모든 좌표/크기는 Homography와 같은 map frame의 metre 단위다.
+# 차량 pose (0.6,0.4)는 유지하고 실제로 열린 좌/하단 공간을 map에 포함하기
+# 위해 OccupancyGrid 범위는 (-0.4,-0.8) ~ (4.4,3.83)으로 등록한다.
 #
 # 차량 WAITING ZONE: (0.0,0.0) ~ (1.2,0.8), 중심 (0.6,0.4)
 # 주차로봇 출발영역: (3.2,0.0) ~ (4.0,0.8)
@@ -14,8 +16,10 @@
   ros__parameters:
     layout_registered: false
     map_resolution: 0.050000
-    map_width_m: 4.400000
-    map_height_m: 3.830000
+    map_origin_x_m: -0.400000
+    map_origin_y_m: -0.800000
+    map_width_m: 4.800000
+    map_height_m: 4.630000
     car_size_m: 0.900000
 
     # 차량 중심 detection ROI. 꼭짓점은 자기교차가 없도록 CCW로 정렬했다.
@@ -71,6 +75,9 @@ fleet_manager_node:
     use_staged_slot_entry: true
     parking_direction: "forward"
     simultaneous_entry: false
+    # MVP: 모델 기반 fit/corridor 실패는 Fleet/UI 경고로 남기고 운행을 계속한다.
+    # 사용자 E-stop, stale command/odom, STM32 watchdog 등 runtime stop은 별도다.
+    planning_validation_mode: "warn_only"
     unknown_is_occupied: true
     odom_timeout_s: 0.500000
     approach_yaw_gain: 1.500000
@@ -81,8 +88,10 @@ cctv_merge_node:
   ros__parameters:
     layout_registered: false
     map_resolution: 0.050000
-    map_width_m: 4.400000
-    map_height_m: 3.830000
+    map_origin_x_m: -0.400000
+    map_origin_y_m: -0.800000
+    map_width_m: 4.800000
+    map_height_m: 4.630000
     car_size_m: 0.900000
     waiting_polygon: [0.000000, 0.000000, 1.200000, 0.000000, 1.200000, 0.800000, 0.000000, 0.800000]
     slot_ids: ["P1", "P2", "P3", "P4"]

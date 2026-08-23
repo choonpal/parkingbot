@@ -26,6 +26,13 @@ def _nonnegative(name, value):
     return value
 
 
+def _finite(name, value):
+    value = float(value)
+    if not math.isfinite(value):
+        raise ValueError(f'{name} must be finite')
+    return value
+
+
 def make_extraction_geometry(slot, final_pose, loaded_length_m,
                              staging_gap_m, lookahead_m, safety_margin_m):
     if not isinstance(slot, ParkingSlot) or not isinstance(final_pose, Pose2D):
@@ -75,18 +82,21 @@ def _cell_occupied(grid, width, height, gx, gy, unknown_is_occupied=True):
 
 def oriented_footprint_is_free(grid, width, height, resolution,
                                x_m, y_m, yaw_rad, length_m, width_m,
-                               margin_m=0.0, unknown_is_occupied=True):
+                               margin_m=0.0, unknown_is_occupied=True,
+                               origin_x_m=0.0, origin_y_m=0.0):
     resolution = _positive('resolution', resolution)
+    origin_x = _finite('origin_x_m', origin_x_m)
+    origin_y = _finite('origin_y_m', origin_y_m)
     half_length = _positive('length_m', length_m) / 2.0
     half_width = _positive('width_m', width_m) / 2.0
     margin = _nonnegative('margin_m', margin_m)
     half_length += margin
     half_width += margin
     radius = math.hypot(half_length, half_width)
-    min_gx = int(math.floor((x_m - radius) / resolution))
-    max_gx = int(math.floor((x_m + radius) / resolution))
-    min_gy = int(math.floor((y_m - radius) / resolution))
-    max_gy = int(math.floor((y_m + radius) / resolution))
+    min_gx = int(math.floor((x_m - radius - origin_x) / resolution))
+    max_gx = int(math.floor((x_m + radius - origin_x) / resolution))
+    min_gy = int(math.floor((y_m - radius - origin_y) / resolution))
+    max_gy = int(math.floor((y_m + radius - origin_y) / resolution))
     c, s = math.cos(yaw_rad), math.sin(yaw_rad)
     padding = resolution / math.sqrt(2.0)
     for gy in range(min_gy, max_gy + 1):
@@ -94,8 +104,8 @@ def oriented_footprint_is_free(grid, width, height, resolution,
             if not _cell_occupied(
                     grid, width, height, gx, gy, unknown_is_occupied):
                 continue
-            cell_x = (gx + 0.5) * resolution
-            cell_y = (gy + 0.5) * resolution
+            cell_x = origin_x + (gx + 0.5) * resolution
+            cell_y = origin_y + (gy + 0.5) * resolution
             dx, dy = cell_x - x_m, cell_y - y_m
             local_x = dx * c + dy * s
             local_y = -dx * s + dy * c
@@ -108,7 +118,8 @@ def oriented_footprint_is_free(grid, width, height, resolution,
 def corridor_is_free(grid, width, height, resolution, start, goal, yaw_rad,
                      length_m, width_m, margin_m=0.0,
                      unknown_is_occupied=True, goal_yaw_rad=None,
-                     speed_mps=None, yaw_gain=1.5, max_yaw_rate=0.15):
+                     speed_mps=None, yaw_gain=1.5, max_yaw_rate=0.15,
+                     origin_x_m=0.0, origin_y_m=0.0):
     dx, dy = float(goal[0]) - float(start[0]), float(goal[1]) - float(start[1])
     distance = math.hypot(dx, dy)
     spatial_count = max(
@@ -138,19 +149,23 @@ def corridor_is_free(grid, width, height, resolution, start, goal, yaw_rad,
         if not oriented_footprint_is_free(
                 grid, width, height, resolution,
                 x_m, y_m, sample_yaw, length_m, width_m,
-                margin_m, unknown_is_occupied):
+                margin_m, unknown_is_occupied,
+                origin_x_m, origin_y_m):
             return False
     return True
 
 
 def clear_source_vehicle(grid, width, height, resolution, pose,
-                         length_m, width_m, minimum_mask_size_m=0.0):
+                         length_m, width_m, minimum_mask_size_m=0.0,
+                         origin_x_m=0.0, origin_y_m=0.0):
     if len(grid) != int(width) * int(height):
         raise ValueError('grid dimensions do not match data')
     if not isinstance(pose, Pose2D):
         raise TypeError('pose must be Pose2D')
     output = list(grid)
     resolution = _positive('resolution', resolution)
+    origin_x = _finite('origin_x_m', origin_x_m)
+    origin_y = _finite('origin_y_m', origin_y_m)
     minimum_size = _nonnegative(
         'minimum_mask_size_m', minimum_mask_size_m)
     # COCO/dual fallback map은 polygon이 없을 때 car_size 정사각형을 채운다.
@@ -163,14 +178,18 @@ def clear_source_vehicle(grid, width, height, resolution, pose,
         _positive('width_m', width_m), minimum_size) / 2.0 + cell_padding
     radius = math.hypot(half_length, half_width)
     c, s = math.cos(pose.yaw_rad), math.sin(pose.yaw_rad)
-    min_gx = max(0, int(math.floor((pose.x_m - radius) / resolution)))
-    max_gx = min(width - 1, int(math.floor((pose.x_m + radius) / resolution)))
-    min_gy = max(0, int(math.floor((pose.y_m - radius) / resolution)))
-    max_gy = min(height - 1, int(math.floor((pose.y_m + radius) / resolution)))
+    min_gx = max(0, int(math.floor(
+        (pose.x_m - radius - origin_x) / resolution)))
+    max_gx = min(width - 1, int(math.floor(
+        (pose.x_m + radius - origin_x) / resolution)))
+    min_gy = max(0, int(math.floor(
+        (pose.y_m - radius - origin_y) / resolution)))
+    max_gy = min(height - 1, int(math.floor(
+        (pose.y_m + radius - origin_y) / resolution)))
     for gy in range(min_gy, max_gy + 1):
         for gx in range(min_gx, max_gx + 1):
-            dx = (gx + 0.5) * resolution - pose.x_m
-            dy = (gy + 0.5) * resolution - pose.y_m
+            dx = origin_x + (gx + 0.5) * resolution - pose.x_m
+            dy = origin_y + (gy + 0.5) * resolution - pose.y_m
             local_x = dx * c + dy * s
             local_y = -dx * s + dy * c
             if abs(local_x) <= half_length and abs(local_y) <= half_width:
@@ -205,6 +224,44 @@ def _rectangles_overlap(first, second, first_yaw, second_yaw,
                 max(second_projection) < min(first_projection)):
             return False
     return True
+
+
+def _point_segment_distance(point, start, end):
+    dx, dy = end[0] - start[0], end[1] - start[1]
+    length_sq = dx * dx + dy * dy
+    if length_sq <= 1e-18:
+        return math.dist(point, start)
+    ratio = (
+        (point[0] - start[0]) * dx +
+        (point[1] - start[1]) * dy) / length_sq
+    ratio = max(0.0, min(1.0, ratio))
+    projection = (start[0] + ratio * dx, start[1] + ratio * dy)
+    return math.dist(point, projection)
+
+
+def _rectangles_violate_clearance(
+        first, second, first_yaw, second_yaw,
+        half_length, half_width, minimum_gap):
+    if _rectangles_overlap(
+            first, second, first_yaw, second_yaw,
+            half_length, half_width):
+        return True
+    if minimum_gap <= 0.0:
+        return False
+    first_corners = _rectangle_corners(
+        first, first_yaw, half_length, half_width)
+    second_corners = _rectangle_corners(
+        second, second_yaw, half_length, half_width)
+    first_edges = tuple(zip(
+        first_corners, first_corners[1:] + first_corners[:1]))
+    second_edges = tuple(zip(
+        second_corners, second_corners[1:] + second_corners[:1]))
+    clearance = min(
+        [_point_segment_distance(point, *edge)
+         for point in first_corners for edge in second_edges] +
+        [_point_segment_distance(point, *edge)
+         for point in second_corners for edge in first_edges])
+    return clearance < minimum_gap - 1e-9
 
 
 def _route_position(route, elapsed, speed):
@@ -283,8 +340,8 @@ def simultaneous_routes_clear(front_route, rear_route, speed_mps,
     duration = max(durations)
     spatial_step = max(0.002, min(0.01, max(gap, 0.01) / 3.0))
     count = max(1, int(math.ceil(duration * speed / spatial_step)))
-    half_length = length / 2.0 + gap / 2.0
-    half_width = width / 2.0 + gap / 2.0
+    half_length = length / 2.0
+    half_width = width / 2.0
     for index in range(count + 1):
         elapsed = duration * index / count
         front = _route_position(front_route, elapsed, speed)
@@ -295,9 +352,9 @@ def simultaneous_routes_clear(front_route, rear_route, speed_mps,
         rear_yaw = _yaw_toward(
             rear_yaw_rad, rear_goal_yaw, elapsed,
             yaw_gain, max_yaw_rate)
-        if _rectangles_overlap(
+        if _rectangles_violate_clearance(
                 front, rear, front_yaw, rear_yaw,
-                half_length, half_width):
+                half_length, half_width, gap):
             return False
     return True
 
@@ -311,43 +368,63 @@ def sequential_routes_clear(front_route, rear_route, speed_mps,
                             yaw_gain=1.5, max_yaw_rate=0.15):
     '''Check the existing Front-first entry timing without route replanning.
 
-    Phase one moves Front while Rear stays at HOME. Phase two keeps Front at
-    its staging pose while Rear moves. This mirrors simultaneous_entry=false
-    and prevents a mere geometric route crossing from rejecting a safe route.
+    Front first translates to staging on its current HOME axis while Rear
+    stays at HOME. Front then turns at staging while Rear translates on its
+    HOME axis. Finally Rear turns at staging while Front stays aligned. This
+    mirrors simultaneous_entry=false and keeps close HOME rotation out of the
+    first phase without weakening the footprint-gap check.
     '''
     speed = _positive('speed_mps', speed_mps)
     length = _positive('robot_length_m', robot_length_m)
     width = _positive('robot_width_m', robot_width_m)
     gap = _nonnegative('minimum_gap_m', minimum_gap_m)
-    half_length = length / 2.0 + gap / 2.0
-    half_width = width / 2.0 + gap / 2.0
+    half_length = length / 2.0
+    half_width = width / 2.0
     spatial_step = max(0.002, min(0.01, max(gap, 0.01) / 3.0))
     front_goal_yaw = (front_yaw_rad if front_goal_yaw_rad is None
                       else front_goal_yaw_rad)
     rear_goal_yaw = (rear_yaw_rad if rear_goal_yaw_rad is None
                      else rear_goal_yaw_rad)
-    phases = (
-        (front_route, rear_route[0], front_yaw_rad, front_goal_yaw,
-         rear_yaw_rad),
-        (rear_route, front_route[1], rear_yaw_rad, rear_goal_yaw,
-         front_goal_yaw),
-    )
-    for (moving_route, fixed_center, start_yaw,
-         goal_yaw, fixed_yaw) in phases:
-        duration = max(
-            math.dist(*moving_route) / speed,
-            _yaw_settle_duration(
-                start_yaw, goal_yaw, yaw_gain, max_yaw_rate))
-        count = max(1, int(math.ceil(
-            duration * speed / spatial_step)))
-        for index in range(count + 1):
-            elapsed = duration * index / count
-            moving = _route_position(moving_route, elapsed, speed)
-            moving_yaw = _yaw_toward(
-                start_yaw, goal_yaw, elapsed,
-                yaw_gain, max_yaw_rate)
-            if _rectangles_overlap(
-                    moving, fixed_center, moving_yaw, fixed_yaw,
-                    half_length, half_width):
-                return False
+    # Phase 1: Front translates first, Rear remains at HOME.
+    duration = math.dist(*front_route) / speed
+    count = max(1, int(math.ceil(duration * speed / spatial_step)))
+    for index in range(count + 1):
+        elapsed = duration * index / count
+        front = _route_position(front_route, elapsed, speed)
+        if _rectangles_violate_clearance(
+                front, rear_route[0], front_yaw_rad, rear_yaw_rad,
+                half_length, half_width, gap):
+            return False
+
+    # Phase 2: Front has staging clearance and turns while Rear translates.
+    duration = max(
+        math.dist(*rear_route) / speed,
+        _yaw_settle_duration(
+            front_yaw_rad, front_goal_yaw, yaw_gain, max_yaw_rate))
+    count = max(1, int(math.ceil(duration * speed / spatial_step)))
+    for index in range(count + 1):
+        elapsed = duration * index / count
+        front_yaw = _yaw_toward(
+            front_yaw_rad, front_goal_yaw, elapsed,
+            yaw_gain, max_yaw_rate)
+        rear = _route_position(rear_route, elapsed, speed)
+        if _rectangles_violate_clearance(
+                front_route[1], rear, front_yaw, rear_yaw_rad,
+                half_length, half_width, gap):
+            return False
+
+    # Phase 3: Rear aligns at staging after Front is already aligned.
+    duration = _yaw_settle_duration(
+        rear_yaw_rad, rear_goal_yaw, yaw_gain, max_yaw_rate)
+    count = max(1, int(math.ceil(duration * speed / spatial_step)))
+    for index in range(count + 1):
+        elapsed = duration * index / count
+        rear_yaw = _yaw_toward(
+            rear_yaw_rad, rear_goal_yaw, elapsed,
+            yaw_gain, max_yaw_rate)
+        if _rectangles_violate_clearance(
+                front_route[1], rear_route[1],
+                front_goal_yaw, rear_yaw,
+                half_length, half_width, gap):
+            return False
     return True

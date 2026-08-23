@@ -270,3 +270,21 @@ def test_real_robot_launches_default_to_front_first_entry():
 
     layout = (ROOT / 'config/parking_layout.yaml').read_text()
     assert 'simultaneous_entry: false' in layout
+
+
+def test_fleet_launches_explicitly_select_warn_only_mvp_planning_policy():
+    launch_dir = ROOT / 'launch'
+    for name in (
+            'full_system.launch.py',
+            'cctv_server.launch.py',
+            'cctv_server_dual.launch.py'):
+        source = (launch_dir / name).read_text()
+        assert re.search(
+            r"'planning_validation_mode',\s*default_value='warn_only'",
+            source)
+        assert (
+            "'planning_validation_mode': LaunchConfiguration(" in source
+        )
+
+    layout = (ROOT / 'config/parking_layout.yaml').read_text()
+    assert 'planning_validation_mode: "warn_only"' in layout

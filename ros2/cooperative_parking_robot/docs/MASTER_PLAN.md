@@ -344,10 +344,10 @@ xset s off; xset -dpms; xset s noblank
 바닥이 흑색 종이 + 백색 테이프라 슬롯에 물리 벽이 없으므로 Front가 슬롯 안쪽
 (차량 전축 아래)까지 들어가는 물리 제약도 없다.
 
-검산 (기본 레이아웃, 슬롯 P1=(1.5, 3.5), yaw 90°):
-- 통로측 staging: Front s=−0.85 → world (1.5, 2.65), Rear s=−1.55 → (1.5, 1.95) — 통로 내 ✓
-- 홈 시작 자세: Front (1.15, 0.6) → 차량 프레임 s=−2.9 < −0.73 ✓ "후방" 조건 통과,
-  d=+0.35, 직선 TO_REAR_STAGING이 보호 사각형 미관통 ✓
+검산 (현재 등록 레이아웃, 슬롯 P1=(1.2, 2.2), yaw 90°):
+- 통로측 staging: Front s=−0.85 → world (1.2, 1.35), Rear s=−1.55 → (1.2, 0.65) — 통로 내 ✓
+- 홈 시작 자세: Front (3.6, 0.6, 180°), Rear (3.6, 0.2, 180°).
+  기존 Front-first 시간 기반 footprint preflight에서 P1~P4 순차 접근 통과 ✓
 - **결론: 1대 데모 레이아웃에서 `individual_move`의 APPROACH/ALIGN 코드 무변경 동작**
 
 따라서 출차 구현은 아래 4개 변경으로 축소된다.
@@ -401,13 +401,12 @@ y 반폭 ≈ 0.69 m → A* `_inflate`의 맵 경계 밴드(y ≥ 3.3 m)가 **시
 
 ## 5-4. 변경 4 — 하차 후 복귀 방향 (`individual_move` 파라미터)
 
-- 하차 지점 = 대기구역(yaw 0) → 분할 이탈: Front +x, Rear −x —
-  기존 `exit_longitudinal_translation` 그대로 ✓.
-- `plan_return_home` 회피 대상 = `/parking/slot_pose`(=대기 pseudo-slot pose) 주변 차량 —
-  fleet이 slot_pose로 대기 pose를 발행하므로 **자동으로 올바른 차량 회피** ✓.
-- 홈이 대기구역 −x측(0.45/1.15) → Rear는 −x 이탈 후 거의 제자리, Front는 차량 우회 복귀.
-  `entry_side` 방향이 입차와 동일하게 유효한지 **리허설 확인**
-  (필요시 미션별 `entry_side` 전환 파라미터).
+- 현재 권위 waiting pose는 map 기준 `(0.60, 0.40, 180°)`이며, 하차 뒤에는 기존
+  `exit_longitudinal_translation`과 post-release egress를 그대로 사용한다.
+- `plan_return_home`은 `/parking/slot_pose` 주변의 하차 차량을 회피한 뒤 현재 권위 HOME인
+  Front `(3.60, 0.60, 180°)`, Rear `(3.60, 0.20, 180°)`로 복귀한다.
+- 이 문서의 과거 `(0.45, 0.60)` / `(1.15, 0.60)` HOME과 waiting yaw 0° 설명은
+  이전 레이아웃 기록이며 현재 runtime 설정으로 사용하지 않는다.
 
 ## 5-5. 출차 강제 전제 조건 (설정 고정)
 

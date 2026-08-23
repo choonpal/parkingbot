@@ -130,6 +130,22 @@ lateral/yaw 유지, Rear 접근 감속, 최종 휠베이스 거리 검증에 사
 복귀는 가까운 차량 끝으로 나뉘어 이탈하며, `same_direction_exit:=true`일 때는
 peer barrier와 상대거리 속도 보정으로 같은 방향 동기 이탈을 수행한다.
 
+이번 MVP launch의 Fleet 기본값은
+`planning_validation_mode:=warn_only`이다. slot fit과 모델 기반
+접근·회전·삽입·추출 corridor 실패는 `/fleet/state.validation_warnings`와
+UI 배너에 표시하면서 계산 가능한 기존 A* 경로를 실행한다.
+`planning_validation_mode:=enforce`로 원래의 후보 차단 정책을 다시 선택할 수
+있다. A* 경로 자체가 없으면 `planning_blocker=ASTAR_NO_PATH`로 계속 대기한다.
+사용자 비상정지, odometry/command 단절, STM32 watchdog과 인양 중 강체 한계는
+이 parameter의 대상이 아니며 항상 정지 동작을 유지한다.
+
+현재 등록 레이아웃의 로봇 HOME은 map frame 기준 Front
+`(3.60, 0.60, 180°)`, Rear `(3.60, 0.20, 180°)`다. 실차
+`front_robot.launch.py`, `rear_robot.launch.py`, 한-PC
+`full_system.launch.py`와 pose-fusion 초기 pose가 이 값으로 통일되어 있다.
+각 로봇 launch의 기존 `waiting_x/y` 인자는 호환성을 위해 이름을 유지하지만
+차량 출차 목적지가 아니라 해당 로봇의 HOME x/y를 뜻한다.
+
 ## 전달받은 `yolo_and_aruco.py` 반영 사항
 
 - 1280×720, 버퍼 1의 OpenCV 카메라 publisher 추가

@@ -34,10 +34,10 @@ DRIVE_COMMAND_KEYS_BY_HOST = {
     "robot-1": {
         "w": "s",
         "s": "w",
-        "a": "a",
-        "d": "d",
-        "q": "q",
-        "e": "e",
+        "a": "d",
+        "d": "a",
+        "q": "e",
+        "e": "q",
     },
     "robot-2": {
         "w": "s",

@@ -113,7 +113,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "right_sensor_to_gripper_x_m", default_value="0.0"),
         DeclareLaunchArgument(
-            "wheelbase", default_value="0.70",
+            "wheelbase", default_value="0.785",
             description="Measured target-vehicle wheelbase [m]"),
         DeclareLaunchArgument(
             "vehicle_half_length_m", default_value="0.45",
@@ -124,7 +124,7 @@ def generate_launch_description():
         DeclareLaunchArgument("robot_length_m", default_value="0.565"),
         DeclareLaunchArgument("robot_width_m", default_value="0.275"),
         DeclareLaunchArgument(
-            "minimum_inter_robot_gap_m", default_value="0.10"),
+            "minimum_inter_robot_gap_m", default_value="0.22"),
         DeclareLaunchArgument(
             "robot_clearance_m", default_value="0.06",
             description="Robot envelope and route safety clearance [m]"),

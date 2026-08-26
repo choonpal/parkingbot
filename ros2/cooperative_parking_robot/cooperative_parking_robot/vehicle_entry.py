@@ -17,11 +17,12 @@ import math
 
 ROLES = ("front", "rear")
 
-# Same-side entry defaults; see validation helpers below.
-DEFAULT_WHEELBASE_M = 0.70
+# Measured setup: 0.785 m axle-to-axle wheelbase and 0.565 m robot length
+# leave a 0.220 m longitudinal body-to-body gap at axle alignment.
+DEFAULT_WHEELBASE_M = 0.785
 ROBOT_LENGTH_M = 0.565
 ROBOT_WIDTH_M = 0.275
-MIN_INTER_ROBOT_GAP_M = 0.10
+MIN_INTER_ROBOT_GAP_M = 0.22
 
 
 def initial_approach_phase(role, simultaneous_entry=False):

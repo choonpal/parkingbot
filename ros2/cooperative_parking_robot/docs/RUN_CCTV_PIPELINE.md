@@ -1,0 +1,410 @@
+# CCTV 파이프라인 실행 절차 (젯슨)
+
+`parkingbot-main 2` 기준 · 패키지 배치부터 토픽 확인까지
+
+---
+
+## 0. 패키지 배치
+
+ROS 워크스페이스에는 **`ros2/cooperative_parking_robot` 하나만** 넣는다.
+`stm32/`와 최상위 `docs/`는 워크스페이스에 들어갈 것이 아니다.
+
+```
+parkingbot-main 2/ros2/cooperative_parking_robot/
+        ↓ 복사
+~/ros2_ws/src/cooperative_parking_robot/
+        ├── package.xml        ← 이 폴더 바로 밑에 있어야 함
+        ├── setup.py
+        ├── cooperative_parking_robot/
+        ├── launch/
+        ├── config/
+        ├── models/
+        ├── scripts/
+        └── docs/
+```
+
+기존 것이 있으면 먼저 치운다.
+
+```bash
+mv ~/ros2_ws/src/cooperative_parking_robot ~/ros2_ws/src/cooperative_parking_robot.bak
+# VSCode 원격 탐색기로 새 폴더를 ~/ros2_ws/src/cooperative_parking_robot 에 복사
+```
+
+> `.bak` 폴더는 빌드에 쓰이지 않는다. 여기에 npy나 npz를 넣어도 런타임이 못 읽는다.
+
+---
+
+## 1. 빌드
+
+```bash
+find ~/ros2_ws/src -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null
+cd ~/ros2_ws
+rm -rf build install log
+colcon build --symlink-install --packages-select cooperative_parking_robot
+source install/setup.bash
+```
+
+`Unknown distribution option: 'tests_require'` 경고는 무시한다.
+
+**확인:**
+
+```bash
+ros2 pkg executables cooperative_parking_robot | wc -l      # 19
+ls $(ros2 pkg prefix cooperative_parking_robot)/share/cooperative_parking_robot/models/
+```
+
+`parking_vehicle_yolo11n_seg.pt`가 보여야 한다. 이 모델은 `setup.py`의
+`data_files`에 등록돼 있어 빌드 때 share로 복사된다.
+
+---
+
+## 2. 환경 변수 (새 터미널마다)
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/ros2_ws/install/setup.bash
+export ROS_DOMAIN_ID=42
+export ROS_LOCALHOST_ONLY=0
+```
+
+매번 치기 번거로우면 `~/.bashrc`에 넣는다.
+
+```bash
+cat >> ~/.bashrc <<'EOF'
+source /opt/ros/humble/setup.bash
+source ~/ros2_ws/install/setup.bash
+export ROS_DOMAIN_ID=42
+export ROS_LOCALHOST_ONLY=0
+export PIP_CONSTRAINT=$HOME/pip-constraints.txt
+EOF
+echo "numpy<2" > ~/pip-constraints.txt
+```
+
+`PIP_CONSTRAINT`는 pip 설치 때마다 numpy가 2로 올라가 `cv_bridge`를 깨뜨리는
+것을 막는다. 이것 때문에 세 번 막혔다.
+
+---
+
+## 3. 사전 점검
+
+### 3-1. 카메라
+
+```bash
+ls -l /dev/video*
+v4l2-ctl --list-devices
+```
+
+**launch 기본값이 `camera0_id:=2`, `camera2_id:=0`이다.** 실제 배선과 다르면
+반드시 인자로 바꿔 준다. 어느 장치가 어느 카메라인지 헷갈리면:
+
+```bash
+bash ~/ros2_ws/src/cooperative_parking_robot/scripts/check_cameras.sh
+```
+
+### 3-2. 캘리브레이션 파일
+
+```bash
+ls -lh ~/.ros/adaptive_valet_bot/
+```
+
+| 파일 | 용도 | 없으면 |
+|---|---|---|
+| `homography_cam0_rectified.npy` | 픽셀 → 미터 (cam0) | 비전 노드 기동 거부 |
+| `homography_cam2_rectified.npy` | 픽셀 → 미터 (cam2) | 비전 노드 기동 거부 |
+| `parking_layout.yaml` | 슬롯·대기영역·맵 크기 | `layout_registered=false` 로 거부 |
+
+패키지 `config/`의 `cctv0/cctv2_camera_calibration.npz`는 빌드 때 share로 복사된다.
+
+`parking_layout.yaml`에 `/**:` 블록이 있어야 한다. 없으면 예전 구조라
+카메라별 sensor 노드(`yolo_bev_map_node_cam0`)에 값이 전달되지 않는다.
+
+```bash
+grep -n "^/\*\*:" ~/.ros/adaptive_valet_bot/parking_layout.yaml
+```
+
+### 3-3. 파이썬 환경
+
+```bash
+python3 -c "
+import numpy, cv2, torch, ultralytics
+from cv_bridge import CvBridge
+print('numpy', numpy.__version__, '(2 미만)')
+print('cv2  ', cv2.__version__, cv2.__file__)
+print('torch', torch.__version__, '| CUDA', torch.cuda.is_available())
+print('ultralytics', ultralytics.__version__)
+CvBridge().cv2_to_imgmsg(numpy.zeros((4,4,3), numpy.uint8), encoding='bgr8')
+print('cv_bridge OK')
+"
+```
+
+`cv2.__file__`이 `/usr/lib/python3/dist-packages/...`여야 한다.
+`~/.local/...`이면 pip OpenCV가 시스템 것을 가려 `KeyError: 16`이 난다.
+
+---
+
+## 4. 실행
+
+### 4-A. 캘리브레이션 단계 — 카메라만
+
+homography가 아직 없거나 기준점을 찍을 때 쓴다. YOLO를 끄면 프레임률이
+30fps 가까이 나와 클릭이 훨씬 수월하다.
+
+```bash
+ros2 launch cooperative_parking_robot cctv_server_dual.launch.py \
+  enable_opencv_camera:=true \
+  camera0_id:=0 camera2_id:=2 \
+  enable_vision:=false \
+  enable_cctv_robot_markers:=false
+```
+
+띄우는 노드: `opencv_camera_node_cam0/cam2`, `cctv_rectify_node_cam0/cam2`
+
+### 4-B. 전체 파이프라인
+
+```bash
+ros2 launch cooperative_parking_robot cctv_server_dual.launch.py \
+  enable_opencv_camera:=true \
+  camera0_id:=0 camera2_id:=2 \
+  homography_cam0_file:=$HOME/.ros/adaptive_valet_bot/homography_cam0_rectified.npy \
+  homography_cam2_file:=$HOME/.ros/adaptive_valet_bot/homography_cam2_rectified.npy \
+  layout_config:=$HOME/.ros/adaptive_valet_bot/parking_layout.yaml
+```
+
+`model_path`, `model_mode:=vehicle_seg`, `inference_imgsz:=640`은 launch
+기본값이 이미 패키지의 학습 모델을 가리키므로 따로 줄 필요가 없다.
+
+TensorRT engine을 만들었다면:
+
+```bash
+  model_path:=$HOME/ros2_ws/src/cooperative_parking_robot/models/parking_vehicle_yolo11n_seg.engine
+```
+
+**이 터미널은 닫지 않는다.** 닫으면 노드가 전부 죽는다.
+
+#### 기동 로그에서 확인할 것
+
+```
+[opencv_camera_node_cam0] CCTV camera opened: camera_id=0 -> /cctv0/image_raw
+[opencv_camera_node_cam0] CCTV first frame: 640x480, reported_fps=30.00
+[cctv_rectify_node_cam0]  CCTV calibration loaded | fx=436.85 ...
+[cctv_rectify_node_cam0]  CCTV undistort map ready: 640x480
+[yolo_bev_map_node_cam0]  YOLO loaded: ... | mode=vehicle_seg | task=... | imgsz=640
+[yolo_bev_map_node_cam0]  yolo_bev_map 시작 | camera_id=cam0 | mission_outputs=False
+[yolo_bev_map_node_cam0]  [cam0] coverage polygon: (...)
+[cctv_merge_node]         cctv_merge_node 시작 | cameras=['cam0','cam2'] | slots=[...]
+[cctv_robot_marker_node]  cctv_robot_marker_node 시작 (markers={'front':10,'rear':11}, ...)
+```
+
+초반 몇 초간 `살아있는 CCTV sensor 노드가 없습니다`가 반복되는 것은 정상이다.
+모델 로딩이 끝나고 `coverage polygon`이 찍히면 살아난다.
+
+---
+
+## 5. 토픽 확인 (터미널 2)
+
+### 5-1. 노드가 다 떴는가
+
+```bash
+ros2 node list
+```
+
+전체 실행이면 9개:
+
+```
+/opencv_camera_node_cam0   /opencv_camera_node_cam2
+/cctv_rectify_node_cam0    /cctv_rectify_node_cam2
+/yolo_bev_map_node_cam0    /yolo_bev_map_node_cam2
+/cctv_merge_node           /fleet_manager_node
+/cctv_robot_marker_node
+```
+
+### 5-2. 영상
+
+```bash
+ros2 topic hz /cctv0/image_raw     # ~30
+ros2 topic hz /cctv0/image_rect    # ~30
+ros2 topic hz /cctv2/image_rect    # ~30
+```
+
+`image_raw`는 나오는데 `image_rect`가 없으면 rectify가 캘리브레이션을 못 읽은 것이다.
+
+### 5-3. 카메라별 검출
+
+```bash
+ros2 topic echo /cctv0/detections --full-length --once
+```
+
+`coverage_polygon`이 채워져 있어야 한다. `--full-length`가 없으면 JSON이
+`...`으로 잘려 내용을 못 본다.
+
+### 5-4. 병합 진단 — 가장 먼저 볼 것
+
+```bash
+ros2 topic echo /cctv/merge_status --full-length
+```
+
+```json
+{
+  "cameras": {
+    "cam0": {"alive": true, "age_s": 0.04, "detections": 1, "coverage_ready": true},
+    "cam2": {"alive": true, "age_s": 0.05, "detections": 1, "coverage_ready": true}
+  },
+  "merged_detections": 1,
+  "duplicates_removed": 1,
+  "multi_camera_detections": 1,
+  "slots": {"P1": {"observed": true, "occupied": false}, ...}
+}
+```
+
+| 증상 | 원인 |
+|---|---|
+| `alive: false` | 그 카메라 sensor 노드가 죽었거나 영상이 안 옴 |
+| `coverage_ready: false` | homography 미로드 |
+| 겹침에 물체가 있는데 `duplicates_removed: 0` | **두 H가 서로 다른 map frame** |
+| 특정 슬롯이 계속 `observed: false` | 어느 카메라 시야에도 없음 |
+
+### 5-5. 임무 토픽
+
+```bash
+ros2 topic echo /parking/map --once | head -20      # 120x80 @ 0.05
+ros2 topic echo /parking/empty_slots --once         # 빈자리 Pose
+ros2 topic echo /parking/target_ready               # 대기영역 차량 정차 확정
+ros2 topic echo /parking/target_pose                # 타겟 차량 위치
+ros2 topic echo /parking/vehicle_spec --once        # 휠베이스·차량 치수
+```
+
+### 5-6. 로봇 절대 pose
+
+```bash
+ros2 topic echo /front/cctv_marker_visible
+ros2 topic echo /rear/cctv_marker_visible
+ros2 topic echo /rear/cctv_pose
+
+# 발행자가 정확히 1개여야 한다 (2개면 EKF 가 같은 정보로 두 번 보정한다)
+ros2 topic info /rear/cctv_pose --verbose | grep -c "Node name"
+```
+
+---
+
+## 6. 눈으로 보기 (터미널 3)
+
+### 6-1. 웹 프리뷰 — 권장
+
+```bash
+ros2 run cooperative_parking_robot camera_preview --ros-args \
+  -p model_path:=$(ros2 pkg prefix cooperative_parking_robot)/share/cooperative_parking_robot/models/parking_vehicle_yolo11n_seg.pt \
+  -p model_mode:=vehicle_seg \
+  -p yolo_class_ids:='[0]' \
+  -p yolo_imgsz:=640
+```
+
+브라우저 `http://<젯슨IP>:5005/`
+VSCode 원격이면 **PORTS 탭에서 5005 forward** 후 `http://localhost:5005/`
+
+보이는 것:
+
+- 두 카메라 실시간 + 격자 + 중심 십자
+- **ArUco 마커** — 변 편차, mm/px, world 좌표. 5% 미만이면 양호
+- **YOLO 검출** — 회전사각형, 네 변 중점, 중심선 2개, 중심점, world 좌표
+- **이동 거리** — 차량을 움직이면 기준점 대비 직선거리와 누적 경로
+- **BEV** — 카메라별 + 합성(색분리). 겹침이 회색이면 정합, 청록/빨강으로
+  갈라지면 어긋난 것. 상관계수도 함께 표시
+
+### 6-2. 터미널 맵 뷰어
+
+모니터가 없을 때.
+
+```bash
+ros2 run cooperative_parking_robot show_map_ascii
+```
+
+### 6-3. RViz
+
+젯슨에 **직접 연결된 모니터**에서만 된다. SSH에서 실행하면 죽는다.
+
+```bash
+# 터미널 A — TF (없으면 Fixed Frame 에러)
+ros2 run tf2_ros static_transform_publisher 0 0 0 0 0 0 map base_link
+
+# 터미널 B
+rviz2
+```
+
+RViz 안에서: Fixed Frame `map` → Add **Map** → Topic에 `/parking/map`
+**직접 입력** → Add **PoseArray** → `/parking/empty_slots`
+
+토픽 이름을 안 넣으면 `Error subscribing: Empty topic name`이 뜬다. 가장 흔한 실수다.
+
+---
+
+## 7. 검증 두 가지
+
+### 7-1. 겹침 중복 제거
+
+겹침 구간에 물체를 놓고
+
+```bash
+ros2 topic echo /cctv/merge_status --full-length | grep -o '"duplicates_removed": [0-9]*'
+```
+
+**1 이상**이어야 두 좌표계가 정합된 것이다. 0이면 기준점 실측부터 다시 본다.
+
+### 7-2. 시야 밖 슬롯 안전장치
+
+가장 중요한 안전 로직이다. 못 보는 칸을 빈자리로 발행하면 차 있는 칸으로
+로봇을 보내게 된다.
+
+```bash
+pkill -f "yolo_bev_map.*cam2"
+ros2 topic echo /parking/empty_slots --once          # cam2 전용 슬롯이 빠져야 함
+ros2 topic echo /cctv/merge_status --full-length --once   # 그 슬롯 observed:false
+```
+
+---
+
+## 8. 정리
+
+```bash
+pkill -f cctv_server_dual
+pkill -f opencv_camera
+pkill -f camera_preview
+sleep 2
+sudo fuser -v /dev/video0 /dev/video2    # 비어야 함
+```
+
+**카메라를 직접 여는 프로그램은 동시에 하나만** 돌 수 있다.
+
+| 도구 | 카메라 직접 열기 | 동시 실행 |
+|---|---|---|
+| `cctv_server_dual.launch.py` (`enable_opencv_camera:=true`) | O | 이것만 |
+| `camera_preview` | X (토픽 구독) | 가능 |
+| `tile_homography` | X (토픽 구독) | 가능 |
+| 원본 `dual_tile_homography_gui.py` | O | **충돌** |
+
+---
+
+## 9. 자주 막히는 지점
+
+| 증상 | 원인 / 조치 |
+|---|---|
+| `ros2: command not found` | `source /opt/ros/humble/setup.bash` 먼저 |
+| `No executable found` | `setup.py` 미반영. 재빌드 |
+| `can't open camera by index` | 이전 launch가 살아 있음. `pkill` 후 `sudo fuser -v /dev/video*` |
+| `KeyError: 16` (cv_bridge) | numpy 2 또는 pip OpenCV. `pip3 install "numpy<2"`, pip opencv 제거 |
+| `ImportError: cannot import name ...` | stale `__pycache__`. 지우고 클린 빌드 |
+| `현장 등록 layout이 아닙니다` | `parking_layout.yaml`에 `/**:` 블록 없음. 재등록 |
+| `ros2 param set` 반영 안 됨 | `__init__`에서 캐싱하는 값. launch 인자로 지정 |
+| `qt.qpa.xcb: could not connect to display` | RViz를 SSH에서 실행. 젯슨 모니터에서 |
+| `echo` 결과가 `...`로 잘림 | `--full-length` 추가 |
+| `Address already in use` | 이전 웹 도구가 포트 점유. `pkill -f camera_preview` |
+
+---
+
+## 10. 터미널 배치 요약
+
+```
+[터미널 1] cctv_server_dual.launch.py     ← 닫지 말 것
+[터미널 2] 토픽 확인 (merge_status, parking/*)
+[터미널 3] camera_preview (5005) 또는 show_map_ascii
+[터미널 4] tile_homography (5006)  — 기준점 등록할 때만
+```

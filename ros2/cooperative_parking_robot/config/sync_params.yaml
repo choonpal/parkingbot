@@ -1,7 +1,7 @@
 rigid_body_sync_node:
   ros__parameters:
-    # 한 종류 모형차 실증: 모든 노드와 같은 고정값 사용
-    wheelbase: 0.70
+    # 실측 차량: wheelbase 0.785m, 로봇 길이 0.565m, 차체 사이 간격 0.220m
+    wheelbase: 0.785
     max_speed: 0.08
     max_omega: 0.30
     lookahead: 0.15
@@ -29,8 +29,7 @@ rigid_body_sync_node:
     aruco_timeout_s: 0.30
     cctv_marker_timeout_s: 0.50
     robot_length_m: 0.565
-    minimum_inter_robot_gap_m: 0.10
-
+    minimum_inter_robot_gap_m: 0.22
     # 차량 중심과 로봇 두 대 중점의 고정 장착 오프셋 초기화/보정
     initialize_offset_from_target_pose: true
     initial_target_offset_gate_m: 0.50

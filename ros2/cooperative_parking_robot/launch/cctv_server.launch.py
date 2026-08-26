@@ -79,7 +79,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'homography_scale_to_m', default_value='1.0',
             description='브라우저 등록 H는 pixel->metre이므로 1.0'),
-        DeclareLaunchArgument('fixed_wheelbase_m', default_value='0.70'),
+        DeclareLaunchArgument('fixed_wheelbase_m', default_value='0.785'),
         DeclareLaunchArgument(
             'layout_config', default_value=default_layout,
             description='map 크기, 대기구역, 슬롯 좌표 YAML'),

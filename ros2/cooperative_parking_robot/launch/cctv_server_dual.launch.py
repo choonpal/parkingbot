@@ -216,7 +216,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'coverage_margin_px', default_value='8.0',
             description='영상 테두리를 잘라 coverage polygon을 만들 여유 픽셀'),
-        DeclareLaunchArgument('fixed_wheelbase_m', default_value='0.70'),
+        DeclareLaunchArgument('fixed_wheelbase_m', default_value='0.785'),
         DeclareLaunchArgument(
             'layout_config', default_value=default_layout,
             description='두 카메라의 슬롯이 합쳐진 하나의 등록 파일'),

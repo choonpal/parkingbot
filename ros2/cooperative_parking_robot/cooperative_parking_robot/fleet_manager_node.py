@@ -99,7 +99,7 @@ class FleetManagerNode(Node):
         self.declare_parameter('robot_width_m', 0.275)
         self.declare_parameter(
             'minimum_inter_robot_gap_m', MIN_INTER_ROBOT_GAP_M)
-        self.declare_parameter('default_wheelbase_m', 0.70)
+        self.declare_parameter('default_wheelbase_m', 0.785)
         # 차량 외곽은 아직 실측 전 placeholder이며 config에서 교체한다.
         self.declare_parameter('default_vehicle_length_m', 0.90)
         self.declare_parameter('default_vehicle_width_m', 0.35)

@@ -20,7 +20,7 @@ from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 
-FIXED_WHEELBASE = 0.70
+FIXED_WHEELBASE = 0.785
 FRONT_HOME = (3.60, 0.60)
 REAR_HOME = (3.60, 0.20)
 HOME_YAW_DEG = 180.0
@@ -413,7 +413,7 @@ def generate_launch_description():
                 'vehicle_half_width_m': 0.175,
                 'robot_length_m': 0.565,
                 'robot_width_m': 0.275,
-                'minimum_inter_robot_gap_m': 0.10,
+                'minimum_inter_robot_gap_m': 0.22,
                 'entry_standoff_m': 0.85,
                 'entry_side_offset_m': 0.40,
                 'exit_distance_m': 0.50,
@@ -455,7 +455,7 @@ def generate_launch_description():
                 'vehicle_half_width_m': 0.175,
                 'robot_length_m': 0.565,
                 'robot_width_m': 0.275,
-                'minimum_inter_robot_gap_m': 0.10,
+                'minimum_inter_robot_gap_m': 0.22,
                 'entry_standoff_m': 0.85,
                 'entry_side_offset_m': 0.40,
                 'exit_distance_m': 0.50,

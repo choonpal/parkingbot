@@ -96,7 +96,7 @@ class YoloBevMapNode(Node):
         self.declare_parameter('classifier_path', 'efficientnetv2_b0_vehicle.pt')
         # YOLO 인식/맵은 유지하되, 한 종류 모형차 실증에서는 휠베이스를 고정한다.
         self.declare_parameter('use_fixed_wheelbase', True)
-        self.declare_parameter('fixed_wheelbase_m', 0.70)
+        self.declare_parameter('fixed_wheelbase_m', 0.785)
         self.declare_parameter('homography_file', 'homography_rectified.npy')
         # 브라우저 등록 도구가 저장한 H는 픽셀->metre를 직접 출력한다.
         self.declare_parameter('homography_scale_to_m', 1.0)

@@ -127,7 +127,7 @@ class CctvMergeNode(Node):
         self.declare_parameter('target_detection_timeout_s', 0.5)
         self.declare_parameter('vehicle_feedback_association_gate_m', 0.45)
         self.declare_parameter('use_fixed_wheelbase', True)
-        self.declare_parameter('fixed_wheelbase_m', 0.70)
+        self.declare_parameter('fixed_wheelbase_m', 0.785)
         self.declare_parameter('default_vehicle_length_m', 0.90)
         self.declare_parameter('default_vehicle_width_m', 0.35)
         self.declare_parameter('vehicle_dimension_padding_m', 0.03)

@@ -142,7 +142,7 @@ def generate_launch_description():
         DeclareLaunchArgument("yaw_offset_deg", default_value="0.0"),
         DeclareLaunchArgument("yaw_sign", default_value="1.0"),
         DeclareLaunchArgument("gray_gain", default_value="1.0"),
-        DeclareLaunchArgument("wheelbase", default_value="0.70"),
+        DeclareLaunchArgument("wheelbase", default_value="0.785"),
         DeclareLaunchArgument(
             "vehicle_half_length_m", default_value="0.45"),
         DeclareLaunchArgument(
@@ -150,7 +150,7 @@ def generate_launch_description():
         DeclareLaunchArgument("robot_length_m", default_value="0.565"),
         DeclareLaunchArgument("robot_width_m", default_value="0.275"),
         DeclareLaunchArgument(
-            "minimum_inter_robot_gap_m", default_value="0.10"),
+            "minimum_inter_robot_gap_m", default_value="0.22"),
         DeclareLaunchArgument(
             "robot_clearance_m", default_value="0.06"),
         DeclareLaunchArgument(

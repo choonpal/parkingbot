@@ -13,19 +13,46 @@
 - 재현: 협동 시험 운용 중 robot-2 bridge 로그에서 반복 관측
 - 확인 완료: 2026-08-26 현재 robot-1·robot-2 모두 `NTP=yes`,
   `NTPSynchronized=yes`
-- 남은 확인: 같은 경고가 새 세션에서도 재현되는지, DDS 지연 명령인지 송신 시각
-  문제인지 구분해야 한다. NTP 상태만으로 해결 완료로 보지 않는다.
+- 재확인: 같은 domain 142에서 robot-1 추종 노드가 robot-2로 0속도를 10초 이상
+  보낸 뒤 W 0.30초 실명령까지 전송했으나 이번 세션에는 한 번도 재현되지 않았다.
+- 남은 확인: 더 긴 분산 주행에서도 재현되지 않는지 확인해야 한다. 짧은 1회
+  무재현만으로 해결 완료로 보지 않는다.
 
-### robot-1 bridge의 Ctrl+C 종료 예외
+### robot-1 ROS 노드의 Ctrl+C 종료 예외
 
 - 심각도: 낮음 — 주행 정지에는 영향 없지만 진단 프로세스가 실패 코드로 종료됨
-- 재현: 두 실기 진단 모두 수동 제어권 해제와 PWM 0 확인 뒤
-  `rcl_shutdown already called on the given context` 예외 발생
+- 재현: 두 bridge 실기 진단에 이어 이번 launch의 bridge·ArUco·재시도 camera도
+  종료 중 `rcl_shutdown already called on the given context` 예외 발생
 - 원인: Humble 기본 SIGINT 처리가 context를 먼저 종료한 뒤 main이
   `rclpy.shutdown()`을 다시 호출한다. robot-2 실험 배포본에는 `rclpy.ok()` 보호가
   있지만 현재 main/robot-1에는 아직 없다.
 
 ## 해결됨
+
+### W 0.30초 협동 직진의 ArUco 상대각도 순간 초과
+
+- 최초 재현: W 1회 뒤 단일 pose의 상대각도가 `-5.8°`로 튀어 5° 제한에 따라
+  FAULT 정지했다. 정지 후에는 `-2.65°`로 돌아왔다.
+- 조치: 최근 pose 3개의 x/y/yaw 중앙값을 제어와 안전 판단에 사용한다. yaw는
+  ±180° 경계에서 먼저 펼쳐 중앙값을 구한다. 5° 안전 제한은 완화하지 않았다.
+- 회귀 검증: 단일 yaw 튐은 제거하고 지속되는 기울기는 그대로 보존하며 ±180°
+  경계도 처리하는 테스트를 추가했다.
+- 실기 재검증: 현재 간격 `20.192cm`를 기준으로 W 0.30초를 실행해 Front
+  `1.217cm`, Rear `1.232cm` 전진했다. FAULT 없이 자동 정지했고 안정 후 간격
+  오차 `-0.169cm`, 각도 오차 `0.025°`, 양쪽 명령 0을 확인했다.
+
+### Rear 추종 launch의 카메라·미리보기 기동 불일치
+
+- 최초 원인: robot-1 배포 카메라 노드가 `camera_device`를 지원하지 않는
+  구버전이었다. 또한 `enable_yolo=false`에서도 미리보기가 사용하지 않는 기본
+  mission/region 카메라 라벨을 검사해 `ValueError`로 종료됐다.
+- 조치: main의 `camera_device` 지원 카메라 노드를 robot-1에 배포하고, YOLO가
+  활성화된 해당 모드에서만 mission/region 라벨을 검증하도록 변경했다.
+- 검증: robot-1에서 패키지 빌드 후 by-path 카메라를 바로 열어 640x480 첫 프레임을
+  받았다. 프리뷰 API에서 Rear 영상 alive, ArUco ID 0을 확인했고 Chromium으로
+  키보드 페이지, 상태 API와 `/video/0` 응답까지 실제 렌더링했다.
+- 전체 회귀 결과: `393 passed, 1 skipped`, 깨끗한 ROS 빌드 통과. skip은 Node.js가
+  없는 환경의 내장 JavaScript 문법 검사이며 위 Chromium 검증으로 보완했다.
 
 ### 협동 시험의 robot-1 오도메트리 방향 불일치
 

@@ -982,6 +982,7 @@ class CameraPreviewNode(Node):
                 cv2, str(self.get_parameter('aruco_dict').value))
         self.web_host = str(self.get_parameter('web_host').value)
         self.web_port = int(self.get_parameter('web_port').value)
+        self.enable_yolo = bool(self.get_parameter('enable_yolo').value)
         self.yolo_cameras = {c.strip() for c in
                              str(self.get_parameter('yolo_cameras_csv').value).split(',')
                              if c.strip()}
@@ -999,7 +1000,7 @@ class CameraPreviewNode(Node):
         self.mission_cameras = parse_mission_cameras(
             self.get_parameter('yolo_mission_cameras_csv').value)
         stray = sorted(set(self.mission_cameras.values()) - set(self._yolo_labels))
-        if stray:
+        if self.enable_yolo and self.yolo_switch_mode == 'mission' and stray:
             raise ValueError(
                 f'yolo_mission_cameras_csv 에 없는 카메라 라벨: {stray}. '
                 f'가능한 라벨: {self._yolo_labels}')
@@ -1027,11 +1028,12 @@ class CameraPreviewNode(Node):
             self.yolo_regions = {}
             self._regions_source = None
         unknown = sorted(set(self.yolo_regions) - set(self._yolo_labels))
-        if unknown:
+        if self.enable_yolo and self.yolo_switch_mode == 'region' and unknown:
             raise ValueError(
                 f'yolo_regions_csv 에 없는 카메라 라벨이 있습니다: {unknown}. '
                 f'가능한 라벨: {self._yolo_labels}')
-        if self.yolo_switch_mode == 'region' and not self.yolo_regions:
+        if (self.enable_yolo and self.yolo_switch_mode == 'region'
+                and not self.yolo_regions):
             # 구역 없이 region 모드로 두면 담당이 안 정해져 아무 데서도
             # 추론이 안 도는 것처럼 보인다. 여기서 막는 편이 친절하다.
             raise ValueError(
@@ -1280,7 +1282,7 @@ class CameraPreviewNode(Node):
         self.yolo = None
         self.yolo_error = ''
         self.yolo_names = {}
-        if not bool(self.get_parameter('enable_yolo').value):
+        if not self.enable_yolo:
             self.yolo_error = 'enable_yolo=false'
             return
         self.yolo_class_ids = {int(v) for v in

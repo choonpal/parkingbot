@@ -1,0 +1,19 @@
+build/
+install/
+log/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Runtime calibration/model artifacts are ignored unless intentionally shipped.
+config/*calibration*.npz
+!config/cctv_camera_calibration.npz
+!config/cctv0_camera_calibration.npz
+!config/cctv2_camera_calibration.npz
+models/*.pt
+!models/parking_vehicle_yolo11n_seg.pt
+
+# Runtime Fleet Parking Registry (SQLite and rollback/WAL sidecars).
+parking_registry.db
+parking_registry.db-*
+*.db-journal

@@ -239,7 +239,12 @@ def test_ultrasonic_node_tracks_absolute_axle_windows_from_vehicle_spec():
         Parameter("axle_position_tolerance_m", value=0.12),
     ])
     try:
-        assert node.detector.expected_first_position == pytest.approx(-0.35)
+        assert node.detector.expected_spacing == pytest.approx(0.785)
+        assert node.detector.expected_first_position == pytest.approx(
+            -0.785 / 2.0)
+        assert (node.detector.expected_first_position +
+                node.detector.expected_spacing) == pytest.approx(
+                    0.785 / 2.0)
         assert node.detector.position_tolerance == pytest.approx(0.12)
 
         node.vehicle_spec_cb(String(data='{"wheelbase": 0.80}'))

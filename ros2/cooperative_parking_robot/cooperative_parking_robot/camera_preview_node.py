@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""천장 카메라 여러 대를 브라우저에서 나란히 보는 경량 프리뷰.
+r"""천장 카메라 여러 대를 브라우저에서 나란히 보는 경량 프리뷰.
 
 무엇을 위한 노드인가
 --------------------
@@ -50,7 +50,7 @@
 
     # BEV까지 보기 (homography 경로를 직접 줄 때)
     ros2 run cooperative_parking_robot camera_preview --ros-args \\
-      -p homography_files_csv:='/home/me/.ros/adaptive_valet_bot/homography_cam0_rectified.npy,/home/me/.ros/adaptive_valet_bot/homography_cam2_rectified.npy' \\
+      -p homography_files_csv:='/path/cam0.npy,/path/cam2.npy' \\
       -p layout_yaml:='/home/me/.ros/adaptive_valet_bot/parking_layout.yaml'
 
     # 사람을 검출해 보기 (차가 없을 때 파이프라인 확인용)
@@ -89,13 +89,13 @@ import math
 import os
 
 import rclpy
+from geometry_msgs.msg import PoseStamped
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 
 from cooperative_parking_robot.aruco_utils import ArucoDetectorCompat
-from cooperative_parking_robot.vision_utils import load_yolo_model
 
 try:
     import cv2
@@ -165,6 +165,7 @@ _HTML = r'''<!doctype html>
     <button onclick="resetTrack()">이동 기준점 재설정</button>
     <span id="moved" class="badge">이동 추적 대기…</span>
     <span id="overlap" class="badge">겹침 확인 중…</span>
+    <span id="relpose" class="badge">상대 거리 확인 중…</span>
     <span id="yolo" class="badge">YOLO 확인 중…</span>
     <span id="hint" class="meta">영상 클릭 = 픽셀 좌표. ArUco 한 변 <b id="msize">0.18</b> m 기준.</span>
   </div>
@@ -221,8 +222,9 @@ async function boot(){
   CAMS.forEach((c,i)=>{ points[i]=[]; });
   if(info.bev && info.bev.ready){
     document.getElementById('bevgrid').innerHTML =
-      CAMS.map((c,i)=>`<div><div class="meta" style="margin-bottom:5px">${esc(c.label)}</div>
-        <img id="bev${i}" src="/bev/${i}" style="cursor:default;width:100%;display:block"></div>`).join('')
+      CAMS.map((c,i)=>`<div><div class="meta" style="margin-bottom:5px">
+        ${esc(c.label)}</div><img id="bev${i}" src="/bev/${i}"
+        style="cursor:default;width:100%;display:block"></div>`).join('')
       + `<div><div class="meta" style="margin-bottom:5px">합성 (정합 확인 · 드래그로 구역 지정)</div>
          <div id="bevwrap" style="position:relative;display:inline-block;width:100%">
            <img id="bevmerged" src="/bev/merged" style="cursor:crosshair;width:100%;display:block">
@@ -252,9 +254,11 @@ async function tick(){
     let size = c.width + '×' + c.height;
     let cls = 'ok';
     let note = '';
-    if(c.calib_width && (c.width !== c.calib_width || c.height !== c.calib_height)){
+    if(c.calib_width &&
+       (c.width !== c.calib_width || c.height !== c.calib_height)){
       cls = 'warn';
-      note = ' · <span class="warn">캘리브레이션 ' + c.calib_width + '×' + c.calib_height + '와 불일치</span>';
+      note = ' · <span class="warn">캘리브레이션 '
+        + c.calib_width + '×' + c.calib_height + '와 불일치</span>';
     }
     el.innerHTML = '<span class="'+cls+'">'+size+'</span> · '
       + c.fps.toFixed(1) + ' fps · ' + esc(c.topic) + note;
@@ -272,6 +276,25 @@ async function tick(){
                         + ` / 경로 ${(t.path_m*100).toFixed(1)}cm`);
     if(rows.length){ mb.className='badge good'; mb.innerHTML = rows.join(' · '); }
     else { mb.className='badge'; mb.textContent='이동 추적 대기 — 차량 미검출'; }
+  }
+
+  const rp = info.relative_pose, rpb = document.getElementById('relpose');
+  if(rpb && rp){
+    if(rp.fresh && rp.visible !== false){
+      rpb.className = 'badge good';
+      rpb.textContent = '거리 ' + (rp.forward_m*100).toFixed(1) + ' cm'
+        + ' · 좌우 ' + (rp.lateral_m*100).toFixed(1) + ' cm'
+        + ' · 틀어짐 ' + rp.yaw_deg.toFixed(1) + '°';
+    } else if(rp.visible === false){
+      rpb.className = 'badge bad';
+      rpb.textContent = '상대 pose: 마커 미검출';
+    } else if(!rp.configured){
+      rpb.className = 'badge';
+      rpb.textContent = '상대 pose: 토픽 미설정';
+    } else {
+      rpb.className = 'badge bad';
+      rpb.textContent = '상대 pose 대기 중';
+    }
   }
 
   const y = info.yolo, yb = document.getElementById('yolo');
@@ -809,6 +832,32 @@ def parse_yolo_regions(text):
     return regions
 
 
+def relative_pose_metrics(msg):
+    """Return the rear-to-front distance, lateral offset, and yaw."""
+    position = msg.pose.position
+    orientation = msg.pose.orientation
+    values = (
+        float(position.x), float(position.y), float(orientation.x),
+        float(orientation.y), float(orientation.z), float(orientation.w),
+    )
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError('relative pose contains non-finite values')
+    qx, qy, qz, qw = values[2:]
+    norm = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw)
+    if norm <= 1e-9:
+        raise ValueError('relative pose quaternion norm must be positive')
+    qx, qy, qz, qw = (value / norm for value in (qx, qy, qz, qw))
+    yaw = math.atan2(
+        2.0 * (qw * qz + qx * qy),
+        1.0 - 2.0 * (qy * qy + qz * qz))
+    return {
+        'forward_m': values[0],
+        'lateral_m': values[1],
+        'yaw_deg': math.degrees(yaw),
+        'frame_id': str(msg.header.frame_id),
+    }
+
+
 class CameraPreviewNode(Node):
     def __init__(self):
         super().__init__('camera_preview_node')
@@ -832,6 +881,10 @@ class CameraPreviewNode(Node):
         self.declare_parameter('marker_size_m', 0.18)
         # 검출은 매 프레임 할 필요가 없다. CPU를 아낀다.
         self.declare_parameter('aruco_every_n', 3)
+        # aruco_tracker_node가 보정된 카메라 행렬로 계산한 실제 상대 pose.
+        # 픽셀 기반 마커 품질 수치와 구분해 웹 상단에 거리/좌우/yaw를 표시한다.
+        self.declare_parameter('relative_pose_topic', '/sync/relative_pose')
+        self.declare_parameter('marker_visible_topic', '/sync/marker_visible')
         # --- BEV (bird's eye view) ---
         # 카메라별 homography로 바닥을 위에서 본 그림으로 편다. 두 카메라를
         # 겹쳐 보면 H 두 개가 같은 map 좌표계를 가리키는지 눈으로 확인된다.
@@ -901,9 +954,9 @@ class CameraPreviewNode(Node):
                   if t.strip()]
         if not topics:
             raise ValueError('image_topics_csv must not be empty')
-        labels = [l.strip() for l in
+        labels = [label.strip() for label in
                   str(self.get_parameter('labels_csv').value).split(',')
-                  if l.strip()]
+                  if label.strip()]
         if labels and len(labels) != len(topics):
             raise ValueError('labels_csv 길이가 image_topics_csv와 다릅니다')
         if not labels:
@@ -934,8 +987,9 @@ class CameraPreviewNode(Node):
                              if c.strip()}
         # YOLO 대상 카메라를 '등장 순서대로' 고정해 둔다. 스캔이 매번 같은
         # 순서로 돌아야 로그를 보고 동작을 따라갈 수 있다.
-        self._yolo_labels = [l for l in labels
-                             if not self.yolo_cameras or l in self.yolo_cameras]
+        self._yolo_labels = [label for label in labels
+                             if not self.yolo_cameras or
+                             label in self.yolo_cameras]
         self.yolo_switch_mode = str(
             self.get_parameter('yolo_switch_mode').value).strip().lower()
         if self.yolo_switch_mode not in ('off', 'region', 'mission'):
@@ -1014,6 +1068,24 @@ class CameraPreviewNode(Node):
         # 스트림 스레드가 남아 프로세스가 안 죽는다.
         self._stop_event = threading.Event()
         self._mask_shape = None
+        self.relative_pose_topic = str(
+            self.get_parameter('relative_pose_topic').value).strip()
+        self.marker_visible_topic = str(
+            self.get_parameter('marker_visible_topic').value).strip()
+        self.relative_pose = None
+        self.relative_pose_wall = 0.0
+        self.marker_visible = None
+        self.marker_visible_wall = 0.0
+        self._pose_subscription = None
+        self._visible_subscription = None
+        if self.relative_pose_topic:
+            self._pose_subscription = self.create_subscription(
+                PoseStamped, self.relative_pose_topic,
+                self.relative_pose_cb, qos_profile_sensor_data)
+        if self.marker_visible_topic:
+            self._visible_subscription = self.create_subscription(
+                Bool, self.marker_visible_topic,
+                self.marker_visible_cb, qos_profile_sensor_data)
         self.cameras = []
         for label, topic in zip(labels, topics):
             state = {
@@ -1081,6 +1153,22 @@ class CameraPreviewNode(Node):
                 f'{self.fleet_state_timeout_s:.1f} s 무소식이면 스캔)')
 
     # ------------------------------------------------------------------
+    def relative_pose_cb(self, msg):
+        try:
+            metrics = relative_pose_metrics(msg)
+        except ValueError as exc:
+            self.get_logger().warn(
+                f'상대 pose 무시: {exc}', throttle_duration_sec=5.0)
+            return
+        with self._lock:
+            self.relative_pose = metrics
+            self.relative_pose_wall = time.monotonic()
+
+    def marker_visible_cb(self, msg):
+        with self._lock:
+            self.marker_visible = bool(msg.data)
+            self.marker_visible_wall = time.monotonic()
+
     def image_cb(self, state, msg):
         try:
             frame = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
@@ -1204,6 +1292,10 @@ class CameraPreviewNode(Node):
         self.model_mode = str(self.get_parameter('model_mode').value)
         try:
             from ultralytics import YOLO
+            # 구형 현장 RPi 패키지는 vision_utils에 이 helper가 없다. 이번
+            # Rear 프리뷰처럼 YOLO를 끈 실행까지 import 단계에서 죽지 않도록
+            # 실제로 YOLO가 필요할 때만 불러온다.
+            from cooperative_parking_robot.vision_utils import load_yolo_model
             self.yolo, task = load_yolo_model(YOLO, model_path, self.model_mode)
             names = getattr(self.yolo, 'names', {}) or {}
             self.yolo_names = ({int(k): str(v) for k, v in names.items()}
@@ -1535,7 +1627,7 @@ class CameraPreviewNode(Node):
         return mode
 
     def _world_to_pixel(self, label, x, y):
-        """map 좌표(m)를 그 카메라의 영상 픽셀로. 바닥 평면 기준이다."""
+        """Map 좌표(m)를 그 카메라의 영상 픽셀로. 바닥 평면 기준이다."""
         inverse = self._world_to_pixel_H.get(label)
         if inverse is None:
             matrix = self.pixel_to_world_H.get(label)
@@ -1976,8 +2068,8 @@ class CameraPreviewNode(Node):
             snapshot = [(s['label'],
                          None if s['frame'] is None else s['frame'].copy())
                         for s in self.cameras]
-        usable = [(l, f) for l, f in snapshot
-                  if f is not None and l in self.homographies]
+        usable = [(label, frame) for label, frame in snapshot
+                  if frame is not None and label in self.homographies]
         if len(usable) < 2:
             return None
         (label_a, frame_a), (label_b, frame_b) = usable[0], usable[1]
@@ -2127,6 +2219,26 @@ class CameraPreviewNode(Node):
                             if now - state['detection_wall'] <= self.stale_after
                             else []),
                     })
+                pose = None if self.relative_pose is None \
+                    else dict(self.relative_pose)
+                pose_age = None if self.relative_pose_wall <= 0.0 \
+                    else max(0.0, now - self.relative_pose_wall)
+                visible_age = None if self.marker_visible_wall <= 0.0 \
+                    else max(0.0, now - self.marker_visible_wall)
+                visible = self.marker_visible \
+                    if (visible_age is not None and
+                        visible_age <= self.stale_after) else None
+            relative_pose = {
+                'configured': bool(self.relative_pose_topic),
+                'topic': self.relative_pose_topic,
+                'visible_topic': self.marker_visible_topic,
+                'fresh': bool(pose is not None and pose_age is not None and
+                              pose_age <= self.stale_after),
+                'visible': visible,
+                'age_s': pose_age,
+            }
+            if pose is not None:
+                relative_pose.update(pose)
             # 같은 ID가 두 카메라에 동시에 보이면 그 지점이 겹침 영역이다.
             seen = {}
             for cam in payload:
@@ -2148,6 +2260,7 @@ class CameraPreviewNode(Node):
                     }
                     for label, track in self.tracks.items()
                 },
+                'relative_pose': relative_pose,
                 'yolo': {
                     'ready': self.yolo is not None,
                     'error': self.yolo_error,
@@ -2314,7 +2427,8 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     node.destroy_node()
-    rclpy.shutdown()
+    if rclpy.ok():
+        rclpy.shutdown()
 
 
 if __name__ == '__main__':

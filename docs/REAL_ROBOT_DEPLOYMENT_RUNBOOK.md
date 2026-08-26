@@ -76,8 +76,9 @@ export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 
 플래시 대상은 `stm32/parking_robot` 하나다. CubeIDE에서 Existing Projects
 into Workspace로 import하고, `parking_robot_firmware.c`가 포함된 ARM build가
-성공하는지 확인한 뒤 모터 전원을 분리한 상태로 두 보드에 플래시한다. UART
-115200 8N1의 heartbeat/ACK, encoder와 ultrasonic frame을 먼저 확인한다.
+성공하는지 확인한 뒤 메인 전원을 끈 상태로 두 보드에 플래시한다. 로봇 공통
+전원이 필요한 검증은 모든 바퀴를 견고하게 띄운 뒤 수행하고, UART 115200 8N1의
+heartbeat/ACK, encoder와 ultrasonic frame을 먼저 확인한다.
 
 펌웨어 소스의 현재 `ENCODER_PPR`은 `5182.0f`지만 운용값으로 고정해 믿지 않는다.
 로봇별 출력축 1회전 count를 측정하고 ROS `encoder_ppr`와 해당 보드 펌웨어 값을
@@ -87,7 +88,9 @@ into Workspace로 import하고, `parking_robot_firmware.c`가 포함된 ARM buil
 
 - HC-SR04 ECHO 5 V를 STM32에 직접 연결하지 않고 3.3 V level shifter 또는
   검증된 저항분압을 사용한다.
-- 모터, servo, 연산 전원을 분리 분기하고 적정 fuse와 차단기를 둔다.
+- 현재 조립 상태는 단일 메인 전원이라 RPi/카메라와 motor rail을 독립적으로
+  ON/OFF할 수 없다. 적정 fuse와 비상정지를 확인하고 정적 통전 시 전 바퀴를
+  띄운다.
 - RPi, STM32와 motor driver는 공통 GND를 사용한다. servo를 RPi 5 V pin에서
   공급하지 않는다.
 - 물리 ESTOP이 motor power를 실제 차단하는지 시험한다. 소프트웨어 ESTOP은
@@ -112,6 +115,86 @@ ls -l /dev/v4l/by-path/
 marker 역할을 다시 확인한다. Rear 카메라는 가능하면 by-path를 지원하는 외부 ROS
 camera driver로 열고 `enable_rear_camera:=false`로 연결한다.
 
+현장 로봇 카메라 기준은 다음과 같다. 개발 PC에 보관한 원본은
+`/home/guitest/ov2710_calib_23mm_*.npz`이고, 로봇에서 실행할 때는 각 로봇
+사용자의 `$HOME`에 필요한 파일을 복사한다.
+
+- Rear `robot-1`: 흰색 OV2710, 640x480,
+  `$HOME/ov2710_calib_23mm_white.npz` 배포·존재 확인 완료
+- Front `robot-2`: 검은색 OV2710, 640x480,
+  원본 `ov2710_calib_23mm_black.npz` (현재 상대 pose 제어에는 미사용·미배포)
+
+### Rear ID0 간편 정적시험
+
+현재 전원은 motor rail만 따로 끌 수 없다. 공통 전원을 켜기 전에 robot-1을
+견고한 받침대에 올려 네 바퀴를 모두 띄우고, 작업구역을 비우며 물리 ESTOP에
+즉시 접근할 수 있게 한다. 운용 domain 42와 분리된 domain에서 다음
+perception-only launch만 실행한다. 이 launch에는 STM32 bridge, 상태기계,
+motion controller와 `cmd_vel` publisher가 없고, 실시간 ArUco 진단 화면을
+5005번 포트로 함께 제공한다.
+
+```bash
+source /opt/ros/humble/setup.bash
+source "$HOME/cooperative_parking_robot_ws/install/setup.bash"
+export ROS_DOMAIN_ID=142
+
+ros2 launch cooperative_parking_robot rear_aruco_static_check.launch.py
+```
+
+robot-1 자체 브라우저에서는 `http://127.0.0.1:5005`, 같은 내부망의 노트북에서는
+`http://ROBOT1_IP:5005`를 연다. 화면에는 640x480 영상과 FPS, 중심 십자선,
+검출된 marker ID·테두리·픽셀 크기·찌그러짐 정도가 실시간으로 표시된다. 웹
+상단의 `거리`는 두 로봇 진행축 방향 간격, `좌우`는 중심선 오차, `틀어짐`은
+상대 yaw이며, 이 세 값은 tracker의 `/sync/relative_pose`에서 가져온다. ID0
+테두리와 상단 상대 pose 배지가 안정적으로 초록색에 가깝게 유지되는지 먼저
+확인한다. 픽셀 표의 `각도오차`는 마커 사각형의 영상 왜곡 지표이므로 로봇 간
+`틀어짐`과는 다른 값이다.
+
+흰색 카메라가 `/dev/video0`이 아니면 확인한 안정 경로를 지정한다.
+
+```bash
+ros2 launch cooperative_parking_robot rear_aruco_static_check.launch.py \
+  camera_device:=/dev/v4l/by-path/REPLACE_WITH_WHITE_CAMERA-video-index0
+```
+
+다른 터미널에도 같은 `ROS_DOMAIN_ID=142`를 적용하고 다음만 확인한다.
+
+```bash
+ros2 node list
+ros2 topic list | grep cmd_vel
+ros2 topic echo /sync/marker_visible
+ros2 topic echo --once /sync/relative_pose
+```
+
+정상 상태에서는 실행 노드가 카메라, tracker와 진단 preview뿐이고 `cmd_vel`
+검색 결과가 없어야 한다. 50 mm ID0을 카메라 정면 약 0.30 m에 두면
+`marker_visible=true`,
+`frame_id=rear_base`, `position.x`가 약 0.30 m로 나온다. 중앙·평행 배치에서는
+`position.y`와 yaw가 0에 가까워야 한다. 값이 다르면 motion launch로 넘어가지
+않고 영상, 실제 검은 정사각형 크기, 카메라 해상도와 장착 방향부터 확인한다.
+
+### 두 로봇 10 cm 협동 직진 시험
+
+Rear ID0 정적시험과 양쪽 STM32 바퀴 공중 방향시험이 모두 통과한 다음에는 전체
+주차 상태기계 대신 전용 협동 직진 launch를 사용한다. robot-2 Front에서는
+STM32 bridge만, robot-1 Rear에서는 흰색 카메라·ArUco·Rear bridge·시험
+대시보드만 실행된다. `rigid_body_sync`, `individual_move`, state machine과
+그리퍼 제어는 실행되지 않는다.
+
+브라우저에서 `http://robot-1.local:5006/`을 열면 카메라 화면, ArUco 거리·좌우·
+상대 각도, 양쪽 hardware/manual/odometry 상태, 현재 명령과 정지 이유를 한 번에
+볼 수 있다. 기본 상태는 정지이며 `시험 준비` 후 `10 cm 시작`을 눌러야 움직인다.
+간격·좌우 3 cm, 상대 각도 5도, 양쪽 이동거리 차이 3 cm, 센서 freshness와
+4초 timeout을 넘으면 0속도를 유지한다. 구체적인 양쪽 명령과 공중→바닥 순서는
+[두 로봇 10 cm 협동 직진 시험](../ros2/cooperative_parking_robot/docs/COOPERATIVE_DRIVE_TEST.md)을
+따른다.
+
+직진 시험을 통과한 뒤에는 별도
+[키보드 ArUco 추종 시험](../ros2/cooperative_parking_robot/docs/KEYBOARD_FOLLOW_TEST.md)을
+사용할 수 있다. 이 모드는 준비 순간의 ArUco forward 값을 차량 축간 거리의 정확한
+목표로 저장하며, 로봇 길이나 명목 wheelbase를 더하지 않는다. 5006 직진 제어기와
+5007 키보드 추종 제어기를 동시에 실행하지 않는다.
+
 Jetson runtime asset은 `~/.ros/adaptive_valet_bot/`에 둔다.
 
 ```text
@@ -128,8 +211,9 @@ Homography와 등록 layout이 준비되기 전에는 motion을 허용하지 않
 
 ## 4. 분산 기동
 
-작업구역을 비우고 모터 전원을 끈 상태에서 Jetson → Rear → Front 순서로
-기동한다. Production marker는 Front 상판 **ID10**, Rear 상판 **ID11**, Rear
+현재는 motor rail만 따로 끌 수 없으므로, 작업구역을 비우고 두 로봇의 모든
+바퀴를 견고하게 띄운 상태에서 공통 전원을 인가한 뒤 Jetson → Rear → Front
+순서로 기동한다. Production marker는 Front 상판 **ID10**, Rear 상판 **ID11**, Rear
 카메라가 보는 Front 후면 상대 marker **ID0**이다. 실험용 ID2/ID3을 production
 launch나 asset에 사용하지 않는다.
 
@@ -267,7 +351,8 @@ ros2 topic info /parking/map --verbose
 
 양쪽 `hardware_ready=true`, fresh sensor/localization, 단일 `/parking/map`
 publisher, 올바른 marker 역할, 등록된 layout, fault 없는 Fleet/UI를 확인한 뒤에만
-모터 전원을 인가한다. 단계별 시험 gate를 건너뛰지 않는다.
+로봇을 받침대에서 내려 바닥 시험으로 넘어간다. 공통 전원이 이미 인가된 동안에는
+받침대를 제거하지 않는다. 단계별 시험 gate를 건너뛰지 않는다.
 
 ## 6. 7인치 UI와 Registry
 

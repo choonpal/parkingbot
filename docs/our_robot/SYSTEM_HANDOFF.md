@@ -121,7 +121,9 @@ watchdog은 250 ms, heartbeat timeout은 300 ms다. ROS와 firmware에는 실제
 - 물리 ESTOP과 모터 전원 차단이 소프트웨어 정지보다 우선한다.
 - `hardware_ready=false`이면 구동하지 않는다.
 - HC-SR04 ECHO 5 V는 level shifter 또는 검증된 분압을 거친다.
-- 모터·servo·연산 전원을 분리하고 공통 GND와 fuse를 둔다.
+- 현재 로봇은 단일 메인 전원 구조라 RPi/카메라와 motor rail을 독립적으로
+  ON/OFF할 수 없다. 공통 GND와 fuse를 확인하고, 정적 통전 시험은 모든 바퀴를
+  띄운 뒤 격리 ROS domain과 perception-only 노드로만 수행한다.
 - `GRIP_DONE`은 servo 목표각 도달일 뿐 실제 파지나 하중을 증명하지 않는다.
 - 카메라 intrinsic, Homography와 layout을 현장에서 검증하기 전에는 주행하지 않는다.
 - STM32 ESTOP은 latch되며 원인 제거 후 전원을 재인가해야 한다.
@@ -129,9 +131,12 @@ watchdog은 250 ms, heartbeat timeout은 300 ms다. ROS와 firmware에는 실제
 
 ## 7. 현재 하드웨어 상태
 
+- 메인 스위치/비상정지가 전체 전원을 함께 제어하며 별도 motor-power enable은
+  없다. 따라서 `motor OFF + camera/UART ON` 절차는 현재 하드웨어에서 불가능하다.
 - Front(`robot-2`): ROS bridge, 잭업 폐루프 3축 주행과 무하중 저속 바닥
   주행까지 확인했다.
-- Rear(`robot-1`): 교체 STM32 배포·검증과 협동 주행 검증이 남아 있다.
+- Rear(`robot-1`): 교체 STM32 배포 뒤 2026-08-25 정상 단독 주행을 사용자가
+  확인했다. 협동 시험 직전 잭업 재확인과 두 로봇 협동 주행 검증은 남아 있다.
 - 두 로봇의 빈손 동기주행, 초음파 차축 반복정밀도, 보호 지그 저하중,
   park→retrieve 전체 실차 cycle은 순서대로 검증해야 한다.
 
@@ -146,7 +151,7 @@ watchdog은 250 ms, heartbeat timeout은 300 ms다. ROS와 firmware에는 실제
    기동을 준비한다.
 4. [Pipeline](../pipeline.md)에 따라 intrinsic, Homography, layout과
    preflight를 완료한다.
-5. 모터 전원 OFF → 잭업 → 로봇 1대 → 두 로봇 빈손 → 초음파 → 무부하
-   grip → 보호 지그 저하중 순서를 지킨다.
+5. 공통 전원 OFF에서 잭업·작업구역 격리 → perception-only 통전 → 로봇 1대 →
+   두 로봇 빈손 → 초음파 → 무부하 grip → 보호 지그 저하중 순서를 지킨다.
 
 로그인 정보, 내부 IP와 장치 일련번호는 공개 저장소 문서에 기록하지 않는다.

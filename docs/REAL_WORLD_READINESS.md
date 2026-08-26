@@ -16,6 +16,11 @@ localization, 초음파 정렬, 결합 footprint A*, UI 승인과 SQLite Registr
 - 보호 지그 저하중 park/retrieve: 모든 interlock과 단계 gate 통과 후 조건부
 - 사람 없는 무인 차량 인양·운반: **현재 NO-GO**
 
+현재 로봇은 메인 전원이 RPi/카메라와 모터 계통에 함께 인가되며 motor rail만
+독립적으로 켜고 끌 수 없다. 그러므로 정적 인지/UART 시험도 바닥에서 수행하지
+않고, 모든 바퀴를 견고하게 띄운 상태에서 격리 ROS domain과 perception-only
+노드만 사용한다.
+
 특정 test 개수를 합격 근거로 쓰지 않는다. 목표 Humble 환경에서 다음 명령이
 실제로 성공하고 결과가 검토돼야 하는 software gate다.
 
@@ -39,7 +44,9 @@ localization, 초음파 정렬, 결합 footprint A*, UI 승인과 SQLite Registr
 - `enable_serial`, `require_serial`, `require_hardware_ready`,
   `require_ultrasonic_for_ready`가 실차 안전값이 아님
 - `use_aruco_distance=true`인데 중심간 거리와 offset을 실측하지 않음
-- 물리 ESTOP, fuse, 전원 분리, 공통 GND 또는 HC-SR04 5 V level protection이 없음
+- 물리 ESTOP, fuse, 공통 GND 또는 HC-SR04 5 V level protection이 없음
+- 단일 메인 전원 상태에서 바퀴를 띄우지 않거나, 격리 ROS domain·구동 노드
+  미실행·`cmd_vel` publisher 0개를 확인하지 않고 정적 통전 시험을 시작함
 - 실제 파지/하중 확인 수단이 없음. `GRIP_DONE`만으로는 통과할 수 없음
 - UART, command, sensor, pose 또는 camera 단절 시 정지가 미검증
 - 단계시험 실패가 남아 있거나 보호 지그와 사람 감독이 없음
@@ -47,16 +54,20 @@ localization, 초음파 정렬, 결합 footprint A*, UI 승인과 SQLite Registr
 
 ## 단계 gate
 
-한 단계가 실패하면 다음 단계는 NO-GO다. 초기 바닥 속도는 0.03~0.05 m/s로
-제한한다.
+한 단계가 실패하면 다음 단계는 NO-GO다. 초기 바닥 명령은 현재 펌웨어에서
+바퀴가 덜컥거리지 않고 확인된 12 rpm 상당의 `0.0628 m/s`를 쓰되, 10 cm·4초
+전용 시험 한도 밖으로 늘리지 않는다. 단순히 더 낮은 명령을 안전하다고 간주하지
+않고 모터가 실제로 부드럽게 회전하는 구간인지 바퀴 공중시험에서 먼저 확인한다.
 
-1. **정적 전기** — 물리 ESTOP이 motor power를 차단하고, HC-SR04 ECHO는 3.3 V로
-   보호되며, 모터/servo/연산 전원 분리·fuse·공통 GND가 확인됨
-2. **UART only, motor OFF** — heartbeat/ACK와 sensor frame이 안정적이고 command
-   무갱신 250 ms 및 heartbeat 단절 300 ms 정지가 확인됨
+1. **정적 전기** — 단일 메인 전원 제약을 확인하고 모든 바퀴를 견고하게 띄운 뒤,
+   물리 ESTOP 차단, HC-SR04 3.3 V 보호, fuse와 공통 GND가 확인됨
+2. **Perception/UART only, common power ON** — 격리 ROS domain에서 motion node와
+   `cmd_vel` publisher가 0개이며 heartbeat/ACK와 sensor frame이 안정적이고,
+   command 무갱신 250 ms 및 heartbeat 단절 300 ms의 PWM 0이 확인됨
 3. **바퀴별 jack-up** — 네 motor command sign과 encoder sign, ESTOP PWM 0 확인
 4. **로봇별 빈 차체 저속** — 전후·횡·회전, odometry 축척, sensor/pose timeout 확인
-5. **두 로봇 빈손** — Front-first 접근, 상대 yaw, 간격 유지와 marker 손실 정지 확인
+5. **두 로봇 빈손** — 먼저 전용 10 cm 협동 직진 시험으로 상대 yaw, 간격 유지,
+   marker/odom 손실 정지를 확인한 뒤 Front-first 접근으로 진행
 6. **초음파/servo 무부하** — 차축 중심 반복성, offset/sign, 간섭과 ESTOP hold 확인
 7. **보호 지그 저하중** — 실제 파지/하중 sensor, 미끄럼·낙하 방지와 전원 차단 확인
 8. **전체 cycle** — park→양쪽 HOME→Fleet restart→인증 retrieve→양쪽 HOME,
@@ -79,7 +90,8 @@ localization, 초음파 정렬, 결합 footprint A*, UI 승인과 SQLite Registr
       ROS/firmware를 일치시킴
 - [ ] 좌우 ultrasonic-to-gripper offset, lateral sign, threshold와 freshness 확인
 - [ ] 실차 launch 안전 flag와 `use_aruco_distance=false` 확인
-- [ ] 물리 ESTOP, 전원 분리, fuse, 공통 GND, level shift와 보호 지그 확인
+- [ ] 단일 메인 전원 제약, 물리 ESTOP, fuse, 공통 GND, level shift, 전 바퀴
+      공중 고정과 보호 지그 확인
 - [ ] software와 단계 gate 1~8 결과를 현장 기록으로 검토
 - [ ] `GRIP_DONE`과 독립된 실제 파지/하중 확인 수단 확보
 

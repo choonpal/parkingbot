@@ -19,7 +19,10 @@ def test_package_and_setup_versions_match():
     setup_text = (ROOT / 'setup.py').read_text()
     setup_version = re.search(r"version='([^']+)'", setup_text).group(1)
     assert package_version == setup_version == '1.11.0'
-    assert "tests_require=['pytest']" in setup_text
+    test_dependencies = {
+        element.text for element in package_root.findall('test_depend')}
+    assert 'ament_pytest' in test_dependencies
+    assert 'tests_require' not in setup_text
 
 
 def test_package_declares_humble_launch_runtime():
@@ -126,22 +129,33 @@ def test_console_entry_points_and_launch_executables_resolve():
     import ast
 
     setup_text = (ROOT / 'setup.py').read_text()
-    # setup.py 는 긴 진입점을 괄호로 여러 줄에 나눠 적는다. 줄바꿈과 따옴표를
-    # 먼저 지워 한 줄로 만든 뒤 찾아야 그런 항목도 잡힌다.
-    flattened = re.sub(r"'\s*\n\s*'", '', setup_text)
-    entries = dict(re.findall(
-        r"'([a-zA-Z0-9_]+) = cooperative_parking_robot\."
-        r"([a-zA-Z0-9_.]+):[a-zA-Z0-9_]+'",
-        flattened))
+    setup_tree = ast.parse(setup_text)
+    setup_call = next(
+        node for node in ast.walk(setup_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == 'setup')
+    entry_points = next(
+        keyword.value for keyword in setup_call.keywords
+        if keyword.arg == 'entry_points')
+    console_scripts = next(
+        value for key, value in zip(entry_points.keys, entry_points.values)
+        if isinstance(key, ast.Constant) and key.value == 'console_scripts')
+    entries = {}
+    for element in console_scripts.elts:
+        spec = element.value
+        executable, target = (part.strip() for part in spec.split('=', 1))
+        module_name, function_name = target.rsplit(':', 1)
+        entries[executable] = (module_name, function_name)
     assert entries
 
-    for executable, module_name in entries.items():
-        module_path = (ROOT / 'cooperative_parking_robot' /
-                       (module_name.split('.')[0] + '.py'))
+    for executable, (module_name, function_name) in entries.items():
+        module_path = ROOT / (module_name.replace('.', '/') + '.py')
         assert module_path.is_file(), executable
         tree = ast.parse(module_path.read_text())
         # 진입 함수 이름은 main 이 아닐 수 있다 (예: cctv_merge_main)
         assert any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                   and node.name == function_name
                    for node in tree.body), executable
 
     launch_executables = set()

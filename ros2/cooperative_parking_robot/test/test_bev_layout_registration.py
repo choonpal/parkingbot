@@ -27,10 +27,14 @@ def test_checked_in_site_layout_matches_measured_map_and_zones():
     fleet = parsed['fleet_manager_node']['ros__parameters']
     merge = parsed['cctv_merge_node']['ros__parameters']
 
-    assert vision['map_width_m'] == pytest.approx(4.40)
-    assert vision['map_height_m'] == pytest.approx(3.83)
-    assert merge['map_width_m'] == pytest.approx(4.40)
-    assert merge['map_height_m'] == pytest.approx(3.83)
+    assert vision['map_origin_x_m'] == pytest.approx(-0.40)
+    assert vision['map_origin_y_m'] == pytest.approx(-0.80)
+    assert vision['map_width_m'] == pytest.approx(4.80)
+    assert vision['map_height_m'] == pytest.approx(4.63)
+    assert merge['map_origin_x_m'] == pytest.approx(-0.40)
+    assert merge['map_origin_y_m'] == pytest.approx(-0.80)
+    assert merge['map_width_m'] == pytest.approx(4.80)
+    assert merge['map_height_m'] == pytest.approx(4.63)
     assert vision['waiting_polygon'] == pytest.approx(
         [0.0, 0.0, 1.2, 0.0, 1.2, 0.8, 0.0, 0.8])
     assert vision['robot_start_polygon'] == pytest.approx(

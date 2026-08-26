@@ -334,7 +334,7 @@ def test_single_camera_defaults_are_unchanged():
 
 
 def test_only_one_publisher_owns_each_mission_topic():
-    """sensor 인스턴스는 /parking/* publisher를 아예 만들지 않아야 한다."""
+    """Sensor 인스턴스는 /parking/* publisher를 아예 만들지 않아야 한다."""
     source = (ROOT / 'cooperative_parking_robot/yolo_bev_map_node.py').read_text()
     assert 'if self.publish_mission_outputs:' in source
     assert 'self.pub_map = None' in source

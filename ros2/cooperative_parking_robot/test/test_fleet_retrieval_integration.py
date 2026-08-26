@@ -74,6 +74,8 @@ def request_harness(registry):
     fleet.destination_kind = ''
     fleet.active_parking_direction = ''
     fleet.active_vehicle_spec = None
+    fleet.grid = [0]
+    fleet.current_virtual_start = lambda: Pose2D(0.0, 0.0, 0.0)
     fleet.publish_count = 0
     fleet.publish_state = lambda: setattr(
         fleet, 'publish_count', fleet.publish_count + 1)
@@ -231,6 +233,20 @@ def test_retrieve_request_accepts_only_complete_forward_occupied_record():
     assert fleet.registry.lifecycle('A1') is SlotLifecycle.EXIT_RESERVED
     assert fleet.target_pose == POSE
     assert fleet.publish_count == 1
+
+
+def test_retrieve_request_requires_map_and_fresh_odometry():
+    fleet = request_harness(occupied())
+    fleet.grid = None
+    fleet._handle_retrieve_request(authenticated_request())
+    assert fleet.request_status['reason'] == 'MAP_MISSING'
+    assert fleet.registry.lifecycle('A1') is SlotLifecycle.OCCUPIED
+
+    fleet = request_harness(occupied())
+    fleet.current_virtual_start = lambda: None
+    fleet._handle_retrieve_request(authenticated_request())
+    assert fleet.request_status['reason'] == 'ODOM_MISSING_OR_STALE'
+    assert fleet.registry.lifecycle('A1') is SlotLifecycle.OCCUPIED
 
 
 def test_wait_lift_refreshes_retrieve_target_for_sequential_rear():
@@ -519,6 +535,8 @@ def test_complete_park_home_ui_retrieve_home_cycle():
     fleet._retrieve_approach_preflight = lambda record: True
     fleet._apply_active_vehicle_spec = lambda: None
     fleet._publish_retrieve_target = lambda pose: pose
+    fleet.grid = [0]
+    fleet.current_virtual_start = lambda: Pose2D(0.0, 0.0, 0.0)
     fleet._handle_retrieve_request(authenticated_request(
         request_id='ui-retrieve'))
     retrieve_id = fleet.mission_id

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""
+"""ROS2 ↔ STM32 UART bridge.
+
 ==================================================
 stm32_bridge_node.py (role: front/rear)
 ==================================================
@@ -183,6 +184,10 @@ class Stm32BridgeNode(Node):
             String, f'/{self.role}/hardware_status', 10)
         self.pub_ready = self.create_publisher(
             Bool, f'/{self.role}/hardware_ready', 10)
+        # 수동 제어 요청이 실제로 이 bridge까지 도착했는지 시험 제어기가
+        # 확인할 수 있는 명시적 ACK.  주기 발행하므로 늦게 연결된 peer도 받는다.
+        self.pub_manual_active = self.create_publisher(
+            Bool, f'/{self.role}/manual_active', 10)
         self.pub_ultrasonic = {
             side: self.create_publisher(
                 Range, f'/{self.role}/ultrasonic_{side}',
@@ -264,6 +269,8 @@ class Stm32BridgeNode(Node):
         elif not msg.data and was_enabled:
             self.publish_status('INFO,MANUAL_MODE_OFF')
             self.get_logger().info(f'[{self.role}] manual override OFF')
+        self.pub_manual_active.publish(Bool(
+            data=self.command_arbiter.manual_enabled))
 
     def send_velocity_loop(self):
         """50Hz로 STM32에 속도 송신. cmd가 오래되면 감쇠."""
@@ -440,6 +447,8 @@ class Stm32BridgeNode(Node):
 
         ready = uart_ready and ultrasonic_ready
         self.pub_ready.publish(Bool(data=ready))
+        self.pub_manual_active.publish(Bool(
+            data=self.command_arbiter.manual_enabled))
 
         stale = self.require_ultrasonic_for_ready and not ultrasonic_ready
         if stale and not self.ultrasonic_stale_reported:

@@ -249,9 +249,13 @@ class PoseEKF:
         self.yaw = _ang_norm(self.yaw + dyaw)
 
         # Joseph form: 수치적으로 더 안정적 (P가 반정치를 잃는 것 방지)
-        I = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
-        IKH = _mat_sub(I, K)  # H=I이므로 KH=K
-        term1 = _mat_mul(_mat_mul(IKH, self.P), _mat_transpose(IKH))
+        identity = [[1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0]]
+        identity_minus_gain = _mat_sub(identity, K)  # H=I이므로 KH=K
+        term1 = _mat_mul(
+            _mat_mul(identity_minus_gain, self.P),
+            _mat_transpose(identity_minus_gain))
         term2 = _mat_mul(_mat_mul(K, R), _mat_transpose(K))
         self.P = _mat_add(term1, term2)
 

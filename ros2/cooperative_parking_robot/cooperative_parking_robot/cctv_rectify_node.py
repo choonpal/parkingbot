@@ -38,6 +38,9 @@ class CctvRectifyNode(Node):
         # the live stream uses the exact calibration resolution.
         self.declare_parameter('calibration_width_px', 0)
         self.declare_parameter('calibration_height_px', 0)
+        self.declare_parameter('expected_width_px', 0)
+        self.declare_parameter('expected_height_px', 0)
+        self.declare_parameter('require_exact_resolution', False)
 
         if not DEPS_OK:
             raise RuntimeError(
@@ -49,10 +52,24 @@ class CctvRectifyNode(Node):
             self.get_parameter('calibration_width_px').value)
         self.calibration_height = int(
             self.get_parameter('calibration_height_px').value)
+        self.expected_width = int(
+            self.get_parameter('expected_width_px').value)
+        self.expected_height = int(
+            self.get_parameter('expected_height_px').value)
+        self.require_exact_resolution = bool(
+            self.get_parameter('require_exact_resolution').value)
         if bool(self.calibration_width) != bool(self.calibration_height):
             raise ValueError(
                 'calibration_width_px and calibration_height_px must both be '
                 'zero or both be positive')
+        if bool(self.expected_width) != bool(self.expected_height):
+            raise ValueError(
+                'expected_width_px and expected_height_px must both be zero '
+                'or both be positive')
+        if (self.require_exact_resolution and
+                (self.expected_width <= 0 or self.expected_height <= 0)):
+            raise ValueError(
+                'require_exact_resolution needs positive expected dimensions')
 
         calib_path = str(self.get_parameter('camera_calib').value)
         try:
@@ -130,6 +147,16 @@ class CctvRectifyNode(Node):
     def image_cb(self, msg: Image) -> None:
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
         height, width = frame.shape[:2]
+        if (self.require_exact_resolution and
+                (width != self.expected_width or
+                 height != self.expected_height)):
+            self.get_logger().error(
+                'CCTV frame resolution mismatch; dropping frame to protect '
+                'the calibrated Homography coordinate system: '
+                f'expected={self.expected_width}x{self.expected_height}, '
+                f'actual={width}x{height}',
+                throttle_duration_sec=5.0)
+            return
         self._ensure_maps(width, height)
         rectified = cv2.remap(
             frame,

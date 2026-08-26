@@ -6,6 +6,10 @@ if [[ "${ROS_DISTRO:-}" != "humble" ]]; then
   exit 2
 fi
 
+# ROS 2 Humble binaries use Ubuntu's Python 3.10 stack. A newer ~/.local
+# setuptools can make colcon report success after collecting zero tests.
+export PYTHONNOUSERSITE=1
+
 for cmd in ros2 rosdep colcon; do
   command -v "$cmd" >/dev/null 2>&1 || {
     echo "ERROR: required command not found: $cmd" >&2
@@ -27,7 +31,12 @@ colcon build --symlink-install --packages-select cooperative_parking_robot
 # shellcheck disable=SC1091
 source install/setup.bash
 colcon test --packages-select cooperative_parking_robot --event-handlers console_direct+
-colcon test-result --verbose
+test_result="$(colcon test-result --verbose)"
+printf '%s\n' "$test_result"
+if grep -Eq 'Summary:[[:space:]]+0 tests' <<<"$test_result"; then
+  echo "ERROR: colcon collected zero tests" >&2
+  exit 1
+fi
 ros2 pkg executables cooperative_parking_robot
 
 echo "HUMBLE BUILD/TEST: PASS"

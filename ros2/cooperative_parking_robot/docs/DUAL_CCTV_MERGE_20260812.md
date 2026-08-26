@@ -1,7 +1,10 @@
 # 천장 CCTV 2대 병합 (v1.11, 2026-08-12)
 
-> 이 문서의 출차 미구현 표기는 CCTV 병합 완료 당시의 이력이다. 현재 출차
-> 통합 계약은 `docs/RETRIEVAL_MISSION_INTEGRATION_PLAN.md`를 따른다.
+> **과거 기록 — v1.11/2026-08-12 CCTV 병합 스냅샷.** 이 문서의 출차 미구현 표기와
+> `/dev/video0`, `/dev/video2` 사용 예시는 당시 이력이다. 현재 운용은
+> 저장소의 `docs/REAL_ROBOT_DEPLOYMENT_RUNBOOK.md`와 `docs/pipeline.md`을 따르며,
+> 숫자 장치 ID가 아닌 안정적인
+> `/dev/v4l/by-path/...` 경로를 사용한다.
 
 `/dev/video0`, `/dev/video2` 두 대의 천장 카메라를 임의 간격으로 설치하고, 두 시야가 겹치는 구간을 포함해 **하나의 map으로 합치는** 기능을 추가했다.
 
@@ -486,7 +489,7 @@ ros2 topic info /front/cctv_pose --verbose | grep "Publisher count"
 | `duplicate_center_blend` | 0.0 | 0이면 광축 가까운 카메라 값만 사용(권장). 경계에서 위치가 튀면 0.2~0.3 |
 | `camera_timeout_s` | 1.0 | 이 시간 넘게 envelope이 없으면 그 카메라를 죽은 것으로 판단 |
 | `merge_rate_hz` | 10.0 | 병합 주기 |
-| `require_all_cameras` | false | true면 한 대만 죽어도 `/parking/*` 발행 중단(더 보수적) |
+| `require_all_cameras` | 당시 false, 현재 true | 현재 production은 한 대만 죽어도 mission output을 즉시 fail-closed |
 | `require_full_slot_coverage` | false | true면 슬롯 네 모서리가 모두 한 카메라에 들어와야 판정(더 보수적) |
 | `coverage_margin_px` | 8.0 | 영상 테두리 왜곡 잔차가 크면 ↑ |
 | `selection_hold_s` | 0.30 | 마커 pose가 두 카메라 사이에서 자주 튀면 ↑ |

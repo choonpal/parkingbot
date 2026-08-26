@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
+from typing import Any, Callable
 from typing import Iterable, Optional, Sequence, Tuple
 
 
@@ -29,6 +31,22 @@ def normalize_model_mode(value: str) -> str:
             "model_mode must be 'vehicle_seg', 'parking_seg' or 'coco', "
             f'got {value!r}')
     return aliases[mode]
+
+
+def load_yolo_model(
+        yolo_factory: Callable[..., Any], model_path: str,
+        model_mode: str):
+    """Load a local Ultralytics model without triggering a network download."""
+    path = Path(str(model_path)).expanduser()
+    if not path.is_file():
+        raise FileNotFoundError(
+            'YOLO requires a local model file; network download is disabled: '
+            f'{path}')
+    mode = normalize_model_mode(model_mode)
+    task = 'segment' if mode in ('vehicle_seg', 'parking_seg') else None
+    if task is None:
+        return yolo_factory(str(path)), task
+    return yolo_factory(str(path), task=task), task
 
 
 def polygon_area(points: Sequence[Sequence[float]]) -> float:

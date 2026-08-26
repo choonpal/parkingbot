@@ -198,7 +198,7 @@ class Stm32BridgeNode(Node):
 
         # ===== 루프 =====
         self.create_timer(0.02, self.read_serial)       # UART 수신
-        self.create_timer(0.02, self.send_velocity_loop) # 속도 송신 50Hz (감쇠 포함)
+        self.create_timer(0.02, self.send_velocity_loop)  # 속도 송신 50Hz (감쇠 포함)
         self.create_timer(0.1, self.send_heartbeat)     # heartbeat 10Hz
         self.create_timer(0.2, self.publish_hardware_state)
 

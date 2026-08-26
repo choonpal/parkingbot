@@ -542,6 +542,37 @@ def slot_observability(
     return result
 
 
+def coverage_grid_values(
+        width: int, height: int, resolution: float,
+        coverage_polygons: Mapping[
+            str, Optional[Sequence[Sequence[float]]]]) -> List[int]:
+    """Return an OccupancyGrid base layer: observed=free, unseen=unknown.
+
+    The grid origin is ``(0, 0)`` and each cell is classified at its centre.
+    Obstacles are intentionally not painted here; the merge node adds them
+    after constructing this conservative observation mask.
+    """
+    width = int(width)
+    height = int(height)
+    resolution = float(resolution)
+    if width <= 0 or height <= 0 or not math.isfinite(resolution) or resolution <= 0:
+        raise ValueError('grid width/height/resolution must be positive')
+    polygons = [
+        polygon for polygon in coverage_polygons.values()
+        if polygon is not None and len(polygon) >= 3
+    ]
+    values = [-1] * (width * height)
+    for gy in range(height):
+        y_m = (gy + 0.5) * resolution
+        row = gy * width
+        for gx in range(width):
+            x_m = (gx + 0.5) * resolution
+            if any(point_in_polygon(x_m, y_m, polygon)
+                   for polygon in polygons):
+                values[row + gx] = 0
+    return values
+
+
 # ======================================================================
 # 5. 타겟 latch / 차량 치수 (단일 카메라 노드와 동일 규칙)
 # ======================================================================
@@ -578,10 +609,22 @@ class TargetLatchTracker:
         self.just_latched = False
 
     def update(self, target: Optional[Sequence[float]],
-               now: float) -> Optional[Tuple[float, float]]:
+               now: float, preserve_latched: bool = False
+               ) -> Optional[Tuple[float, float]]:
         self.just_latched = False
         if self.latched is not None:
-            return self.latched
+            if preserve_latched:
+                return self.latched
+            if target is not None:
+                point = (float(target[0]), float(target[1]))
+                if math.hypot(
+                        point[0] - self.latched[0],
+                        point[1] - self.latched[1]) <= self.tolerance:
+                    self.last_seen = float(now)
+                    return self.latched
+            if float(now) - self.last_seen <= self.timeout_s:
+                return self.latched
+            self.reset()
         if target is None:
             if float(now) - self.last_seen > self.timeout_s:
                 self.candidate = None

@@ -1,5 +1,9 @@
 # 결합 직사각형 footprint A* 수정 기록 (2026-07-25)
 
+> **과거 기록 — 2026-07-25 P1 A* 수정 스냅샷.** 현재 패키지 동작과 실차 검증 범위는
+> 저장소의 `ros2/cooperative_parking_robot/README.md`와
+> `docs/REAL_WORLD_READINESS.md`를 따른다.
+
 ## 확정된 기하 전제
 
 - 로봇 1대 외곽: 차량 앞뒤 방향 `0.565m`, 차량 좌우 방향 `0.275m`

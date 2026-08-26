@@ -91,8 +91,9 @@ hardware_preflight --role jetson \
 Rear:
 
 ```bash
+: "${REAR_SERIAL:?set REAR_SERIAL to the verified /dev/serial/by-id path}"
 hardware_preflight --role rear \
-  --serial-port /dev/serial/by-id/<rear-stm32> \
+  --serial-port "${REAR_SERIAL}" \
   --rear-camera-calib /absolute/rear_camera_calibration.npz
 ```
 
@@ -103,25 +104,31 @@ Rear 카메라 없이 UART/STM32 초음파만 시험할 때는 `--disable-rear-a
 ### Rear RPi
 
 ```bash
+: "${REAR_SERIAL:?set REAR_SERIAL to the verified /dev/serial/by-id path}"
+: "${LEFT_GRIPPER_OFFSET_M:?set measured left sensor-to-gripper offset}"
+: "${RIGHT_GRIPPER_OFFSET_M:?set measured right sensor-to-gripper offset}"
 ros2 launch cooperative_parking_robot rear_robot.launch.py \
   rear_camera_topic:=/camera/image_raw \
   camera_calib:=/absolute/rear_camera_calibration.npz \
-  serial_port:=/dev/serial/by-id/<rear-stm32> \
+  serial_port:="${REAR_SERIAL}" \
   wheelbase:=0.70 wheel_radius:=0.05 encoder_ppr:=2600 \
   lx:=0.10 ly:=0.10 \
-  left_sensor_to_gripper_x_m:=<실측값> \
-  right_sensor_to_gripper_x_m:=<실측값>
+  left_sensor_to_gripper_x_m:="${LEFT_GRIPPER_OFFSET_M}" \
+  right_sensor_to_gripper_x_m:="${RIGHT_GRIPPER_OFFSET_M}"
 ```
 
 ### Front RPi
 
 ```bash
+: "${FRONT_SERIAL:?set FRONT_SERIAL to the verified /dev/serial/by-id path}"
+: "${LEFT_GRIPPER_OFFSET_M:?set measured left sensor-to-gripper offset}"
+: "${RIGHT_GRIPPER_OFFSET_M:?set measured right sensor-to-gripper offset}"
 ros2 launch cooperative_parking_robot front_robot.launch.py \
-  serial_port:=/dev/serial/by-id/<front-stm32> \
+  serial_port:="${FRONT_SERIAL}" \
   wheelbase:=0.70 wheel_radius:=0.05 encoder_ppr:=2600 \
   lx:=0.10 ly:=0.10 \
-  left_sensor_to_gripper_x_m:=<실측값> \
-  right_sensor_to_gripper_x_m:=<실측값> \
+  left_sensor_to_gripper_x_m:="${LEFT_GRIPPER_OFFSET_M}" \
+  right_sensor_to_gripper_x_m:="${RIGHT_GRIPPER_OFFSET_M}" \
   aruco_distance_offset_m:=0.565 use_aruco_distance:=true
 ```
 

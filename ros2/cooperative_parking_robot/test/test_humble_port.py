@@ -6,6 +6,7 @@ import xml.etree.ElementTree as ET
 
 from cooperative_parking_robot.hardware_preflight import (
     check_ros_environment,
+    validate_second_cctv_assets,
 )
 
 
@@ -53,6 +54,17 @@ def test_humble_environment_check_rejects_wrong_or_localhost_only():
     })
     assert any('ROS_DISTRO' in error for error in errors)
     assert any('ROS_LOCALHOST_ONLY' in error for error in errors)
+
+
+def test_dual_cctv_preflight_rejects_a_missing_second_asset_pair():
+    errors = []
+    validate_second_cctv_assets(errors, '', '', required=True)
+    assert errors and '--cctv2-camera-calib' in errors[0]
+
+    errors = []
+    validate_second_cctv_assets(
+        errors, '/tmp/cctv2_camera_calibration.npz', '', required=False)
+    assert errors and '함께 지정' in errors[0]
 
 
 def test_camera_topics_are_runtime_parameters():
@@ -105,6 +117,9 @@ def test_humble_scripts_are_executable():
         path = ROOT / relative
         assert path.is_file()
         assert path.stat().st_mode & 0o111
+    build_check = (ROOT / 'scripts/humble_build_check.sh').read_text()
+    assert 'PYTHONNOUSERSITE=1' in build_check
+    assert 'colcon collected zero tests' in build_check
 
 
 def test_console_entry_points_and_launch_executables_resolve():

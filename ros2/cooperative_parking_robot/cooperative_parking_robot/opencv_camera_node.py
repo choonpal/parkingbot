@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 
 import rclpy
@@ -18,11 +19,18 @@ except ImportError:
     DEPS_OK = False
 
 
+def resolve_camera_source(camera_device: str, camera_id: int):
+    """Prefer a persistent V4L device path, with an integer ID fallback."""
+    device = os.path.expanduser(str(camera_device).strip())
+    return device if device else int(camera_id)
+
+
 class OpenCvCameraNode(Node):
     def __init__(self):
         super().__init__('opencv_camera_node')
 
         self.declare_parameter('camera_id', 0)
+        self.declare_parameter('camera_device', '')
         self.declare_parameter('gstreamer_pipeline', '')
         self.declare_parameter('output_topic', '/cctv/image_raw')
         self.declare_parameter('frame_id', 'cctv_camera')
@@ -38,6 +46,10 @@ class OpenCvCameraNode(Node):
                 'OpenCV camera dependencies missing (cv2, cv_bridge)')
 
         self.camera_id = int(self.get_parameter('camera_id').value)
+        self.camera_device = str(
+            self.get_parameter('camera_device').value).strip()
+        self.camera_source = resolve_camera_source(
+            self.camera_device, self.camera_id)
         self.pipeline = str(self.get_parameter('gstreamer_pipeline').value)
         self.output_topic = str(self.get_parameter('output_topic').value)
         self.frame_id = str(self.get_parameter('frame_id').value)
@@ -80,9 +92,13 @@ class OpenCvCameraNode(Node):
             self.capture = cv2.VideoCapture(
                 self.pipeline, cv2.CAP_GSTREAMER)
             source = 'GStreamer pipeline'
+        elif isinstance(self.camera_source, str):
+            self.capture = cv2.VideoCapture(
+                self.camera_source, cv2.CAP_V4L2)
+            source = f'camera_device={self.camera_source}'
         else:
-            self.capture = cv2.VideoCapture(self.camera_id)
-            source = f'camera_id={self.camera_id}'
+            self.capture = cv2.VideoCapture(self.camera_source)
+            source = f'camera_id={self.camera_source}'
 
         if self.capture is not None:
             self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
@@ -157,7 +173,8 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     node.destroy_node()
-    rclpy.shutdown()
+    if rclpy.ok():
+        rclpy.shutdown()
 
 
 if __name__ == '__main__':

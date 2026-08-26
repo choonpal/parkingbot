@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""천장 CCTV 2대(기본 /dev/video0, /dev/video2) Jetson 서버 launch.
+"""천장 CCTV 2대를 영구 USB-port 경로로 여는 Jetson 서버 launch.
 
 구조
 ----
@@ -49,6 +49,14 @@ from launch.substitutions import (
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
+
+
+CAM0_DEVICE_DEFAULT = (
+    '/dev/v4l/by-path/'
+    'platform-3610000.usb-usb-0:2.4.2:1.0-video-index0')
+CAM2_DEVICE_DEFAULT = (
+    '/dev/v4l/by-path/'
+    'platform-3610000.usb-usb-0:2.3.2:1.0-video-index0')
 
 
 def _float(name):
@@ -134,11 +142,17 @@ def generate_launch_description():
             'enable_opencv_camera', default_value='false',
             description='true면 이 패키지가 두 카메라를 cv2로 단독 점유'),
         DeclareLaunchArgument(
-            'camera0_id', default_value='0',
-            description='/dev/video0'),
+            'camera0_device', default_value=CAM0_DEVICE_DEFAULT,
+            description='cam0 persistent V4L by-path; takes priority over ID'),
         DeclareLaunchArgument(
-            'camera2_id', default_value='2',
-            description='/dev/video2'),
+            'camera2_device', default_value=CAM2_DEVICE_DEFAULT,
+            description='cam2 persistent V4L by-path; takes priority over ID'),
+        DeclareLaunchArgument(
+            'camera0_id', default_value='2',
+            description='fallback ID when camera0_device is empty'),
+        DeclareLaunchArgument(
+            'camera2_id', default_value='0',
+            description='fallback ID when camera2_device is empty'),
         DeclareLaunchArgument('camera_width_px', default_value='640'),
         DeclareLaunchArgument('camera_height_px', default_value='480'),
         DeclareLaunchArgument('camera_fps', default_value='30.0'),
@@ -152,6 +166,9 @@ def generate_launch_description():
         DeclareLaunchArgument('cctv2_camera_calib', default_value=default_calib2),
         DeclareLaunchArgument('calibration_width_px', default_value='640'),
         DeclareLaunchArgument('calibration_height_px', default_value='480'),
+        DeclareLaunchArgument(
+            'require_exact_camera_resolution', default_value='true',
+            description='Homography pixel frame 보호를 위해 크기 불일치 frame 폐기'),
 
         # ============================================================
         # YOLO / BEV
@@ -197,6 +214,16 @@ def generate_launch_description():
         DeclareLaunchArgument('cam2_ground_x_m', default_value='0.0'),
         DeclareLaunchArgument('cam2_ground_y_m', default_value='0.0'),
         DeclareLaunchArgument('cam2_height_m', default_value='0.0'),
+        DeclareLaunchArgument(
+            'camera_heights_m',
+            default_value=[
+                TextSubstitution(text='['),
+                LaunchConfiguration('cam0_height_m'),
+                TextSubstitution(text=', '),
+                LaunchConfiguration('cam2_height_m'),
+                TextSubstitution(text=']'),
+            ],
+            description='[cam0_height, cam2_height] marker parallax inputs'),
         DeclareLaunchArgument('vehicle_detection_height_m', default_value='0.0'),
         # 상판 마커 노드가 카메라를 고를 때 쓰는 광축 지상점 [x0,y0, x2,y2].
         # 위 cam*_ground_*와 같은 값을 넣는다(중복이지만 배열 타입이 필요).
@@ -210,8 +237,8 @@ def generate_launch_description():
         DeclareLaunchArgument('merge_rate_hz', default_value='10.0'),
         DeclareLaunchArgument('camera_timeout_s', default_value='1.0'),
         DeclareLaunchArgument(
-            'require_all_cameras', default_value='false',
-            description='true면 한 대라도 죽으면 /parking/* 발행을 멈춘다'),
+            'require_all_cameras', default_value='true',
+            description='한 대라도 죽으면 perception을 fail-closed (실운용 기본)'),
         DeclareLaunchArgument(
             'duplicate_center_gate_m', default_value='0.35',
             description='두 카메라가 본 같은 차량으로 볼 최대 중심 거리'),
@@ -254,6 +281,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'debug_image_topic', default_value='/cctv0/image_rect',
             description='kiosk/진단 화면에 표시할 카메라'),
+        DeclareLaunchArgument(
+            'debug_camera_calib', default_value=default_calib0,
+            description='debug_image_topic과 같은 카메라의 intrinsic NPZ'),
         DeclareLaunchArgument('debug_enable_aruco', default_value='true'),
         DeclareLaunchArgument('debug_web_host', default_value='0.0.0.0'),
         DeclareLaunchArgument('debug_web_port', default_value='5000'),
@@ -268,6 +298,7 @@ def generate_launch_description():
             name='opencv_camera_node_cam0',
             condition=IfCondition(enable_cameras),
             parameters=[{
+                'camera_device': LaunchConfiguration('camera0_device'),
                 'camera_id': _int('camera0_id'),
                 'gstreamer_pipeline': LaunchConfiguration(
                     'camera0_gstreamer_pipeline'),
@@ -290,6 +321,10 @@ def generate_launch_description():
                 'camera_calib': LaunchConfiguration('cctv0_camera_calib'),
                 'calibration_width_px': _int('calibration_width_px'),
                 'calibration_height_px': _int('calibration_height_px'),
+                'expected_width_px': _int('camera_width_px'),
+                'expected_height_px': _int('camera_height_px'),
+                'require_exact_resolution': _bool(
+                    'require_exact_camera_resolution'),
             }],
             output='screen'),
 
@@ -321,6 +356,7 @@ def generate_launch_description():
             name='opencv_camera_node_cam2',
             condition=IfCondition(enable_cameras),
             parameters=[{
+                'camera_device': LaunchConfiguration('camera2_device'),
                 'camera_id': _int('camera2_id'),
                 'gstreamer_pipeline': LaunchConfiguration(
                     'camera2_gstreamer_pipeline'),
@@ -343,6 +379,10 @@ def generate_launch_description():
                 'camera_calib': LaunchConfiguration('cctv2_camera_calib'),
                 'calibration_width_px': _int('calibration_width_px'),
                 'calibration_height_px': _int('calibration_height_px'),
+                'expected_width_px': _int('camera_width_px'),
+                'expected_height_px': _int('camera_height_px'),
+                'require_exact_resolution': _bool(
+                    'require_exact_camera_resolution'),
             }],
             output='screen'),
 
@@ -430,6 +470,7 @@ def generate_launch_description():
                 ],
                 'camera_ids_csv': 'cam0,cam2',
                 'camera_ground_points': _float_array('camera_ground_points'),
+                'camera_heights_m': _float_array('camera_heights_m'),
                 'selection_hold_s': _float('selection_hold_s'),
                 'observation_timeout_s': _float('observation_timeout_s'),
                 'zero_stamp_fallback_to_now': True,
@@ -443,8 +484,6 @@ def generate_launch_description():
                 'rear_yaw_offset_deg': _float('rear_yaw_offset_deg'),
                 'front_marker_offset_x_m': _float('front_marker_offset_x_m'),
                 'rear_marker_offset_x_m': _float('rear_marker_offset_x_m'),
-                # camera_height_m은 두 카메라 설치 높이가 같다는 전제다.
-                # 다르면 노드를 카메라별 높이 배열로 확장해야 한다(문서 §9 참조).
                 'camera_height_m': _float('cam0_height_m'),
                 'front_marker_height_m': _float('front_marker_height_m'),
                 'rear_marker_height_m': _float('rear_marker_height_m'),
@@ -468,7 +507,7 @@ def generate_launch_description():
                 'marker_size_m': _float('marker_size_m'),
                 'min_marker_area_px': _float('min_marker_area_px'),
                 'min_marker_area_ratio': _float('min_marker_area_ratio'),
-                'camera_calib': LaunchConfiguration('cctv0_camera_calib'),
+                'camera_calib': LaunchConfiguration('debug_camera_calib'),
                 'calibration_width_px': _int('calibration_width_px'),
                 'calibration_height_px': _int('calibration_height_px'),
                 'jpeg_quality': _int('debug_jpeg_quality'),

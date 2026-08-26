@@ -175,7 +175,7 @@ _HTML = r'''<!doctype html>
     <div class="controls" style="margin-bottom:10px">
       <button id="bmA" onclick="setBev('anaglyph')">색분리 (청록 vs 빨강)</button>
       <button id="bmB" onclick="setBev('average')">평균 (이중상)</button>
-      <span class="meta">색분리에서 겹침 영역이 <b>회색</b>이면 정합, 
+      <span class="meta">색분리에서 겹침 영역이 <b>회색</b>이면 정합,
         <b style="color:#7ff">청록</b>/<b style="color:#f77">빨강</b>으로 갈라지면 어긋난 것입니다.</span>
     </div>
     <div id="bevgrid" style="display:grid;

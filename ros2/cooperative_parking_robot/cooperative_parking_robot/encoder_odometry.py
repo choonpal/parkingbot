@@ -16,11 +16,12 @@ import math
 
 class EncoderOdometry:
     def __init__(self, wheel_radius=0.05, ppr=5182.0, lx=0.10, ly=0.10,
-                 max_delta_ticks=2591):
+                 max_delta_ticks=2591, axis_sign=(1.0, 1.0, 1.0)):
         self.r = float(wheel_radius)
         self.ppr = float(ppr)
         self.L = float(lx) + float(ly)
         self.max_delta_ticks = int(max_delta_ticks)
+        self.axis_sign = tuple(float(value) for value in axis_sign)
         if self.r <= 0.0:
             raise ValueError('wheel_radius must be positive')
         if self.ppr <= 0.0:
@@ -29,6 +30,9 @@ class EncoderOdometry:
             raise ValueError('lx + ly must be positive')
         if self.max_delta_ticks <= 0:
             raise ValueError('max_delta_ticks must be positive')
+        if (len(self.axis_sign) != 3 or
+                any(value not in (-1.0, 1.0) for value in self.axis_sign)):
+            raise ValueError('axis_sign must contain three +1/-1 values')
         self.x = 0.0
         self.y = 0.0
         self.theta = 0.0
@@ -77,6 +81,14 @@ class EncoderOdometry:
         dx_body = (fl + fr + rl + rr) * self.r / 4
         dy_body = (-fl + fr + rl - rr) * self.r / 4
         dtheta = (-fl + fr - rl + rr) * self.r / (4 * self.L)
+
+        # 위 정기구학 결과는 STM32/기체 장착축이다. 명령에 적용한 것과 같은
+        # +/-1 변환은 자기 자신의 역변환이므로 ROS body 축으로 되돌릴 때도
+        # 동일하게 곱한다. 이를 빼먹으면 물리 전진에서 wheel odom이 음수가 된다.
+        sx, sy, sw = self.axis_sign
+        dx_body *= sx
+        dy_body *= sy
+        dtheta *= sw
 
         # 글로벌 적분 (내부 진단용 누적치 — Kalman predict 입력으로 쓰지 말 것)
         # 중점 heading으로 적분해 회전 중 호(arc) 근사 오차를 줄인다.

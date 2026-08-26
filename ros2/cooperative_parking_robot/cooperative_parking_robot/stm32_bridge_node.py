@@ -114,7 +114,8 @@ class Stm32BridgeNode(Node):
             ppr=self.get_parameter('encoder_ppr').value,
             lx=self.get_parameter('lx').value,
             ly=self.get_parameter('ly').value,
-            max_delta_ticks=self.get_parameter('max_delta_ticks').value)
+            max_delta_ticks=self.get_parameter('max_delta_ticks').value,
+            axis_sign=self.command_sign)
 
         # 수동 모드는 auto cmd보다 우선하며, 수동 송신이 끊겨도 auto로
         # 되돌아가지 않고 0속도를 유지한다.

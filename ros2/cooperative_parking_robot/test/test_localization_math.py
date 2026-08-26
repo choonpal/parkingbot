@@ -231,3 +231,29 @@ def test_encoder_odometry_rejects_invalid_calibration_values():
         EncoderOdometry(lx=0.0, ly=0.0)
     with pytest.raises(ValueError):
         EncoderOdometry(max_delta_ticks=0)
+    with pytest.raises(ValueError):
+        EncoderOdometry(axis_sign=(-1.0, 1.0))
+
+
+def test_encoder_odometry_applies_hardware_axis_sign_to_body_delta():
+    import pytest
+    raw_odom = EncoderOdometry(wheel_radius=0.05, ppr=100.0)
+    corrected_odom = EncoderOdometry(
+        wheel_radius=0.05, ppr=100.0,
+        axis_sign=(-1.0, -1.0, -1.0))
+    raw_odom.update([0, 0, 0, 0])
+    corrected_odom.update([0, 0, 0, 0])
+
+    raw = raw_odom.update([-10, -10, -10, -10])
+    corrected = corrected_odom.update([-10, -10, -10, -10])
+    assert raw['dx_body'] < 0.0
+    assert corrected['dx_body'] == pytest.approx(-raw['dx_body'])
+    assert corrected['dy_body'] == pytest.approx(0.0)
+    assert corrected['dtheta'] == pytest.approx(0.0)
+
+
+def test_stm32_bridge_wires_command_axis_sign_into_odometry():
+    source = (
+        PACKAGE_ROOT / 'cooperative_parking_robot/stm32_bridge_node.py'
+    ).read_text()
+    assert 'axis_sign=self.command_sign' in source

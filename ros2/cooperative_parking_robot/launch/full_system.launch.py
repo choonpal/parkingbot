@@ -6,6 +6,8 @@
 rear_robot.launch.py를 각 장비에서 실행한다.
 """
 
+import math
+
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
@@ -19,8 +21,10 @@ from launch_ros.substitutions import FindPackageShare
 
 
 FIXED_WHEELBASE = 0.70
-FRONT_HOME = (1.15, 0.60)
-REAR_HOME = (0.45, 0.60)
+FRONT_HOME = (3.60, 0.60)
+REAR_HOME = (3.60, 0.20)
+HOME_YAW_DEG = 180.0
+HOME_YAW_RAD = math.pi
 
 
 def _bool(name):
@@ -165,6 +169,11 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'simultaneous_entry', default_value='false'),
         DeclareLaunchArgument(
+            'planning_validation_mode', default_value='warn_only',
+            description=(
+                'MVP Fleet preflight policy: warn_only records model-based '
+                'geometry findings without suppressing an executable path')),
+        DeclareLaunchArgument(
             'same_direction_exit', default_value='false'),
         DeclareLaunchArgument(
             'same_direction_exit_sign', default_value='1'),
@@ -263,6 +272,8 @@ def generate_launch_description():
             parameters=[layout_config, {
                 'require_registered_layout': True,
                 'simultaneous_entry': _bool('simultaneous_entry'),
+                'planning_validation_mode': LaunchConfiguration(
+                    'planning_validation_mode'),
                 'parking_registry_db_path': LaunchConfiguration(
                     'parking_registry_db_path'),
             }],
@@ -397,6 +408,7 @@ def generate_launch_description():
                 'use_vehicle_spec_wheelbase': True,
                 'waiting_x': FRONT_HOME[0],
                 'waiting_y': FRONT_HOME[1],
+                'home_yaw_deg': HOME_YAW_DEG,
                 'vehicle_half_length_m': 0.45,
                 'vehicle_half_width_m': 0.175,
                 'robot_length_m': 0.565,
@@ -438,6 +450,7 @@ def generate_launch_description():
                 'use_vehicle_spec_wheelbase': True,
                 'waiting_x': REAR_HOME[0],
                 'waiting_y': REAR_HOME[1],
+                'home_yaw_deg': HOME_YAW_DEG,
                 'vehicle_half_length_m': 0.45,
                 'vehicle_half_width_m': 0.175,
                 'robot_length_m': 0.565,
@@ -512,6 +525,7 @@ def generate_launch_description():
                 'role': 'front',
                 'init_x': FRONT_HOME[0],
                 'init_y': FRONT_HOME[1],
+                'init_yaw': HOME_YAW_RAD,
             }],
             output='screen'),
 
@@ -572,6 +586,7 @@ def generate_launch_description():
                 'role': 'rear',
                 'init_x': REAR_HOME[0],
                 'init_y': REAR_HOME[1],
+                'init_yaw': HOME_YAW_RAD,
             }],
             output='screen'),
     ])

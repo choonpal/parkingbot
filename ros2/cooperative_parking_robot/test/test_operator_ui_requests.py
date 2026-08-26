@@ -169,3 +169,58 @@ def test_retrieve_ready_banner_does_not_require_waiting_target_freshness():
 
     assert status['retrieve_enabled']
     assert status['banner'] == '출차 가능 — 차량번호와 비밀번호를 입력하세요'
+
+
+def fleet_status_harness(fleet_payload):
+    node = JetsonVisionWebNode.__new__(JetsonVisionWebNode)
+    now = time.monotonic()
+    node._status_lock = threading.Lock()
+    node.status_stale_s = 3.0
+    node.localization_warning_streak = 5
+    node._localization_reject_streak = {'front': 0, 'rear': 0}
+    node._status = {
+        'fleet': (json.dumps(fleet_payload), now),
+        'front_state': ('DRIVE', now),
+        'rear_state': ('DRIVE', now),
+        'front_phase': ('DRIVE', now),
+        'rear_phase': ('DRIVE', now),
+    }
+    return node
+
+
+def test_operator_ui_shows_astar_blocker_instead_of_generic_waiting_text():
+    node = fleet_status_harness({
+        'state': 'PLAN_PATH',
+        'mission_id': 'park-1',
+        'empty_count': 1,
+        'planning_validation_mode': 'warn_only',
+        'validation_warnings': [],
+        'planning_blocker': {
+            'code': 'ASTAR_NO_PATH',
+            'mission_phase': 'PLAN_PATH',
+        },
+    })
+
+    status = node.build_status()
+
+    assert status['planning_blocker']['code'] == 'ASTAR_NO_PATH'
+    assert status['banner'] == '경로 생성 불가: ASTAR_NO_PATH'
+
+
+def test_operator_ui_shows_warn_only_findings_while_mission_continues():
+    node = fleet_status_harness({
+        'state': 'NAVIGATING',
+        'mission_id': 'park-1',
+        'empty_count': 1,
+        'planning_validation_mode': 'warn_only',
+        'validation_warnings': [{
+            'code': 'SLOT_TOO_SHORT',
+            'mission_phase': 'PLAN_PATH',
+        }],
+        'planning_blocker': None,
+    })
+
+    status = node.build_status()
+
+    assert status['planning_warning']
+    assert status['banner'] == '경고 운행 중: SLOT_TOO_SHORT'

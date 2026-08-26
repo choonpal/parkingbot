@@ -87,7 +87,7 @@ ros2 launch cooperative_parking_robot front_robot.launch.py \
 ```
 
 - Rear 카메라 intrinsics, 마커 실제 한 변 길이, `yaw_offset_deg`
-- CCTV Front ID10/Rear ID11의 base offset, 부착 yaw 오차
+- CCTV Front ID2/Rear ID1의 base offset, 부착 yaw 오차
 - CCTV 높이, 상판 마커 높이, 광축 바닥 교점: parallax 보정용
 
 ### 3. YOLO·BEV

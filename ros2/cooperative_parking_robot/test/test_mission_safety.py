@@ -169,8 +169,10 @@ def test_three_marker_roles_are_connected_without_id_conflict():
         assert "rear_marker_id" in text
     assert "'front': self.get_parameter('front_marker_id').value" in marker
     assert "'rear': self.get_parameter('rear_marker_id').value" in marker
-    assert "default_value='10'" in cctv_launch
-    assert "default_value='11'" in cctv_launch
+    assert "front_marker_id', default_value='2'" in cctv_launch
+    assert "rear_marker_id', default_value='1'" in cctv_launch
+    assert "front_marker_id', default_value='2'" in full_launch
+    assert "rear_marker_id', default_value='1'" in full_launch
     assert "marker_id': 0" in full_launch
 
 
@@ -178,7 +180,7 @@ def test_drive_marker_fallback_prefers_id0_then_top_pair_then_encoder():
     sync = source(
         "cooperative_parking_robot/rigid_body_sync_node.py")
     assert "ARUCO_DIST_YAW" in sync
-    assert "CCTV_ID10_ID11" in sync
+    assert "CCTV_TOP_MARKERS" in sync
     assert "correction = 'ENCODER'" in sync
     assert "MARKER_HOLD" in sync
     marker_stop_block = sync.split(

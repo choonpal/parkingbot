@@ -887,12 +887,12 @@ class RigidBodySyncNode(Node):
             correction = ('ARUCO_DIST_YAW' if self.use_aruco_distance
                           else 'ARUCO_YAW')
         elif self.top_marker_pair_fresh(now):
-            # ID10 and ID11 provide an absolute pair observation. The odometry
+            # The configured top markers provide an absolute pair observation.
             # inputs are already pose-fused, so use their relative measurement
             # to anchor both filters while ID0 is occluded.
             self.dist_kalman.update(enc_dist)
             self.yaw_kalman.update(enc_yaw)
-            correction = 'CCTV_ID10_ID11'
+            correction = 'CCTV_TOP_MARKERS'
 
         fused_dist = self.dist_kalman.x
         relative_yaw_error = self.angle_norm(self.yaw_kalman.x)

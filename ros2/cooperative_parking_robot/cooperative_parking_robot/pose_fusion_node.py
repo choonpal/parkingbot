@@ -11,7 +11,7 @@ pose_fusion_node.py (role: front/rear)
 ArUco+Kalman은 Front-Rear "상대" 오차만 보고, CCTV 절대보정(α=0.3)은
 가상중심 위치에만 적용돼 개별 로봇 yaw는 무보정 상태로 흘러갔다.
 
-이 노드는 Front 상판 ID10과 Rear 상판 ID11에서 얻은 각 역할의 절대
+이 노드는 Front와 Rear 상판 마커에서 얻은 각 역할의 절대
 (x,y,yaw)를 PoseEKF로 융합한다. 두 상판 마커가 가려진 구간의 상대 보정은
 rigid_body_sync_node가 Front 후면 ID0 관측으로 수행한다.
 rigid_body_sync_node는 코드 변경 없이 그대로
@@ -26,7 +26,7 @@ rigid_body_sync_node는 코드 변경 없이 그대로
         (주의: 관례적 의미의 "속도"가 아니라 "변위"다 — 이 노드가 직접
         정의한 두 노드 간 내부 계약이다.)
   /{role}/cctv_pose (geometry_msgs/PoseStamped, frame_id='map')
-      — CCTV가 해당 역할의 상판 ArUco(ID10/ID11)를 읽어 계산한 절대 pose.
+      — CCTV가 해당 역할의 상판 ArUco를 읽어 계산한 절대 pose.
         cctv_robot_marker_node가 입력 이미지의 촬영시각을 보존해 발행한다.
   /{role}/cctv_marker_visible (std_msgs/Bool)
 

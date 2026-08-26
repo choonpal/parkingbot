@@ -3,7 +3,7 @@
 ==================================================
 cctv_robot_marker_node.py (Jetson — CCTV 서버)
 ==================================================
-천장 CCTV로 Front 상판 ID10과 Rear 상판 ID11을 읽어 두 로봇의
+천장 CCTV로 Front와 Rear 상판 마커를 읽어 두 로봇의
 절대 위치·yaw 기준을 만든다.
 
 localization_design.md §3, §10-1에 정의된 절대 pose 공급 노드다.
@@ -130,8 +130,8 @@ class CctvRobotMarkerNode(Node):
         # BEV 브라우저 등록 도구의 H는 픽셀->metre를 직접 출력한다.
         self.declare_parameter('homography_scale_to_m', 1.0)
         self.declare_parameter('aruco_dict', 'DICT_4X4_50')
-        self.declare_parameter('front_marker_id', 10)
-        self.declare_parameter('rear_marker_id', 11)
+        self.declare_parameter('front_marker_id', 2)
+        self.declare_parameter('rear_marker_id', 1)
         # 현장 640x480 영상에서 정상 17.5cm 마커는 약 11~30px/변이다.
         # 고정값과 프레임 면적 비율 중 큰 값을 써 해상도가 바뀌어도 같은
         # 각크기 기준을 유지한다(640x480에서는 100px²).

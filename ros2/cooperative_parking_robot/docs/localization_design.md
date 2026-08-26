@@ -2,7 +2,7 @@
 
 > **Humble 이식 주의:** 이 문서 안의 Ubuntu 24.04/OpenCV 4.6 표현은 이전 정적 검증 환경의 기록이다. 현재 배포 대상은 Ubuntu 22.04 + ROS 2 Humble이며, 신형/legacy ArUco API 호환 코드는 유지했다. 이전 기록이 Humble 실기 통합 검증을 의미하지는 않는다.
 
-> **최신 결정(v2.2):** Front 상판 ID10과 Rear 상판 ID11은 천장 절대 pose,
+> **최신 결정(v2.2):** Front 상판 ID2와 Rear 상판 ID1은 천장 절대 pose,
 > Front 후면 ID0은 Rear 전면 카메라의 상대 pose에 사용한다. 차량 하부에서
 > 상판 마커가 가려지면 ID0로 상대 yaw/거리를 유지하고, 둘 다 가려지면 제한된
 > encoder fallback 뒤 정지한다.

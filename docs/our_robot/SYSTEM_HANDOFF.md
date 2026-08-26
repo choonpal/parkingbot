@@ -51,8 +51,8 @@ Production 협동 미션의 마커는 다음과 같다.
 
 | 마커 | 관측자 | 목적 |
 |---|---|---|
-| Front 상판 ID 10 | 천장 CCTV | Front 절대 pose |
-| Rear 상판 ID 11 | 천장 CCTV | Rear 절대 pose |
+| Front 상판 ID 2 | 천장 CCTV | Front 절대 pose |
+| Rear 상판 ID 1 | 천장 CCTV | Rear 절대 pose |
 | Front 후면 ID 0 | Rear 전방 카메라 | 로봇 간 상대 yaw·거리 |
 
 엔코더 예측을 CCTV 절대 pose와 ID 0 상대 pose로 보정한다. ID 0의 거리

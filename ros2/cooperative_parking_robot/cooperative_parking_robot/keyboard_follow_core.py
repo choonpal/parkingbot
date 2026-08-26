@@ -9,6 +9,7 @@ regression-test before touching real motors.
 
 from dataclasses import dataclass
 import math
+import statistics
 
 from cooperative_parking_robot.rigid_body_kinematics import (
     RigidBodyKinematics,
@@ -55,6 +56,29 @@ class FollowDecision:
 def angle_norm(angle):
     """Wrap an angle to [-pi, pi]."""
     return math.atan2(math.sin(float(angle)), math.cos(float(angle)))
+
+
+def median_relative_pose(samples):
+    """Return a three-axis median while handling yaw wraparound.
+
+    The caller keeps only the latest three ArUco poses.  One isolated pose
+    spike is therefore ignored, while a real change present in two frames is
+    still visible after one camera period.  Yaw samples are first unwrapped
+    around the newest sample so +pi/-pi does not produce a false zero median.
+    """
+    values = [tuple(float(value) for value in sample) for sample in samples]
+    if not values or any(len(sample) != 3 for sample in values):
+        raise ValueError('relative pose samples must contain three axes')
+    if not all(math.isfinite(value) for sample in values for value in sample):
+        raise ValueError('relative pose samples must be finite')
+    anchor = values[-1][2]
+    unwrapped_yaws = [
+        anchor + angle_norm(sample[2] - anchor) for sample in values]
+    return (
+        statistics.median(sample[0] for sample in values),
+        statistics.median(sample[1] for sample in values),
+        angle_norm(statistics.median(unwrapped_yaws)),
+    )
 
 
 def clamp(value, limit):

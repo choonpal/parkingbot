@@ -10,6 +10,7 @@ No gripper command is exposed in this mode.
 
 from __future__ import annotations
 
+from collections import deque
 import json
 import math
 import os
@@ -36,6 +37,7 @@ from cooperative_parking_robot.keyboard_follow_core import (
     evaluate_follow,
     follow_pair_commands,
     is_zero,
+    median_relative_pose,
 )
 from cooperative_parking_robot.manual_control import (
     DEFAULT_LINEAR_SPEED_MPS,
@@ -90,14 +92,20 @@ font-variant-numeric:tabular-nums}.small{font-size:12px;line-height:1.45;color:v
 <section class="panel"><img id="camera" class="camera" alt="Rear ArUco camera">
 <div class="keys">
 <button class="blank">.</button>
-<button class="key" onpointerdown="key('w')">W</button>
+<button class="key" onpointerdown="holdKey('w')" onpointerup="releaseKey('w')"
+onpointercancel="releaseKey('w')" onpointerleave="releaseKey('w')">W</button>
 <button class="blank">.</button>
-<button class="key" onpointerdown="key('a')">A</button>
-<button class="key stop" onpointerdown="key(' ')">■</button>
-<button class="key" onpointerdown="key('d')">D</button>
-<button class="key" onpointerdown="key('q')">Q</button>
-<button class="key" onpointerdown="key('s')">S</button>
-<button class="key" onpointerdown="key('e')">E</button>
+<button class="key" onpointerdown="holdKey('a')" onpointerup="releaseKey('a')"
+onpointercancel="releaseKey('a')" onpointerleave="releaseKey('a')">A</button>
+<button class="key stop" onpointerdown="stopHeld()">■</button>
+<button class="key" onpointerdown="holdKey('d')" onpointerup="releaseKey('d')"
+onpointercancel="releaseKey('d')" onpointerleave="releaseKey('d')">D</button>
+<button class="key" onpointerdown="holdKey('q')" onpointerup="releaseKey('q')"
+onpointercancel="releaseKey('q')" onpointerleave="releaseKey('q')">Q</button>
+<button class="key" onpointerdown="holdKey('s')" onpointerup="releaseKey('s')"
+onpointercancel="releaseKey('s')" onpointerleave="releaseKey('s')">S</button>
+<button class="key" onpointerdown="holdKey('e')" onpointerup="releaseKey('e')"
+onpointercancel="releaseKey('e')" onpointerleave="releaseKey('e')">E</button>
 </div>
 <p class="small">W/S 전후 · A/D 횡이동 · Q/E 두 로봇 중점 회전 · Space 정지. 키를
 누르는 동안 브라우저 반복 입력이 들어오며, 입력이 0.30초 끊기면 자동 정지합니다.</p></section>
@@ -118,25 +126,71 @@ const row = (k, v) =>
   `<div class="row"><span>${esc(k)}</span>` +
   `<span class="value">${v}</span></div>`;
 const n = (v, d=1, u='') => v == null ? '—' : Number(v).toFixed(d) + u;
+let keySending = false;
+let pendingKey = null;
 async function key(k) {
-  await fetch('/api/key', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({key:k})
-  });
+  // 한 요청이 느릴 때 W 요청 여러 개가 쌓인 뒤 Space보다 늦게 도착하지
+  // 않도록, 전송 중에는 가장 최신 키 하나만 남긴다.
+  pendingKey = k;
+  if (keySending) return;
+  keySending = true;
+  while (pendingKey !== null) {
+    const next = pendingKey;
+    pendingKey = null;
+    try {
+      await fetch('/api/key', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({key:next})
+      });
+    } catch (e) {
+      // deadman이 0.30초 뒤 정지한다. 연결 복구 시 최신 pendingKey만 보낸다.
+    }
+  }
+  keySending = false;
 }
 async function act(a) {
+  if (a === 'disarm') stopHeld();
   await fetch('/api/' + a, {method:'POST'});
 }
+let heldKey = null;
+function holdKey(k) {
+  if (k === ' ') return stopHeld();
+  heldKey = k;
+  key(k);
+}
+function releaseKey(k) {
+  if (heldKey === k) stopHeld();
+}
+function stopHeld() {
+  heldKey = null;
+  key(' ');
+}
+setInterval(() => {
+  if (heldKey !== null) key(heldKey);
+}, 100);
 function emergency() {
+  stopHeld();
   if (confirm('양쪽 STM32에 고정 비상정지를 전송할까요?')) act('estop');
 }
 document.addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   if (['w','a','s','d','q','e',' '].includes(k)) {
     e.preventDefault();
-    key(k);
+    if (e.repeat) return;
+    if (k === ' ') stopHeld(); else holdKey(k);
   }
+});
+document.addEventListener('keyup', e => {
+  const k = e.key.toLowerCase();
+  if (['w','a','s','d','q','e'].includes(k)) {
+    e.preventDefault();
+    releaseKey(k);
+  }
+});
+window.addEventListener('blur', stopHeld);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) stopHeld();
 });
 async function tick() {
   let s;
@@ -157,7 +211,8 @@ async function tick() {
     row('현재 간격', n(p.forward_cm, 1, ' cm')) +
     row('간격 오차', n(p.gap_error_cm, 1, ' cm')) +
     row('좌우 오차', n(p.lateral_error_cm, 1, ' cm')) +
-    row('각도 오차', n(p.yaw_error_deg, 1, '°'));
+    row('각도 오차(3프레임)', n(p.yaw_error_deg, 1, '°')) +
+    row('각도 원시값', n(p.raw_yaw_error_deg, 1, '°'));
   document.getElementById('commands').innerHTML =
     row('키 입력', esc(s.key_intent)) +
     row('Front x/y/ω', c.front.map(v => Number(v).toFixed(3)).join(' / ')) +
@@ -248,6 +303,8 @@ class KeyboardFollowNode(Node):
         self.arm_deadline = 0.0
         self.reference = None
         self.relative = None
+        self.raw_relative = None
+        self.relative_samples = deque(maxlen=3)
         self.relative_time = 0.0
         self.marker_visible = False
         self.marker_true_time = 0.0
@@ -337,8 +394,14 @@ class KeyboardFollowNode(Node):
             return
         if not all(math.isfinite(value) for value in values):
             return
-        self.relative = values
-        self.relative_time = time.monotonic()
+        now = time.monotonic()
+        if (self.relative_time <= 0.0 or
+                now - self.relative_time > self.marker_timeout):
+            self.relative_samples.clear()
+        self.raw_relative = values
+        self.relative_samples.append(values)
+        self.relative = median_relative_pose(self.relative_samples)
+        self.relative_time = now
 
     def _marker_cb(self, msg):
         self.marker_visible = bool(msg.data)
@@ -604,6 +667,9 @@ class KeyboardFollowNode(Node):
             relative[1] - reference[1])
         yaw_error = None if relative is None or reference is None else angle_norm(
             relative[2] - reference[2])
+        raw_yaw_error = (
+            None if self.raw_relative is None or reference is None
+            else angle_norm(self.raw_relative[2] - reference[2]))
         return {
             'state': self.state,
             'state_label': _STATE_LABELS[self.state],
@@ -621,6 +687,9 @@ class KeyboardFollowNode(Node):
                 lateral_error * 100.0,
                 'yaw_error_deg': None if yaw_error is None else
                 math.degrees(yaw_error),
+                'raw_yaw_error_deg': None if raw_yaw_error is None else
+                math.degrees(raw_yaw_error),
+                'filter_samples': len(self.relative_samples),
             },
             'commands': {
                 'front': self.last_commands['front'],

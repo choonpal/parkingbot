@@ -8,12 +8,58 @@ from cooperative_parking_robot.keyboard_follow_core import (
     capture_aruco_reference,
     evaluate_follow,
     follow_pair_commands,
+    median_relative_pose,
 )
 
 
 def test_aruco_reference_is_captured_exactly_without_geometry_offset():
     observed = (0.257886, 0.00749, math.radians(-0.58))
     assert capture_aruco_reference(observed) == observed
+
+
+def test_three_pose_median_rejects_one_aruco_yaw_spike():
+    poses = [
+        (0.210, 0.001, math.radians(0.5)),
+        (0.211, 0.000, math.radians(0.7)),
+        (0.202, -0.001, math.radians(-5.8)),
+    ]
+    filtered = median_relative_pose(poses)
+    assert filtered[0] == pytest.approx(0.210)
+    assert filtered[1] == pytest.approx(0.0)
+    assert math.degrees(filtered[2]) == pytest.approx(0.5)
+
+
+def test_three_pose_median_preserves_sustained_yaw_change_and_wraparound():
+    changed = median_relative_pose([
+        (0.21, 0.0, math.radians(0.0)),
+        (0.21, 0.0, math.radians(6.0)),
+        (0.21, 0.0, math.radians(6.2)),
+    ])
+    assert math.degrees(changed[2]) == pytest.approx(6.0)
+
+    wrapped = median_relative_pose([
+        (0.21, 0.0, math.radians(179.0)),
+        (0.21, 0.0, math.radians(-179.0)),
+        (0.21, 0.0, math.radians(178.0)),
+    ])
+    assert abs(math.degrees(wrapped[2])) == pytest.approx(179.0)
+
+
+def test_keyboard_web_uses_fixed_repeat_and_keyup_stop():
+    source = (
+        Path(__file__).parents[1]
+        / 'cooperative_parking_robot/keyboard_follow_node.py'
+    ).read_text(encoding='utf-8')
+    repeat_source = (
+        "setInterval(() => {\n"
+        "  if (heldKey !== null) key(heldKey);\n"
+        "}, 100)"
+    )
+    assert repeat_source in source
+    assert "document.addEventListener('keyup'" in source
+    assert "window.addEventListener('blur', stopHeld)" in source
+    assert 'pendingKey = k' in source
+    assert 'const next = pendingKey' in source
 
 
 def _continue_kwargs():

@@ -1,0 +1,249 @@
+name: Apply measured wheelbase once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/apply-measured-wheelbase-once.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-measured-wheelbase-once
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply measured geometry
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import math
+          import re
+
+          root = Path.cwd()
+          pkg = root / 'ros2' / 'cooperative_parking_robot'
+          code_paths = sorted((pkg / 'cooperative_parking_robot').glob('*.py'))
+          code_paths += sorted((pkg / 'launch').glob('*.py'))
+
+          substitutions = [
+              ('default_wheelbase_constant',
+               r'\bDEFAULT_WHEELBASE_M\s*=\s*0\.70\b',
+               'DEFAULT_WHEELBASE_M = 0.785'),
+              ('fixed_wheelbase_constant',
+               r'\bFIXED_WHEELBASE\s*=\s*0\.70\b',
+               'FIXED_WHEELBASE = 0.785'),
+              ('minimum_gap_constant',
+               r'\bMIN_INTER_ROBOT_GAP_M\s*=\s*0\.10\b',
+               'MIN_INTER_ROBOT_GAP_M = 0.22'),
+              ('fleet_default_wheelbase',
+               r'(declare_parameter\([\'\"]default_wheelbase_m[\'\"],\s*)0\.70(\))',
+               r'\g<1>0.785\2'),
+              ('vision_default_wheelbase',
+               r'(declare_parameter\([\'\"]fixed_wheelbase_m[\'\"],\s*)0\.70(\))',
+               r'\g<1>0.785\2'),
+              ('launch_wheelbase',
+               r'([\'\"]wheelbase[\'\"]\s*,\s*default_value=[\'\"])0\.70([\'\"])',
+               r'\g<1>0.785\2'),
+              ('launch_fixed_wheelbase',
+               r'([\'\"]fixed_wheelbase_m[\'\"]\s*,\s*default_value=[\'\"])0\.70([\'\"])',
+               r'\g<1>0.785\2'),
+              ('launch_minimum_gap',
+               r'([\'\"]minimum_inter_robot_gap_m[\'\"]\s*,\s*default_value=[\'\"])0\.10([\'\"])',
+               r'\g<1>0.22\2'),
+              ('dict_minimum_gap',
+               r'([\'\"]minimum_inter_robot_gap_m[\'\"]\s*:\s*)0\.10\b',
+               r'\g<1>0.22'),
+          ]
+
+          totals = {name: 0 for name, _, _ in substitutions}
+          changed = []
+          for path in code_paths:
+              text = path.read_text(encoding='utf-8')
+              updated = text
+              for name, pattern, replacement in substitutions:
+                  updated, count = re.subn(pattern, replacement, updated)
+                  totals[name] += count
+              if path.name == 'vehicle_entry.py':
+                  updated = updated.replace(
+                      '# Same-side entry defaults; see validation helpers below.\n',
+                      '# Measured setup: 0.785 m axle-to-axle wheelbase and '\
+                      '0.565 m robot length\n'
+                      '# leave a 0.220 m longitudinal body-to-body gap at '\
+                      'axle alignment.\n')
+              if updated != text:
+                  path.write_text(updated, encoding='utf-8')
+                  changed.append(str(path.relative_to(root)))
+
+          required = {
+              'default_wheelbase_constant': 1,
+              'minimum_gap_constant': 1,
+              'fleet_default_wheelbase': 1,
+              'vision_default_wheelbase': 1,
+              'launch_wheelbase': 2,
+              'launch_fixed_wheelbase': 1,
+              'launch_minimum_gap': 2,
+          }
+          for name, minimum in required.items():
+              if totals[name] < minimum:
+                  raise RuntimeError(
+                      f'expected at least {minimum} {name} replacement(s), '
+                      f'got {totals[name]}')
+
+          yaml_paths = [
+              pkg / 'config' / 'sync_params.yaml',
+              pkg / 'config' / 'parking_layout.yaml',
+              root / 'dual_tile_homography_tool' / 'output' /
+              'parking_layout.yaml',
+          ]
+          yaml_totals = {'wheelbase': 0, 'default_wheelbase': 0, 'gap': 0}
+          for path in yaml_paths:
+              text = path.read_text(encoding='utf-8')
+              updated, count = re.subn(
+                  r'(?m)^(\s*wheelbase:\s*)0\.70\s*$',
+                  r'\g<1>0.785', text)
+              yaml_totals['wheelbase'] += count
+              updated, count = re.subn(
+                  r'(?m)^(\s*default_wheelbase_m:\s*)0\.700000\s*$',
+                  r'\g<1>0.785000', updated)
+              yaml_totals['default_wheelbase'] += count
+              updated, count_a = re.subn(
+                  r'(?m)^(\s*minimum_inter_robot_gap_m:\s*)0\.100000\s*$',
+                  r'\g<1>0.220000', updated)
+              updated, count_b = re.subn(
+                  r'(?m)^(\s*minimum_inter_robot_gap_m:\s*)0\.10\s*$',
+                  r'\g<1>0.22', updated)
+              yaml_totals['gap'] += count_a + count_b
+              if path.name == 'sync_params.yaml':
+                  updated = updated.replace(
+                      '# 한 종류 모형차 실증: 모든 노드와 같은 고정값 사용\n',
+                      '# 실측 차량: wheelbase 0.785m, 로봇 길이 0.565m, '\
+                      '차체 사이 간격 0.220m\n')
+              else:
+                  updated = updated.replace(
+                      '    robot_length_m: 0.565000\n',
+                      '    # 실측: 0.785m - 0.565m = 로봇 차체 사이 0.220m\n'
+                      '    robot_length_m: 0.565000\n')
+              if updated != text:
+                  path.write_text(updated, encoding='utf-8')
+                  changed.append(str(path.relative_to(root)))
+
+          if yaml_totals['wheelbase'] < 1:
+              raise RuntimeError('sync_params wheelbase was not updated')
+          if yaml_totals['default_wheelbase'] < 2:
+              raise RuntimeError('both layout wheelbase values were not updated')
+          if yaml_totals['gap'] < 3:
+              raise RuntimeError('geometry minimum-gap values were not updated')
+
+          test_path = pkg / 'test' / 'test_measured_geometry_defaults.py'
+          test_path.write_text(
+              '"""Regression checks for the measured vehicle/robot geometry."""\n\n'
+              'import math\n\n'
+              'from cooperative_parking_robot.vehicle_entry import (\n'
+              '    DEFAULT_WHEELBASE_M,\n'
+              '    MIN_INTER_ROBOT_GAP_M,\n'
+              '    ROBOT_LENGTH_M,\n'
+              '    inter_robot_gap,\n'
+              ')\n\n\n'
+              'def test_measured_wheelbase_leaves_22cm_robot_gap():\n'
+              '    assert math.isclose(DEFAULT_WHEELBASE_M, 0.785, abs_tol=1e-12)\n'
+              '    assert math.isclose(ROBOT_LENGTH_M, 0.565, abs_tol=1e-12)\n'
+              '    assert math.isclose(MIN_INTER_ROBOT_GAP_M, 0.220, abs_tol=1e-12)\n'
+              '    assert math.isclose(\n'
+              '        inter_robot_gap(DEFAULT_WHEELBASE_M, ROBOT_LENGTH_M),\n'
+              '        0.220,\n'
+              '        abs_tol=1e-12,\n'
+              '    )\n',
+              encoding='utf-8')
+          changed.append(str(test_path.relative_to(root)))
+
+          stale_patterns = [
+              r'\bDEFAULT_WHEELBASE_M\s*=\s*0\.70\b',
+              r'\bFIXED_WHEELBASE\s*=\s*0\.70\b',
+              r'\bMIN_INTER_ROBOT_GAP_M\s*=\s*0\.10\b',
+              r'declare_parameter\([\'\"]default_wheelbase_m[\'\"],\s*0\.70\)',
+              r'declare_parameter\([\'\"]fixed_wheelbase_m[\'\"],\s*0\.70\)',
+              r'[\'\"]wheelbase[\'\"]\s*,\s*default_value=[\'\"]0\.70[\'\"]',
+              r'[\'\"]fixed_wheelbase_m[\'\"]\s*,\s*default_value=[\'\"]0\.70[\'\"]',
+              r'[\'\"]minimum_inter_robot_gap_m[\'\"]\s*,\s*default_value=[\'\"]0\.10[\'\"]',
+          ]
+          stale = []
+          for path in code_paths:
+              text = path.read_text(encoding='utf-8')
+              for pattern in stale_patterns:
+                  if re.search(pattern, text):
+                      stale.append(f'{path.relative_to(root)}: {pattern}')
+          if stale:
+              raise RuntimeError('stale active geometry defaults remain:\n' +
+                                 '\n'.join(stale))
+
+          # Direct arithmetic check used by the controller and clearance gate.
+          if not math.isclose(0.785 - 0.565, 0.220, abs_tol=1e-12):
+              raise RuntimeError('measured geometry arithmetic failed')
+
+          print('Replacement totals:', totals)
+          print('YAML totals:', yaml_totals)
+          print('Changed files:')
+          for item in sorted(set(changed)):
+              print(' -', item)
+          print('Remaining literal 0.70/0.700000 references:')
+          for path in root.rglob('*'):
+              if (not path.is_file() or '.git' in path.parts or
+                      path.suffix.lower() not in {'.py', '.yaml', '.yml', '.md'}):
+                  continue
+              text = path.read_text(encoding='utf-8', errors='ignore')
+              if re.search(r'(?<!\d)0\.70(?:0000)?(?!\d)', text):
+                  print(' -', path.relative_to(root))
+          PY
+
+          python3 -m compileall -q \
+            ros2/cooperative_parking_robot/cooperative_parking_robot \
+            ros2/cooperative_parking_robot/launch \
+            ros2/cooperative_parking_robot/test
+
+          PYTHONPATH=ros2/cooperative_parking_robot python3 - <<'PY'
+          import math
+          from cooperative_parking_robot.vehicle_entry import (
+              DEFAULT_WHEELBASE_M,
+              MIN_INTER_ROBOT_GAP_M,
+              ROBOT_LENGTH_M,
+              inter_robot_gap,
+              validate_wheelbase_clearance,
+          )
+          assert math.isclose(DEFAULT_WHEELBASE_M, 0.785, abs_tol=1e-12)
+          assert math.isclose(MIN_INTER_ROBOT_GAP_M, 0.220, abs_tol=1e-12)
+          assert math.isclose(
+              inter_robot_gap(DEFAULT_WHEELBASE_M, ROBOT_LENGTH_M),
+              0.220,
+              abs_tol=1e-12)
+          assert math.isclose(
+              validate_wheelbase_clearance(DEFAULT_WHEELBASE_M),
+              0.220,
+              abs_tol=1e-12)
+          print('Measured geometry regression check passed')
+          PY
+
+          git diff --check
+
+      - name: Commit measured geometry to main
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/apply-measured-wheelbase-once.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --stat
+          git commit -m "fix: use measured 0.785m vehicle wheelbase"
+          git push origin HEAD:main

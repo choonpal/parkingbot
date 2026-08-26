@@ -50,6 +50,7 @@ from cooperative_parking_robot.bev_fusion_core import (
     SlotOccupancyTracker,
     TargetLatchTracker,
     VehicleDimensionTracker,
+    coverage_grid_values,
     decode_detection_envelope,
     merge_detections,
     point_in_polygon,
@@ -82,7 +83,7 @@ class CctvMergeNode(Node):
         # 이 시간 동안 새 envelope이 없으면 그 카메라는 죽은 것으로 본다.
         self.declare_parameter('camera_timeout_s', 1.0)
         self.declare_parameter('merge_rate_hz', 10.0)
-        self.declare_parameter('require_all_cameras', False)
+        self.declare_parameter('require_all_cameras', True)
 
         # ===== 중복 제거 =====
         # 모형차 전장 0.9m 기준, 서로 다른 두 차량의 중심이 0.35m 안에 들어올
@@ -301,6 +302,7 @@ class CctvMergeNode(Node):
         self.latest_vehicle_class = 'default'
         self.latest_classified_wheelbase = self.fixed_wheelbase
         self._last_target_ready = None
+        self.fleet_state = 'UNKNOWN'
 
     def _setup_ros_interfaces(self):
         for camera_id, topic in zip(self.camera_ids, self.detection_topics):
@@ -315,6 +317,8 @@ class CctvMergeNode(Node):
                 qos_profile_sensor_data)
         self.create_subscription(
             String, '/mission/complete', self.mission_complete_cb, 10)
+        self.create_subscription(
+            String, '/fleet/state', self.fleet_state_cb, 10)
 
         mission_qos = QoSProfile(
             depth=1,
@@ -370,6 +374,14 @@ class CctvMergeNode(Node):
             float(msg.pose.pose.position.x),
             float(msg.pose.pose.position.y))
 
+    def fleet_state_cb(self, msg):
+        try:
+            payload = json.loads(msg.data)
+            self.fleet_state = str(payload['state'])
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            self.get_logger().warn(
+                'invalid fleet/state envelope', throttle_duration_sec=5.0)
+
     def mission_complete_cb(self, msg):
         """임무 종료 — 타겟 latch와 제원 캐시를 해제한다.
 
@@ -423,7 +435,7 @@ class CctvMergeNode(Node):
             self.get_logger().error(
                 '살아있는 CCTV sensor 노드가 없습니다 — 맵/빈자리 발행 중단',
                 throttle_duration_sec=5.0)
-            self._publish_status(camera_states, [], 0)
+            self._publish_fail_closed(camera_states)
             return
         if self.require_all_cameras and len(alive_envelopes) < len(
                 self.camera_ids):
@@ -431,7 +443,7 @@ class CctvMergeNode(Node):
             self.get_logger().error(
                 f'require_all_cameras=true인데 {missing} 미수신 — 발행 중단',
                 throttle_duration_sec=5.0)
-            self._publish_status(camera_states, [], 0)
+            self._publish_fail_closed(camera_states)
             return
 
         # 1) 검출 병합
@@ -475,8 +487,12 @@ class CctvMergeNode(Node):
                     self.target_tracker.timeout_s):
                 self.dimension_tracker.reset()
 
+        mission_active = self.fleet_state in (
+            'WAIT_LIFT', 'PLAN_PATH', 'NAVIGATING')
         latched = self.target_tracker.update(
-            None if target_detection is None else target_detection.center, now)
+            None if target_detection is None else target_detection.center,
+            now,
+            preserve_latched=mission_active)
         if self.target_tracker.just_latched:
             self.get_logger().info(
                 '타겟 정차 확인 — target_ready latch (merge)')
@@ -505,7 +521,7 @@ class CctvMergeNode(Node):
             self._publish_vehicle_feedback(slot_cars, newest_stamp_ns)
 
         # 5) 맵
-        self._publish_map(merged, latched)
+        self._publish_map(merged, latched, coverage_polygons)
 
         # 6) 진단
         self._publish_status(camera_states, merged, newest_stamp_ns, slot_state)
@@ -518,6 +534,18 @@ class CctvMergeNode(Node):
     # ------------------------------------------------------------------
     # 발행 helper
     # ------------------------------------------------------------------
+    def _publish_fail_closed(self, camera_states):
+        self.target_tracker.reset()
+        self.dimension_tracker.reset()
+        self.spec_sent = False
+        self.latest_vehicle_class = 'default'
+        self.latest_classified_wheelbase = self.fixed_wheelbase
+        self.pub_target_ready.publish(Bool(data=False))
+        self._last_target_ready = False
+        self._publish_empty_slots(force_empty=True)
+        self._publish_map([], None, {})
+        self._publish_status(camera_states, [], 0)
+
     def _publish_target(self, center):
         msg = PoseStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
@@ -554,11 +582,12 @@ class CctvMergeNode(Node):
             f'size={self.dimension_tracker.length_m:.3f}x'
             f'{self.dimension_tracker.width_m:.3f}m (merge)')
 
-    def _publish_empty_slots(self):
+    def _publish_empty_slots(self, force_empty=False):
         pa = PoseArray()
         pa.header.stamp = self.get_clock().now().to_msg()
         pa.header.frame_id = 'map'
-        for slot_id in self.slot_tracker.empty_slot_ids():
+        slot_ids = [] if force_empty else self.slot_tracker.empty_slot_ids()
+        for slot_id in slot_ids:
             slot = self.slot_by_id[slot_id]
             pose = Pose()
             pose.position.x = slot.center_x_m
@@ -601,8 +630,11 @@ class CctvMergeNode(Node):
             msg.pose.orientation.w = math.cos(candidate.yaw / 2.0)
         self.pub_vehicle_fb.publish(msg)
 
-    def _publish_map(self, merged, latched):
-        grid = np.zeros((self.grid_h, self.grid_w), dtype=np.int8)
+    def _publish_map(self, merged, latched, coverage_polygons):
+        grid = np.asarray(coverage_grid_values(
+            self.grid_w, self.grid_h, self.resolution,
+            coverage_polygons), dtype=np.int8).reshape(
+                (self.grid_h, self.grid_w))
         car_px = max(1, int(math.ceil(self.car_size / self.resolution)))
         for detection in merged:
             # 운반 대상은 A* 장애물에서 제거해 시작점이 막히지 않게 한다.
@@ -639,7 +671,8 @@ class CctvMergeNode(Node):
             y2 = min(self.grid_h, gy + mask_cells + 1)
             x1 = max(0, gx - mask_cells)
             x2 = min(self.grid_w, gx + mask_cells + 1)
-            grid[y1:y2, x1:x2] = 0
+            region = grid[y1:y2, x1:x2]
+            region[region >= 0] = 0
 
         msg = OccupancyGrid()
         msg.header.stamp = self.get_clock().now().to_msg()

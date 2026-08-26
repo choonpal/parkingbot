@@ -1,6 +1,7 @@
 """브라우저형 BEV/주차면 등록과 실제 주차 연결 회귀 테스트."""
 
 from pathlib import Path
+import re
 
 import numpy as np
 import pytest
@@ -168,8 +169,8 @@ def test_browser_uses_original_image_coordinates_and_no_direct_camera_open():
     source = (
         ROOT / 'cooperative_parking_robot' /
         'bev_layout_calibrator_node.py').read_text(encoding='utf-8')
-    assert '*canvas.width/rect.width' in source
-    assert '*canvas.height/rect.height' in source
+    assert re.search(r'\*\s*canvas\.width\s*/\s*rect\.width', source)
+    assert re.search(r'\*\s*canvas\.height\s*/\s*rect\.height', source)
     assert 'cv2.VideoCapture' not in source
     assert "'/cctv/image_rect'" in source
     assert "web_port', 5001" in source

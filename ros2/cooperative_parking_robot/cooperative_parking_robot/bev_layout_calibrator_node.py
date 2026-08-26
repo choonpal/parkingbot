@@ -170,82 +170,191 @@ _HTML = r'''<!doctype html>
   </section>
 </main>
 <script>
-const canvas=document.getElementById('canvas'), ctx=canvas.getContext('2d');
-const image=new Image(); let snapshotSeq=0, mode='reference', pending=null;
-let references=[], slotClicks=[], waitingClicks=[];
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const image = new Image();
+let snapshotSeq = 0;
+let mode = 'reference';
+let pending = null;
+let references = [], slotClicks = [], waitingClicks = [];
 
-function status(message, bad=false){ const el=document.getElementById('status');
-  el.textContent=message; el.style.color=bad?'var(--red)':'#b9c8da'; }
-async function api(url, options={}){ const response=await fetch(url, options);
-  const body=await response.json().catch(()=>({error:'응답 해석 실패'}));
-  if(!response.ok) throw new Error(body.error||response.statusText); return body; }
-function post(url, payload){ return api(url,{method:'POST',headers:{'Content-Type':'application/json'},
-  body:JSON.stringify(payload)}); }
-function setMode(next){ mode=next; pending=null; slotClicks=[]; waitingClicks=[];
-  for(const id of ['modeRef','modeSlot','modeWaiting']) document.getElementById(id).classList.remove('active');
-  document.getElementById(next==='reference'?'modeRef':next==='slot'?'modeSlot':'modeWaiting').classList.add('active');
-  draw(); status(next==='reference'?'영상의 바닥 기준점을 클릭하세요.':
-    next==='slot'?'주차면 모서리 4개와 마지막 통로점 1개를 클릭하세요.':'대기영역 모서리 4개를 클릭하세요.'); }
+function status(message, bad = false) {
+  const el = document.getElementById('status');
+  el.textContent = message;
+  el.style.color = bad ? 'var(--red)' : '#b9c8da';
+}
+async function api(url, options = {}) {
+  const response = await fetch(url, options);
+  const body = await response.json().catch(() => ({error: '응답 해석 실패'}));
+  if (!response.ok) throw new Error(body.error || response.statusText);
+  return body;
+}
+function post(url, payload) {
+  return api(url, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  });
+}
+function setMode(next) {
+  mode = next; pending = null; slotClicks = []; waitingClicks = [];
+  for (const id of ['modeRef', 'modeSlot', 'modeWaiting']) {
+    document.getElementById(id).classList.remove('active');
+  }
+  const modeId = next === 'reference' ? 'modeRef' :
+    next === 'slot' ? 'modeSlot' : 'modeWaiting';
+  document.getElementById(modeId).classList.add('active');
+  draw();
+  const prompt = next === 'reference' ? '영상의 바닥 기준점을 클릭하세요.' :
+    next === 'slot' ? '주차면 모서리 4개와 마지막 통로점 1개를 클릭하세요.' :
+    '대기영역 모서리 4개를 클릭하세요.';
+  status(prompt);
+}
 
-async function takeSnapshot(){ try{ const s=await post('/api/snapshot',{}); snapshotSeq=s.sequence;
-  image.onload=()=>{ canvas.width=image.naturalWidth; canvas.height=image.naturalHeight; draw(); };
-  image.src='/api/snapshot.jpg?sequence='+snapshotSeq+'&t='+Date.now();
-  references=[]; slotClicks=[]; waitingClicks=[]; pending=null; renderReferences();
-  status(`영상 정지 완료: ${s.width}×${s.height}px`); }catch(e){status(e.message,true);} }
-canvas.addEventListener('click', event=>{ if(!image.complete||!image.naturalWidth) return;
-  const rect=canvas.getBoundingClientRect();
+async function takeSnapshot() {
+  try {
+    const snapshot = await post('/api/snapshot', {});
+    snapshotSeq = snapshot.sequence;
+    image.onload = () => {
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      draw();
+    };
+    image.src = '/api/snapshot.jpg?sequence=' + snapshotSeq + '&t=' + Date.now();
+    references = []; slotClicks = []; waitingClicks = []; pending = null;
+    renderReferences();
+    status(`영상 정지 완료: ${snapshot.width}×${snapshot.height}px`);
+  } catch (error) { status(error.message, true); }
+}
+canvas.addEventListener('click', event => {
+  if (!image.complete || !image.naturalWidth) return;
+  const rect = canvas.getBoundingClientRect();
   // CSS 표시 좌표가 아니라 canvas 원본 픽셀 좌표로 되돌린다.
-  const point=[(event.clientX-rect.left)*canvas.width/rect.width,
-               (event.clientY-rect.top)*canvas.height/rect.height];
-  if(mode==='reference') pending=point;
-  else if(mode==='slot' && slotClicks.length<5) slotClicks.push(point);
-  else if(mode==='waiting' && waitingClicks.length<4) waitingClicks.push(point);
-  draw(); });
-function draw(){ ctx.clearRect(0,0,canvas.width,canvas.height); if(image.complete&&image.naturalWidth)
-  ctx.drawImage(image,0,0,canvas.width,canvas.height);
-  const marks=[]; references.forEach((r,i)=>marks.push([r.pixel,`R${i+1}`,'#48a7ff']));
-  if(pending) marks.push([pending,'R?','#48a7ff']);
-  slotClicks.forEach((p,i)=>marks.push([p,i<4?`S${i+1}`:'통로','#49d17d']));
-  waitingClicks.forEach((p,i)=>marks.push([p,`W${i+1}`,'#ffb454']));
-  ctx.font='16px system-ui'; ctx.lineWidth=3;
-  for(const [p,label,color] of marks){ctx.beginPath();ctx.arc(p[0],p[1],7,0,Math.PI*2);
-    ctx.fillStyle=color;ctx.fill();ctx.fillText(label,p[0]+10,p[1]-8);} }
-function addReference(){ if(!pending){status('먼저 영상의 기준점을 클릭하세요.',true);return;}
-  const rawX=document.getElementById('worldX').value.trim(), rawY=document.getElementById('worldY').value.trim();
-  if(rawX===''||rawY===''){status('실측 X,Y metre 값을 둘 다 입력하세요.',true);return;}
-  const x=Number(rawX), y=Number(rawY);
-  if(!Number.isFinite(x)||!Number.isFinite(y)){status('실측 X,Y metre 값을 입력하세요.',true);return;}
-  references.push({pixel:pending,world:[x,y]}); pending=null; renderReferences();draw(); }
-function renderReferences(){ document.getElementById('referenceList').innerHTML=references.length?
-  references.map((r,i)=>`<span class="tag">R${i+1}: (${r.pixel[0].toFixed(1)},${r.pixel[1].toFixed(1)}) → (${r.world[0]},${r.world[1]})m</span>`).join(''):
-  '기준점 0개'; }
-function clearReferences(){references=[];pending=null;renderReferences();draw();}
-function clearSelection(){pending=null;slotClicks=[];waitingClicks=[];draw();status('현재 선택 점을 초기화했습니다.');}
-async function computeHomography(){try{const out=await post('/api/homography',{references});
-  status(`Homography 계산 완료\nRMS ${out.rms_m.toFixed(4)}m / 최대 ${out.max_error_m.toFixed(4)}m`);
-  refreshPreview();}catch(e){status(e.message,true);} }
-async function registerSlot(){try{if(slotClicks.length!==5)throw new Error('모서리 4개와 통로점 1개가 필요합니다.');
-  const id=document.getElementById('slotId').value.trim(); if(!id)throw new Error('슬롯 ID를 입력하세요.');
-  const out=await post('/api/slot',{slot_id:id,pixel_corners:slotClicks.slice(0,4),aisle_pixel:slotClicks[4]});
-  slotClicks=[]; draw(); await loadState(); refreshPreview();
-  status(`${out.slot.slot_id} 등록: ${out.slot.length_m.toFixed(2)}×${out.slot.width_m.toFixed(2)}m, yaw ${out.entry_yaw_deg.toFixed(1)}°`);
-}catch(e){status(e.message,true);} }
-async function registerWaiting(){try{if(waitingClicks.length!==4)throw new Error('대기영역 모서리 4개가 필요합니다.');
-  await post('/api/waiting',{pixel_corners:waitingClicks}); waitingClicks=[];draw();refreshPreview();
-  status('대기영역 등록 완료');}catch(e){status(e.message,true);} }
-async function loadState(){try{const s=await api('/api/state');
-  document.getElementById('slotList').innerHTML=s.slots.length?s.slots.map(v=>
-    `<span class="tag">${v.slot_id} ${v.length_m.toFixed(2)}×${v.width_m.toFixed(2)}m / ${v.entry_yaw_deg.toFixed(1)}°</span>`).join(''):'등록 슬롯 없음';
-}catch(e){status(e.message,true);} }
-function refreshPreview(){document.getElementById('preview').src='/api/preview.jpg?sequence='+snapshotSeq+'&t='+Date.now();}
-async function saveAll(){try{const out=await post('/api/save',{
-  map_width_m:Number(document.getElementById('mapW').value),
-  map_height_m:Number(document.getElementById('mapH').value),
-  map_resolution_m:Number(document.getElementById('mapRes').value),
-  waiting_yaw_deg:Number(document.getElementById('waitingYaw').value)});
-  status(`저장 완료\nHomography: ${out.homography_file}\nLayout: ${out.layout_file}\n주행 시 homography_scale_to_m:=1.0`);
-}catch(e){status(e.message,true);} }
-setMode('reference'); loadState();
+  const point = [
+    (event.clientX - rect.left) * canvas.width / rect.width,
+    (event.clientY - rect.top) * canvas.height / rect.height
+  ];
+  if (mode === 'reference') pending = point;
+  else if (mode === 'slot' && slotClicks.length < 5) slotClicks.push(point);
+  else if (mode === 'waiting' && waitingClicks.length < 4) {
+    waitingClicks.push(point);
+  }
+  draw();
+});
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (image.complete && image.naturalWidth) {
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+  }
+  const marks = [];
+  references.forEach((reference, index) =>
+    marks.push([reference.pixel, `R${index + 1}`, '#48a7ff']));
+  if (pending) marks.push([pending, 'R?', '#48a7ff']);
+  slotClicks.forEach((point, index) =>
+    marks.push([point, index < 4 ? `S${index + 1}` : '통로', '#49d17d']));
+  waitingClicks.forEach((point, index) =>
+    marks.push([point, `W${index + 1}`, '#ffb454']));
+  ctx.font = '16px system-ui'; ctx.lineWidth = 3;
+  for (const [point, label, color] of marks) {
+    ctx.beginPath(); ctx.arc(point[0], point[1], 7, 0, Math.PI * 2);
+    ctx.fillStyle = color; ctx.fill();
+    ctx.fillText(label, point[0] + 10, point[1] - 8);
+  }
+}
+function addReference() {
+  if (!pending) { status('먼저 영상의 기준점을 클릭하세요.', true); return; }
+  const rawX = document.getElementById('worldX').value.trim();
+  const rawY = document.getElementById('worldY').value.trim();
+  if (rawX === '' || rawY === '') {
+    status('실측 X,Y metre 값을 둘 다 입력하세요.', true); return;
+  }
+  const x = Number(rawX), y = Number(rawY);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    status('실측 X,Y metre 값을 입력하세요.', true); return;
+  }
+  references.push({pixel: pending, world: [x, y]});
+  pending = null; renderReferences(); draw();
+}
+function renderReferences() {
+  document.getElementById('referenceList').innerHTML = references.length ?
+    references.map((reference, index) =>
+      `<span class="tag">R${index + 1}: ` +
+      `(${reference.pixel[0].toFixed(1)},${reference.pixel[1].toFixed(1)}) → ` +
+      `(${reference.world[0]},${reference.world[1]})m</span>`).join('') :
+    '기준점 0개';
+}
+function clearReferences() {
+  references = []; pending = null; renderReferences(); draw();
+}
+function clearSelection() {
+  pending = null; slotClicks = []; waitingClicks = []; draw();
+  status('현재 선택 점을 초기화했습니다.');
+}
+async function computeHomography() {
+  try {
+    const output = await post('/api/homography', {references});
+    status(`Homography 계산 완료\nRMS ${output.rms_m.toFixed(4)}m / ` +
+      `최대 ${output.max_error_m.toFixed(4)}m`);
+    refreshPreview();
+  } catch (error) { status(error.message, true); }
+}
+async function registerSlot() {
+  try {
+    if (slotClicks.length !== 5) {
+      throw new Error('모서리 4개와 통로점 1개가 필요합니다.');
+    }
+    const id = document.getElementById('slotId').value.trim();
+    if (!id) throw new Error('슬롯 ID를 입력하세요.');
+    const output = await post('/api/slot', {
+      slot_id: id,
+      pixel_corners: slotClicks.slice(0, 4),
+      aisle_pixel: slotClicks[4]
+    });
+    slotClicks = []; draw(); await loadState(); refreshPreview();
+    status(`${output.slot.slot_id} 등록: ` +
+      `${output.slot.length_m.toFixed(2)}×${output.slot.width_m.toFixed(2)}m, ` +
+      `yaw ${output.entry_yaw_deg.toFixed(1)}°`);
+  } catch (error) { status(error.message, true); }
+}
+async function registerWaiting() {
+  try {
+    if (waitingClicks.length !== 4) {
+      throw new Error('대기영역 모서리 4개가 필요합니다.');
+    }
+    await post('/api/waiting', {pixel_corners: waitingClicks});
+    waitingClicks = []; draw(); refreshPreview();
+    status('대기영역 등록 완료');
+  } catch (error) { status(error.message, true); }
+}
+async function loadState() {
+  try {
+    const state = await api('/api/state');
+    document.getElementById('slotList').innerHTML = state.slots.length ?
+      state.slots.map(value =>
+        `<span class="tag">${value.slot_id} ` +
+        `${value.length_m.toFixed(2)}×${value.width_m.toFixed(2)}m / ` +
+        `${value.entry_yaw_deg.toFixed(1)}°</span>`).join('') :
+      '등록 슬롯 없음';
+  } catch (error) { status(error.message, true); }
+}
+function refreshPreview() {
+  document.getElementById('preview').src =
+    '/api/preview.jpg?sequence=' + snapshotSeq + '&t=' + Date.now();
+}
+async function saveAll() {
+  try {
+    const output = await post('/api/save', {
+      map_width_m: Number(document.getElementById('mapW').value),
+      map_height_m: Number(document.getElementById('mapH').value),
+      map_resolution_m: Number(document.getElementById('mapRes').value),
+      waiting_yaw_deg: Number(document.getElementById('waitingYaw').value)
+    });
+    status(`저장 완료\nHomography: ${output.homography_file}\n` +
+      `Layout: ${output.layout_file}\n주행 시 homography_scale_to_m:=1.0`);
+  } catch (error) { status(error.message, true); }
+}
+setMode('reference');
+loadState();
 </script>
 </body></html>'''
 

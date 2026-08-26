@@ -19,6 +19,7 @@ from cooperative_parking_robot.bev_fusion_core import (
     SlotOccupancyTracker,
     TargetLatchTracker,
     VehicleDimensionTracker,
+    coverage_grid_values,
     decode_detection_envelope,
     encode_detection_envelope,
     image_corner_coverage,
@@ -159,6 +160,15 @@ def test_slot_observability_tracks_which_camera_sees_each_slot():
     assert cam0_only == {'P1': True, 'P4': False}
 
 
+def test_coverage_grid_marks_only_live_camera_view_as_free():
+    values = coverage_grid_values(
+        6, 4, 1.0,
+        {'cam0': [(0.0, 0.0), (3.0, 0.0), (3.0, 4.0), (0.0, 4.0)]})
+    assert values[1 * 6 + 1] == 0
+    assert values[1 * 6 + 4] == -1
+    assert coverage_grid_values(2, 2, 1.0, {}) == [-1, -1, -1, -1]
+
+
 def test_require_full_slot_coverage_is_stricter():
     # P1을 반만 덮는 시야
     partial = [(0.0, 0.0), (1.6, 0.0), (1.6, 4.0), (0.0, 4.0)]
@@ -243,6 +253,28 @@ def test_moving_target_resets_the_hold_window():
     latch.update((2.30, 0.60), 0.0)
     latch.update((2.50, 0.60), 1.9)   # 20cm 이동 — 앵커 재설정
     assert latch.update((2.50, 0.60), 2.5) is None
+
+
+def test_pre_mission_latch_expires_but_active_mission_can_preserve_it():
+    latch = TargetLatchTracker(
+        stationary_tolerance_m=0.02, stationary_hold_s=0.0,
+        detection_timeout_s=0.5)
+    assert latch.update((2.3, 0.6), 0.0) is None
+    assert latch.update((2.3, 0.6), 0.0) == pytest.approx((2.3, 0.6))
+    assert latch.update(None, 0.4) == pytest.approx((2.3, 0.6))
+    assert latch.update(None, 0.6) is None
+
+    latch.update((2.3, 0.6), 1.0)
+    latch.update((2.3, 0.6), 1.0)
+    assert latch.update(None, 10.0, preserve_latched=True) == pytest.approx(
+        (2.3, 0.6))
+
+
+def test_dual_launch_fails_closed_when_any_camera_is_missing_by_default():
+    dual = (ROOT / 'launch/cctv_server_dual.launch.py').read_text()
+    assert "'require_all_cameras', default_value='true'" in dual
+    merge = (ROOT / 'cooperative_parking_robot/cctv_merge_node.py').read_text()
+    assert "declare_parameter('require_all_cameras', True)" in merge
 
 
 def test_vehicle_dimensions_reject_out_of_range_masks():

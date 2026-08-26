@@ -1,6 +1,8 @@
 # v1.2 코드 검토·수정 보고서
 
-> **후속 버전:** ROS 2 Humble 배포 변경은 v1.3에서 수행했다. 현재 실행 절차는 `docs/HUMBLE_DEPLOYMENT.md`를 따른다.
+> **과거 기록 — v1.2 코드 검토 스냅샷.** ROS 2 Humble 배포 변경은 v1.3에서 수행했다.
+> 현재 실행 절차는 저장소의 `docs/REAL_ROBOT_DEPLOYMENT_RUNBOOK.md`, 현재 구조는
+> `ros2/cooperative_parking_robot/README.md`를 따른다.
 
 ## 적용 범위
 

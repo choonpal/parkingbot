@@ -3,6 +3,8 @@ import math
 import time
 from types import SimpleNamespace
 
+from rclpy.time import Time
+
 from cooperative_parking_robot.fleet_manager_node import FleetManagerNode
 from cooperative_parking_robot.parking_geometry import Pose2D
 from cooperative_parking_robot.parking_registry import (
@@ -43,12 +45,7 @@ class AdjustableClock:
         self.nanoseconds = nanoseconds
 
     def now(self):
-        nanoseconds = self.nanoseconds
-        return SimpleNamespace(
-            nanoseconds=nanoseconds,
-            to_msg=lambda: SimpleNamespace(
-                sec=nanoseconds // 1_000_000_000,
-                nanosec=nanoseconds % 1_000_000_000))
+        return Time(nanoseconds=self.nanoseconds)
 
 
 def occupied(direction='forward'):
@@ -438,10 +435,15 @@ def test_demo_p1_p4_preflight_uses_front_first_clearance_policy():
         final_vehicle_pose=Pose2D(x, 3.0, math.pi / 2.0),
         vehicle_spec=SPEC) for x in (1.5, 2.5, 3.5, 4.5)]
 
-    fleet.simultaneous_entry = True
-    assert not any(fleet._retrieve_approach_preflight(r) for r in records)
-    fleet.simultaneous_entry = False
-    assert all(fleet._retrieve_approach_preflight(r) for r in records)
+    def preflight_with_fresh_odom(record, simultaneous_entry):
+        receipt = time.monotonic()
+        fleet.front_odom['receipt'] = receipt
+        fleet.rear_odom['receipt'] = receipt
+        fleet.simultaneous_entry = simultaneous_entry
+        return fleet._retrieve_approach_preflight(record)
+
+    assert not any(preflight_with_fresh_odom(r, True) for r in records)
+    assert all(preflight_with_fresh_odom(r, False) for r in records)
 
 
 def test_complete_park_home_ui_retrieve_home_cycle():

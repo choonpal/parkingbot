@@ -1,5 +1,9 @@
 # 협동 자율 주차 로봇 시스템 — 최종 명세서 (v1.6, STM32 초음파 통합 — 검수 반영)
 
+> **과거 기록 — v1.6 시스템 명세 스냅샷.** 현재 구조와 운용 기준은
+> 저장소의 `docs/README.md`, `docs/REAL_WORLD_READINESS.md`,
+> `ros2/cooperative_parking_robot/README.md`를 따른다.
+
 ## 1. 환경
 
 - 대기공간(Waiting Area), Target 차량(모형차), 주차장(Parking Lot), 목표 주차공간(Reach)

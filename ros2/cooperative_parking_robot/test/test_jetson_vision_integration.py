@@ -8,6 +8,7 @@ import pytest
 
 from cooperative_parking_robot.vision_utils import (
     correct_floor_projection,
+    load_yolo_model,
     normalize_model_mode,
     pnp_distance_m,
     select_marker_by_id,
@@ -25,6 +26,25 @@ def test_model_mode_is_explicit_and_rejects_unknown_values():
     assert normalize_model_mode('parking_seg') == 'parking_seg'
     with pytest.raises(ValueError):
         normalize_model_mode('guess_from_filename')
+
+
+def test_preview_yolo_loader_requires_local_file_and_sets_segmentation_task(
+        tmp_path):
+    model_path = tmp_path / 'vehicle.engine'
+    model_path.write_bytes(b'test model')
+    calls = []
+    sentinel = object()
+
+    def factory(path, **kwargs):
+        calls.append((path, kwargs))
+        return sentinel
+
+    model, task = load_yolo_model(factory, str(model_path), 'vehicle_seg')
+    assert model is sentinel
+    assert task == 'segment'
+    assert calls == [(str(model_path), {'task': 'segment'})]
+    with pytest.raises(FileNotFoundError, match='network download is disabled'):
+        load_yolo_model(factory, str(tmp_path / 'missing.pt'), 'coco')
 
 
 def test_marker_filter_rejects_tiny_false_positive_and_selects_largest():
@@ -62,6 +82,13 @@ def test_only_camera_publisher_node_owns_video_capture():
     assert 'cv2.VideoCapture(' not in web
     assert 'cv2.VideoCapture(' not in yolo
     assert 'cv2.VideoCapture(' not in marker
+
+
+def test_camera_node_prefers_persistent_device_path_with_id_fallback():
+    camera = (PKG / 'opencv_camera_node.py').read_text()
+    assert "declare_parameter('camera_device', '')" in camera
+    assert 'resolve_camera_source' in camera
+    assert 'cv2.CAP_V4L2' in camera
 
 
 def test_generic_coco_model_is_not_interpreted_as_parking_classes():
@@ -117,6 +144,34 @@ def test_dual_cctv_provisional_camera_and_calibration_resolution_is_640x480():
     assert "'camera_height_px', default_value='480'" in source
     assert "'calibration_width_px', default_value='640'" in source
     assert "'calibration_height_px', default_value='480'" in source
+    assert "'require_exact_camera_resolution', default_value='true'" in source
+    assert source.count("'require_exact_resolution': _bool(") == 2
+
+    rectify = (PKG / 'cctv_rectify_node.py').read_text()
+    assert "declare_parameter('require_exact_resolution', False)" in rectify
+    assert 'CCTV frame resolution mismatch; dropping frame' in rectify
+
+
+def test_dual_cctv_pins_logical_cameras_to_site_usb_ports():
+    source = (ROOT / 'launch/cctv_server_dual.launch.py').read_text()
+    assert "'camera0_device'" in source
+    assert "'camera2_device'" in source
+    assert 'platform-3610000.usb-usb-0:2.4.2:1.0-video-index0' in source
+    assert 'platform-3610000.usb-usb-0:2.3.2:1.0-video-index0' in source
+    assert "'camera0_id', default_value='2'" in source
+    assert "'camera2_id', default_value='0'" in source
+
+
+def test_dual_cctv_uses_per_camera_marker_heights_and_debug_calibration():
+    source = (ROOT / 'launch/cctv_server_dual.launch.py').read_text()
+    assert "'camera_heights_m'" in source
+    assert "'camera_heights_m': _float_array('camera_heights_m')" in source
+    assert "'debug_camera_calib'" in source
+    assert "'camera_calib': LaunchConfiguration('debug_camera_calib')" in source
+
+    marker = (PKG / 'cctv_robot_marker_node.py').read_text()
+    assert "declare_parameter('camera_heights_m', [0.0])" in marker
+    assert "camera['height_m'], self.marker_height[role]" in marker
 
 
 def test_site_aruco_measurements_are_launch_defaults():

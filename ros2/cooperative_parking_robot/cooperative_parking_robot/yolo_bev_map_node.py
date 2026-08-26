@@ -1180,8 +1180,10 @@ class YoloBevMapNode(Node):
             gx = int(wx / self.resolution)
             gy = int(wy / self.resolution)
             half = car_px // 2
-            y1 = max(0, gy-half); y2 = min(self.grid_h, gy+half)
-            x1 = max(0, gx-half); x2 = min(self.grid_w, gx+half)
+            y1 = max(0, gy - half)
+            y2 = min(self.grid_h, gy + half)
+            x1 = max(0, gx - half)
+            x2 = min(self.grid_w, gx + half)
             grid[y1:y2, x1:x2] = 100
 
         # YOLO가 로봇을 차량으로 오검출해도 시작점을 막지 않도록 self-mask.

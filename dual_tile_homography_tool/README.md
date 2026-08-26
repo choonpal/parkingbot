@@ -61,9 +61,11 @@ chmod +x run_dual.sh
 가능하면 실제 설치에서는 `/dev/v4l/by-id/...` 사용을 권장합니다.
 
 ```bash
+: "${CAM0_DEVICE:?set CAM0_DEVICE to the verified /dev/v4l/by-id path}"
+: "${CAM2_DEVICE:?set CAM2_DEVICE to the verified /dev/v4l/by-id path}"
 ./run_dual.sh \
-  --cam0 /dev/v4l/by-id/<CAM0-ID> \
-  --cam2 /dev/v4l/by-id/<CAM2-ID>
+  --cam0 "${CAM0_DEVICE}" \
+  --cam2 "${CAM2_DEVICE}"
 ```
 
 ## GUI

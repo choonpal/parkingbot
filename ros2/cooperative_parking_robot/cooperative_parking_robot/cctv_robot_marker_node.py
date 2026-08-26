@@ -122,6 +122,7 @@ class CctvRobotMarkerNode(Node):
         self.declare_parameter('camera_ids_csv', '')
         # 카메라별 광축 지상점 [x0,y0, x2,y2, ...] — 비우면 영상 중심 거리로 대체
         self.declare_parameter('camera_ground_points', [0.0])
+        self.declare_parameter('camera_heights_m', [0.0])
         # 더 좋은 카메라로 넘어가기 전에 현재 카메라를 유지하는 최소 시간.
         self.declare_parameter('selection_hold_s', 0.30)
         # 이 시간이 지난 관측은 카메라 선택 후보에서 제외한다.
@@ -192,11 +193,7 @@ class CctvRobotMarkerNode(Node):
         }
         if any(h < 0.0 for h in self.marker_height.values()):
             raise ValueError('marker height must be non-negative')
-        if any(h > 0.0 for h in self.marker_height.values()):
-            if self.camera_height <= max(self.marker_height.values()):
-                raise ValueError(
-                    'camera_height_m must be greater than marker heights')
-        else:
+        if not any(h > 0.0 for h in self.marker_height.values()):
             self.get_logger().warn(
                 '상판 마커 높이가 0 — parallax 보정 비활성화(실측 필요)')
 
@@ -265,6 +262,8 @@ class CctvRobotMarkerNode(Node):
         ids = _csv('camera_ids_csv') or _array('camera_ids')
         ground = [float(v)
                   for v in self.get_parameter('camera_ground_points').value]
+        heights = [float(v)
+                   for v in self.get_parameter('camera_heights_m').value]
 
         if not topics:
             # 하위호환 경로: 기존 단일 카메라 파라미터를 그대로 쓴다.
@@ -272,6 +271,7 @@ class CctvRobotMarkerNode(Node):
             files = [str(self.get_parameter('homography_file').value).strip()]
             ids = ['cctv0']
             ground = [float(self.camera_ground[0]), float(self.camera_ground[1])]
+            heights = [float(self.camera_height)]
             if not topics[0]:
                 raise ValueError('image_topic must not be empty')
 
@@ -294,6 +294,19 @@ class CctvRobotMarkerNode(Node):
                     'camera_ground_points 길이가 카메라 수와 맞지 않아 무시 — '
                     '영상 중심 거리로 카메라를 선택합니다')
             ground = []
+        if len(heights) != len(topics):
+            if len(heights) == 1 and heights[0] == 0.0:
+                heights = [float(self.camera_height)] * len(topics)
+            else:
+                raise ValueError(
+                    'camera_heights_m must have the same length as image_topics')
+        if any(not math.isfinite(height) or height < 0.0 for height in heights):
+            raise ValueError('camera heights must be finite and non-negative')
+        maximum_marker_height = max(self.marker_height.values())
+        if maximum_marker_height > 0.0 and any(
+                height <= maximum_marker_height for height in heights):
+            raise ValueError(
+                'every camera height must be greater than marker heights')
 
         self.cameras = []
         for index, topic in enumerate(topics):
@@ -308,6 +321,7 @@ class CctvRobotMarkerNode(Node):
                 'image_topic': topic,
                 'homography': homography,
                 'axis_ground': axis,
+                'height_m': heights[index],
             })
         self.camera_by_id = {
             camera['camera_id']: camera for camera in self.cameras}
@@ -500,7 +514,7 @@ class CctvRobotMarkerNode(Node):
         return correct_floor_projection(
             floor_x, floor_y,
             axis[0], axis[1],
-            self.camera_height, self.marker_height[role])
+            camera['height_m'], self.marker_height[role])
 
 
 def main(args=None):

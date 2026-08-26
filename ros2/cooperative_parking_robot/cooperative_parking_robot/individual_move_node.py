@@ -45,7 +45,6 @@ from cooperative_parking_robot.vehicle_entry import (
     plan_around_vehicle,
     rear_scan_speed_from_relative,
     relative_alignment_is_consistent,
-    role_sign,
     scan_direction,
     segment_intersects_open_rect,
     standoff_longitudinal,

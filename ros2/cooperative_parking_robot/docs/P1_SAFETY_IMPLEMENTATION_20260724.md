@@ -1,5 +1,9 @@
 # P1 안전·정합성 수정 기록 (2026-07-24)
 
+> **과거 기록 — 2026-07-24 P1 구현 스냅샷.** 현재 안전 판정과 실차 절차는
+> 저장소의 `docs/REAL_WORLD_READINESS.md`와
+> `docs/REAL_ROBOT_DEPLOYMENT_RUNBOOK.md`를 따른다.
+
 이 문서는 원본 `v8_fix_work.zip`을 보존한 채 수정 작업본에 반영한 사항을 요약한다.
 
 ## 반영 결과

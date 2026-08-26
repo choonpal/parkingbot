@@ -1,5 +1,9 @@
 # ROS 2 Humble 실행 가능성 검토 결과
 
+> **과거 기록 — 날짜·버전 미기재 초기 Humble 이식 검토 스냅샷.** 현재 실행 절차와
+> 검증 판정은 저장소의 `docs/REAL_ROBOT_DEPLOYMENT_RUNBOOK.md`와
+> `docs/REAL_WORLD_READINESS.md`를 따른다.
+
 ## 판정
 
 **조건부 실행 가능.**

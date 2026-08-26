@@ -235,8 +235,8 @@ class PoseFusionNode(Node):
         # 증거다. 별도 Bool 토픽의 교차토픽 전달 순서에 의존하지 않는다.
         self._cctv_visible = True
         was_initialized = self.ekf.initialized
-        accepted = self.ekf.correct(msg.pose.position.x, msg.pose.position.y,
-                                     yaw, R=self.R)
+        accepted = self.ekf.correct(
+            msg.pose.position.x, msg.pose.position.y, yaw, R=self.R)
         if accepted and not was_initialized:
             # P1-2: 첫 측정은 보정이 아니라 절대 초기화다. init_* 명목값과의
             # 차이를 로그로 남겨 배치 오차를 현장에서 바로 확인할 수 있게 한다.

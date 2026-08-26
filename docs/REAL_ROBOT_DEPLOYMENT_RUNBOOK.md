@@ -1,52 +1,68 @@
-# 실차 탑재·실행 통합 Runbook
+# 실차 탑재·실행 Runbook
 
-이 문서는 현재 저장소의 ROS 2 노드, STM32CubeIDE 프로젝트, 7인치 UI와
-SQLite Parking Registry를 실제 장비에 올리는 기준 절차다. 소프트웨어 테스트
-통과는 하중 안전을 보증하지 않는다. 보호 지그, 물리 비상정지, 사람 감독 없이
-차량을 인양하지 않는다.
+이 문서는 배포, 분산 기동, 7인치 UI와 장애 복구의 기준 절차다. Calibration,
+Homography와 preflight는 [pipeline](pipeline.md), 시험 단계와 최종 운용 판정은
+[실차 준비도](REAL_WORLD_READINESS.md)를 따른다. 전체 문서 관계는
+[문서 안내](README.md)에 정리돼 있다.
 
-## 1. 기준 구성
+소프트웨어가 동작해도 하중 안전은 보장되지 않는다. 보호 지그, 물리 ESTOP,
+사람 감독과 실제 파지/하중 확인 수단 없이 차량을 들어 올리는 무인 운용은
+**NO-GO**다. `GRIP_DONE`은 서보 목표각 도달 신호일 뿐 하중 확인이 아니다.
 
-| 장비 | 기준 환경 | 역할 |
-|---|---|---|
-| Jetson Orin Nano | Ubuntu 22.04 / ROS 2 Humble | CCTV, BEV, Fleet, SQLite Registry, Web UI |
-| Front Raspberry Pi 4 | Ubuntu 22.04 / ROS 2 Humble | Front FSM, 강체 운반 master, Front STM32 bridge |
-| Rear Raspberry Pi 4 | Ubuntu 22.04 / ROS 2 Humble | Rear FSM, Rear STM32 bridge, Rear camera |
-| STM32 2대 | STM32F401RETx | 각 로봇의 모터, encoder, servo, ultrasonic |
-| 7인치 터치 화면 | landscape 1024×600 권장 | Jetson의 `/kiosk` 표시 |
+## 1. 배포
 
-모든 Linux 장비는 같은 LAN, `ROS_DOMAIN_ID`와 NTP/chrony 시각을 사용한다.
-Fleet와 Registry의 단일 writer는 Jetson의 `fleet_manager_node`다.
-
-## 2. GitHub에서 각 Linux 장비로 배포
-
-각 장비에서 SSH key가 GitHub에 등록되어 있다고 가정한다.
+Jetson과 Front/Rear Raspberry Pi는 Ubuntu 22.04, ROS 2 Humble, 같은
+`ROS_DOMAIN_ID`, 동기화된 NTP/chrony 시각과 신뢰 가능한 격리 LAN을 사용한다.
+저장소 기본 branch를 clone하거나 검증된 release/tag/commit을 명시한다. 과거
+`feature/exit-mission-integration` branch를 배포 기준으로 사용하지 않는다.
 
 ```bash
-git clone --branch feature/exit-mission-integration git@github.com:choonpal/parkingbot.git ~/parkingbot
+git clone git@github.com:choonpal/parkingbot.git ~/parkingbot
 mkdir -p ~/parkingbot_ws/src
-ln -s ~/parkingbot/ros2/cooperative_parking_robot ~/parkingbot_ws/src/cooperative_parking_robot
+ln -s ~/parkingbot/ros2/cooperative_parking_robot \
+  ~/parkingbot_ws/src/cooperative_parking_robot
 
 source /opt/ros/humble/setup.bash
 cd ~/parkingbot_ws
-rosdep install --from-paths src --ignore-src -r -y
-colcon build --symlink-install --packages-select cooperative_parking_robot
-source install/setup.bash
-colcon test --packages-select cooperative_parking_robot
-colcon test-result --verbose
+~/parkingbot/ros2/cooperative_parking_robot/scripts/humble_build_check.sh \
+  ~/parkingbot_ws
 ```
 
-업데이트할 때는 미션과 모터 전원을 먼저 끄고 다음 순서를 사용한다.
+이 script는 Humble system Python을 사용하도록 build/test subprocess에서 user-site를
+차단하고, 테스트가 0개 수집되면 실패한다. 현재 suite의 정확한 개수를 문서에
+고정하지는 않지만 결과가 반드시 0보다 크고 failure가 없어야 한다. 실제 실행
+결과를 확인한 뒤에만 다음 단계로 간다. 업데이트 전에는 미션을 종료하고 모터
+전원을 차단한 뒤 `git pull --ff-only` 또는 검증된 release checkout 후 다시
+빌드한다.
+
+### Jetson ML runtime
+
+`rosdep`은 Ultralytics와 Jetson용 PyTorch/TensorRT를 설치하지 않는다. CUDA,
+cuDNN, TensorRT와 PyTorch는 설치된 JetPack/L4T에 맞는 NVIDIA 배포본을 사용하고,
+그 위에 검증된 Ultralytics 버전을 고정한다. x86용 일반 PyPI wheel이나 임의의
+`pip install --upgrade`로 Jetson system CUDA stack을 덮어쓰지 않는다.
+
+2026-08-26 현장 Jetson import baseline은 다음과 같다. 장비 image를 바꾸면 이
+조합을 그대로 가정하지 말고 NVIDIA 호환표에 맞춰 새 조합을 검증·기록한다.
+
+| 모듈 | 검증 baseline |
+|---|---:|
+| Python | 3.10 |
+| PyTorch | 2.8.0 |
+| Ultralytics | 8.4.116 |
+| TensorRT | 10.3.0 |
+| OpenCV | 4.5.4 (`cv2.aruco` 포함) |
+| NumPy | 1.26.4 |
+
+설치 뒤 runtime shell에서 실제 import와 preflight를 확인한다. build script 안의
+`PYTHONNOUSERSITE=1`은 build/test subprocess에만 적용되며, ML package를 user-site에
+설치한 runtime shell에 전역 export하지 않는다.
 
 ```bash
-cd ~/parkingbot
-git pull --ff-only
-cd ~/parkingbot_ws
-source /opt/ros/humble/setup.bash
-colcon build --symlink-install --packages-select cooperative_parking_robot
+python3 -c 'import torch, ultralytics, tensorrt, cv2, numpy; print(torch.__version__, ultralytics.__version__, tensorrt.__version__, cv2.__version__, numpy.__version__)'
 ```
 
-세 장비의 shell 시작 설정은 동일하게 맞춘다.
+각 장비의 shell 또는 service에 다음 환경을 동일하게 적용한다.
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -56,260 +72,184 @@ export ROS_LOCALHOST_ONLY=0
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 ```
 
-## 3. Parking Registry SQLite
+## 2. STM32 플래시와 전기 안전
 
-별도 DB server나 Python package는 필요 없다. Python 표준 `sqlite3`가
-다음 기본 파일을 만든다.
+플래시 대상은 `stm32/parking_robot` 하나다. CubeIDE에서 Existing Projects
+into Workspace로 import하고, `parking_robot_firmware.c`가 포함된 ARM build가
+성공하는지 확인한 뒤 모터 전원을 분리한 상태로 두 보드에 플래시한다. UART
+115200 8N1의 heartbeat/ACK, encoder와 ultrasonic frame을 먼저 확인한다.
 
-```text
-~/.ros/adaptive_valet_bot/parking_registry.db
-```
+펌웨어 소스의 현재 `ENCODER_PPR`은 `5182.0f`지만 운용값으로 고정해 믿지 않는다.
+로봇별 출력축 1회전 count를 측정하고 ROS `encoder_ppr`와 해당 보드 펌웨어 값을
+같게 맞춘다. wheel radius, `lx`, `ly`, motor/encoder sign도 로봇별로 실측한다.
 
-DB에는 slot lifecycle, 차량번호, final pose, parking direction, vehicle spec,
-PBKDF2 iterations/salt/digest가 저장된다. 비밀번호 원문은 저장하지 않는다.
-파일 권한은 시작 시 `0600`으로 제한된다.
+전원 인가 전 필수 조건:
 
-### 최초 기동
-
-1. 실제 모든 slot이 비었는지 확인한다.
-2. 최종 `parking_layout.yaml`을 먼저 등록한다.
-3. 과거 DB가 없는 상태에서 Fleet를 처음 시작한다.
-4. Fleet가 등록 slot을 `EMPTY`로 생성했는지 UI에서 확인한다.
-
-DB는 schema version, slot 목록과 slot geometry fingerprint에 묶인다. layout을
-바꾼 뒤 과거 DB를 억지로 사용하지 않는다.
-
-### 정상 재시작
-
-모든 slot이 `EMPTY` 또는 `OCCUPIED`인 안정 상태라면 Fleet/Jetson 재시작 후
-기존 record가 복원된다. Web UI만 재시작해도 `/fleet/state`를 다시 받아
-차량/slot 표시가 복원된다.
-
-### 시작이 차단되는 경우
-
-저장 상태가 `RESERVED`, `EXIT_RESERVED`, `EXITING`이거나 DB/layout/schema가
-불일치하면 Fleet는 fail-closed로 시작하지 않는다. 다음 순서로 처리한다.
-
-1. 모터 전원을 차단하고 실제 차량과 두 로봇의 위치를 확인한다.
-2. DB 파일을 별도 이름으로 복사 또는 이동해 보존한다.
-3. 실제 주차장을 전부 비운 경우에만 새 DB로 초기화한다.
-4. 차량이 남아 있다면 현재 버전에는 자동 reconciliation 도구가 없으므로
-   수동으로 차량을 제거한 뒤 재등록한다.
-
-미션 중간 DB를 SQL로 직접 `OCCUPIED` 또는 `EMPTY`로 고쳐 운행하지 않는다.
-
-## 4. STM32 프로젝트 빌드와 플래시
-
-플래시 대상은 `stm32/parking_robot`이다. 이 디렉터리에는
-`parking_robot.ioc`, HAL/CMSIS, startup, linker script와 통합 제어 소스가
-포함되어 있다.
-
-1. STM32CubeIDE에서 `File → Import → Existing Projects into Workspace`를
-   선택하고 `stm32/parking_robot`을 연다.
-2. MCU가 `STM32F401RETx`, toolchain이 STM32CubeIDE인지 확인한다.
-3. `main.c`의 USER CODE 구간에 `Robot_Init()`과 `Robot_MainLoop()` 호출이
-   남아 있는지 확인한다.
-4. `parking_robot_firmware.c`가 build source에 포함되는지 확인한다.
-5. Clean/Build 후 error 0개인지 확인한다.
-6. 모터 전원을 분리한 상태에서 ST-LINK로 Front와 Rear 보드에 각각 플래시한다.
-7. UART만 연결해 `HB/ACK`, `E,...`, `U,L|R,...` 프레임을 먼저 확인한다.
-
-CubeMX를 다시 Generate Code할 때 USER CODE 구간과 별도 firmware 파일을
-보존하고, 생성 뒤 Git diff로 timer/pin 변경을 반드시 확인한다.
-
-## 5. STM32F401RE 정확한 핀 배치
-
-아래 표는 현재 `parking_robot.ioc`와 생성된 `main.h`의 권위값이다.
-Front/Rear는 같은 firmware mapping을 쓴다.
-
-| 기능 | MCU 핀 | Peripheral | 펌웨어 의미 |
-|---|---|---|---|
-| FL motor PWM | PA8 | TIM1 CH1 | Front-left |
-| FR motor PWM | PA9 | TIM1 CH2 | Front-right |
-| RL motor PWM | PA10 | TIM1 CH3 | Rear-left |
-| RR motor PWM | PA11 | TIM1 CH4 | Rear-right |
-| FL motor DIR | PC0 | GPIO output | MOTOR1_DIR |
-| FR motor DIR | PC1 | GPIO output | MOTOR2_DIR |
-| RL motor DIR | PC2 | GPIO output | MOTOR3_DIR |
-| RR motor DIR | PC3 | GPIO output | MOTOR4_DIR |
-| FL encoder A/B | PA15 / PB3 | TIM2 CH1/CH2 | 32-bit counter |
-| FR encoder A/B | PB4 / PB5 | TIM3 CH1/CH2 | 16-bit counter |
-| RL encoder A/B | PB6 / PB7 | TIM4 CH1/CH2 | 16-bit counter |
-| RR encoder A/B | PA0 / PA1 | TIM5 CH1/CH2 | 32-bit counter |
-| Left servo PWM | PB8 | TIM10 CH1 | grip servo index 0 |
-| Right servo PWM | PB9 | TIM11 CH1 | grip servo index 1 |
-| RPi UART TX | PA2 | USART2 TX | 115200 8N1 |
-| RPi UART RX | PA3 | USART2 RX | 115200 8N1 |
-| Left ultrasonic TRIG | PC8 | GPIO output | ULTRASONIC1 |
-| Left ultrasonic ECHO | PC6 | EXTI6 both edges | ULTRASONIC1 |
-| Right ultrasonic TRIG | PC5 | GPIO output | ULTRASONIC2 |
-| Right ultrasonic ECHO | PC7 | EXTI7 both edges | ULTRASONIC2 |
-| ST-LINK SWDIO/SWCLK | PA13 / PA14 | Serial Wire | debug/programming |
-| External clock | PH0 / PH1 | HSE | board clock |
-
-Timer 기준:
-
-- TIM1 motor PWM: prescaler 0, ARR 65535. Firmware가 0~999 PID 출력을 현재
-  ARR 전체 범위로 환산한다.
-- TIM2/TIM5: encoder mode TI12, 32-bit period.
-- TIM3/TIM4: encoder mode TI12, 16-bit rollover를 signed delta로 처리한다.
-- TIM9: prescaler 83, period 65535, 84 MHz timer clock에서 1 µs tick.
-- TIM10/TIM11: prescaler 83, period 19999, 50 Hz servo PWM.
-
-### 배선 안전
-
-- HC-SR04 ECHO의 5 V를 MCU에 직접 넣지 않는다. 3.3 V level shifter 또는
+- HC-SR04 ECHO 5 V를 STM32에 직접 연결하지 않고 3.3 V level shifter 또는
   검증된 저항분압을 사용한다.
-- RPi UART와 STM32는 공통 GND를 연결하며 TX↔RX를 교차한다.
-- 모터/servo 전원은 RPi 5 V pin에서 공급하지 않는다.
-- 모터 driver, servo, 연산 전원을 분리 분기하고 적절한 fuse를 둔다.
-- 물리 비상정지가 motor power를 실제 차단하는지 먼저 시험한다.
-- PA15/PB3/PB4를 사용하므로 full JTAG가 아니라 SWD(PA13/PA14)를 유지한다.
+- 모터, servo, 연산 전원을 분리 분기하고 적정 fuse와 차단기를 둔다.
+- RPi, STM32와 motor driver는 공통 GND를 사용한다. servo를 RPi 5 V pin에서
+  공급하지 않는다.
+- 물리 ESTOP이 motor power를 실제 차단하는지 시험한다. 소프트웨어 ESTOP은
+  인증된 기능 안전 장치가 아니다.
 
-## 6. 현장 calibration asset
+STM32 watchdog은 command 무갱신 **250 ms**, heartbeat 단절 **300 ms**에 정지해야
+한다. 두 조건을 모터를 든 상태에서 각각 시험한다.
 
-Jetson의 기본 runtime 디렉터리는 다음과 같다.
+## 3. 장치 경로와 runtime asset
+
+STM32 serial은 재부팅에도 안정적인 `/dev/serial/by-id/...`를 사용한다.
+
+```bash
+ls -l /dev/serial/by-id/
+ls -l /dev/v4l/by-path/
+```
+
+카메라는 현장 USB topology를 확인해 기록한 `/dev/v4l/by-path/...`를 우선한다.
+현재 launch의 by-path 기본값은 보편적인 cam0/cam2 매핑이 아니다. 숫자
+`camera*_id`는 `camera*_device:=''`를 명시했을 때만 사용되며, 잘못된 by-path에서
+숫자 ID로 자동 fallback하지 않는다. 숫자 ID를 임시로 사용하면 재부팅 뒤 영상과
+marker 역할을 다시 확인한다. Rear 카메라는 가능하면 by-path를 지원하는 외부 ROS
+camera driver로 열고 `enable_rear_camera:=false`로 연결한다.
+
+Jetson runtime asset은 `~/.ros/adaptive_valet_bot/`에 둔다.
 
 ```text
-~/.ros/adaptive_valet_bot/
-  cctv0_camera_calibration.npz
-  cctv2_camera_calibration.npz
-  parking_layout.yaml
-  parking_registry.db
-  homography_cam0_rectified.npy
-  homography_cam2_rectified.npy
+cctv0_camera_calibration.npz
+cctv2_camera_calibration.npz
+homography_cam0_rectified.npy
+homography_cam2_rectified.npy
+parking_layout.yaml
+parking_registry.db
 ```
 
-추가로 CCTV별 intrinsic NPZ, Rear camera intrinsic NPZ와 vehicle segmentation
-model이 필요하다. Homography와 layout은 반드시 rectified image와 같은
-`map` frame/metre 좌표를 사용한다. 등록 방법은 `docs/pipeline.md`와
-`ros2/cooperative_parking_robot/docs/CCTV_CALIBRATION.md`를 따른다.
+Homography와 등록 layout이 준비되기 전에는 motion을 허용하지 않는다. 생성과
+검증 절차는 [pipeline](pipeline.md)을 따른다.
 
-현재 저장소의 `config/cctv0_camera_calibration.npz`와
-`config/cctv2_camera_calibration.npz`는 2026-08-14 전달본에서 가져온
-**임시 640×480 보정값**이다. 초기 연결 시험에는 다음처럼 runtime 경로로
-복사해 사용할 수 있다.
+## 4. 분산 기동
 
-```bash
-mkdir -p ~/.ros/adaptive_valet_bot
-install -m 600 \
-  "$(ros2 pkg prefix --share cooperative_parking_robot)/config/cctv0_camera_calibration.npz" \
-  ~/.ros/adaptive_valet_bot/cctv0_camera_calibration.npz
-install -m 600 \
-  "$(ros2 pkg prefix --share cooperative_parking_robot)/config/cctv2_camera_calibration.npz" \
-  ~/.ros/adaptive_valet_bot/cctv2_camera_calibration.npz
-```
+작업구역을 비우고 모터 전원을 끈 상태에서 Jetson → Rear → Front 순서로
+기동한다. Production marker는 Front 상판 **ID10**, Rear 상판 **ID11**, Rear
+카메라가 보는 Front 후면 상대 marker **ID0**이다. 실험용 ID2/ID3을 production
+launch나 asset에 사용하지 않는다.
 
-dual launch의 영상과 calibration 기본 해상도도 640×480이다. 실제 설치
-카메라별로 재보정하거나 1280×720으로 변경한 뒤에는 두 NPZ뿐 아니라
-rectified 영상 기준 Homography와 layout도 반드시 다시 만든다.
+### Jetson
 
-전달 ZIP에는 현장 실측 Homography가 없으며 실차 배포 패키지는 합성
-Homography 생성 기능을 제공하지 않는다. cam0/cam2 각각의 rectified 영상에서
-동일한 map 기준점으로 Homography와 layout을 현장 등록하기 전에는 모터를 켠
-주행을 시작하지 않는다.
-
-## 7. 분산 기동 순서
-
-작업구역을 비우고 처음에는 모터 전원을 끈다.
-
-### 7-1. Jetson
-
-권장 실증 구성은 dual CCTV다.
+현장에서 검증한 절대 device path와 model path를 먼저 설정한다. 필수 변수가
+비어 있으면 아래 guard가 launch 전에 중단시킨다.
 
 ```bash
+: "${CAM0_DEVICE:?set CAM0_DEVICE to the site cam0 by-path}"
+: "${CAM2_DEVICE:?set CAM2_DEVICE to the site cam2 by-path}"
+: "${MODEL_PATH:?set MODEL_PATH to the validated vehicle model}"
+: "${CAM0_GROUND_X_M:?set measured cam0 optical-axis ground X}"
+: "${CAM0_GROUND_Y_M:?set measured cam0 optical-axis ground Y}"
+: "${CAM0_HEIGHT_M:?set measured cam0 height}"
+: "${CAM2_GROUND_X_M:?set measured cam2 optical-axis ground X}"
+: "${CAM2_GROUND_Y_M:?set measured cam2 optical-axis ground Y}"
+: "${CAM2_HEIGHT_M:?set measured cam2 height}"
+: "${FRONT_MARKER_HEIGHT_M:?set measured Front marker height}"
+: "${REAR_MARKER_HEIGHT_M:?set measured Rear marker height}"
+RUNTIME_DIR="${HOME}/.ros/adaptive_valet_bot"
+
 ros2 launch cooperative_parking_robot cctv_server_dual.launch.py \
   enable_opencv_camera:=true \
-  camera0_id:=0 camera2_id:=2 \
-  camera_width_px:=640 camera_height_px:=480 \
-  calibration_width_px:=640 calibration_height_px:=480 \
-  homography_cam0_file:=<cam0.npy> \
-  homography_cam2_file:=<cam2.npy> \
-  layout_config:=<parking_layout.yaml> \
-  model_path:=<vehicle_seg.engine> \
-  parking_registry_db_path:=~/.ros/adaptive_valet_bot/parking_registry.db \
+  camera0_device:="${CAM0_DEVICE}" \
+  camera2_device:="${CAM2_DEVICE}" \
+  cctv0_camera_calib:="${RUNTIME_DIR}/cctv0_camera_calibration.npz" \
+  cctv2_camera_calib:="${RUNTIME_DIR}/cctv2_camera_calibration.npz" \
+  homography_cam0_file:="${RUNTIME_DIR}/homography_cam0_rectified.npy" \
+  homography_cam2_file:="${RUNTIME_DIR}/homography_cam2_rectified.npy" \
+  layout_config:="${RUNTIME_DIR}/parking_layout.yaml" \
+  model_path:="${MODEL_PATH}" \
+  parking_registry_db_path:="${RUNTIME_DIR}/parking_registry.db" \
+  cam0_ground_x_m:="${CAM0_GROUND_X_M}" \
+  cam0_ground_y_m:="${CAM0_GROUND_Y_M}" \
+  cam0_height_m:="${CAM0_HEIGHT_M}" \
+  cam2_ground_x_m:="${CAM2_GROUND_X_M}" \
+  cam2_ground_y_m:="${CAM2_GROUND_Y_M}" \
+  cam2_height_m:="${CAM2_HEIGHT_M}" \
+  camera_ground_points:="[${CAM0_GROUND_X_M}, ${CAM0_GROUND_Y_M}, ${CAM2_GROUND_X_M}, ${CAM2_GROUND_Y_M}]" \
+  front_marker_height_m:="${FRONT_MARKER_HEIGHT_M}" \
+  rear_marker_height_m:="${REAR_MARKER_HEIGHT_M}" \
   enable_operator_ui:=true \
   enable_debug_overlay:=false \
-  simultaneous_entry:=false
+  simultaneous_entry:=false \
+  require_all_cameras:=true \
+  require_exact_camera_resolution:=true
 ```
 
-`enable_operator_ui`는 kiosk/API를 켜고 `enable_debug_overlay`는 선택 진단
-overlay만 켠다. 둘은 독립 설정이다.
+두 camera 중 하나가 timeout이면 target/empty/map이 즉시 fail-closed하고,
+live coverage 밖 map cell은 `unknown(-1)`이다. 부분 시야 운용을 위해
+`require_all_cameras:=false`로 낮추는 것은 현장 위험성 검토 없이 허용하지 않는다.
+Cam2를 debug 화면으로 선택하면 `debug_image_topic:=/cctv2/image_rect`와
+`debug_camera_calib:="${RUNTIME_DIR}/cctv2_camera_calibration.npz"`를 함께 바꾼다.
 
-### 7-2. Rear Raspberry Pi
+### Rear Raspberry Pi
+
+아래 예시는 외부 camera driver가 `/rear/marker_camera/image`를 발행하는 권장
+구성이다. 대문자 변수에는 해당 장비에서 검증한 값만 넣는다.
 
 ```bash
+: "${REAR_SERIAL:?set stable Rear STM32 by-id}"
+: "${WHEELBASE:?set measured vehicle wheelbase}"
+: "${REAR_WHEEL_RADIUS:?set measured Rear wheel radius}"
+: "${REAR_ENCODER_PPR:?set measured Rear encoder PPR}"
+: "${REAR_LX:?set measured Rear lx}"
+: "${REAR_LY:?set measured Rear ly}"
+: "${REAR_LEFT_SENSOR_X:?set measured left sensor offset}"
+: "${REAR_RIGHT_SENSOR_X:?set measured right sensor offset}"
+REAR_CALIB="${REAR_CALIB:-${HOME}/.ros/adaptive_valet_bot/rear_camera_calibration.npz}"
+
 ros2 launch cooperative_parking_robot rear_robot.launch.py \
-  serial_port:=/dev/serial/by-id/<rear-stm32> \
+  serial_port:="${REAR_SERIAL}" \
   enable_serial:=true require_serial:=true \
   require_hardware_ready:=true require_ultrasonic_for_ready:=true \
-  camera_calib:=<rear_camera_calibration.npz> \
-  wheelbase:=<실측> wheel_radius:=<실측> encoder_ppr:=<실측> \
-  lx:=<실측> ly:=<실측> \
-  left_sensor_to_gripper_x_m:=<실측> \
-  right_sensor_to_gripper_x_m:=<실측> \
+  enable_rear_camera:=false \
+  rear_camera_topic:=/rear/marker_camera/image \
+  camera_calib:="${REAR_CALIB}" \
+  wheelbase:="${WHEELBASE}" \
+  wheel_radius:="${REAR_WHEEL_RADIUS}" \
+  encoder_ppr:="${REAR_ENCODER_PPR}" \
+  lx:="${REAR_LX}" ly:="${REAR_LY}" \
+  left_sensor_to_gripper_x_m:="${REAR_LEFT_SENSOR_X}" \
+  right_sensor_to_gripper_x_m:="${REAR_RIGHT_SENSOR_X}" \
   simultaneous_entry:=false
 ```
 
-### 7-3. Front Raspberry Pi
+외부 driver가 없을 때만 내장 OpenCV camera와 숫자 `rear_camera_id`를 fallback으로
+사용하고, 그 부팅에서 실제 영상을 확인한다.
+
+### Front Raspberry Pi
 
 ```bash
+: "${FRONT_SERIAL:?set stable Front STM32 by-id}"
+: "${WHEELBASE:?set measured vehicle wheelbase}"
+: "${FRONT_WHEEL_RADIUS:?set measured Front wheel radius}"
+: "${FRONT_ENCODER_PPR:?set measured Front encoder PPR}"
+: "${FRONT_LX:?set measured Front lx}"
+: "${FRONT_LY:?set measured Front ly}"
+: "${FRONT_LEFT_SENSOR_X:?set measured left sensor offset}"
+: "${FRONT_RIGHT_SENSOR_X:?set measured right sensor offset}"
+
 ros2 launch cooperative_parking_robot front_robot.launch.py \
-  serial_port:=/dev/serial/by-id/<front-stm32> \
+  serial_port:="${FRONT_SERIAL}" \
   enable_serial:=true require_serial:=true \
   require_hardware_ready:=true require_ultrasonic_for_ready:=true \
-  wheelbase:=<실측> wheel_radius:=<실측> encoder_ppr:=<실측> \
-  lx:=<실측> ly:=<실측> \
-  left_sensor_to_gripper_x_m:=<실측> \
-  right_sensor_to_gripper_x_m:=<실측> \
+  wheelbase:="${WHEELBASE}" \
+  wheel_radius:="${FRONT_WHEEL_RADIUS}" \
+  encoder_ppr:="${FRONT_ENCODER_PPR}" \
+  lx:="${FRONT_LX}" ly:="${FRONT_LY}" \
+  left_sensor_to_gripper_x_m:="${FRONT_LEFT_SENSOR_X}" \
+  right_sensor_to_gripper_x_m:="${FRONT_RIGHT_SENSOR_X}" \
   use_aruco_distance:=false \
   simultaneous_entry:=false
 ```
 
-실측 `aruco_distance_offset_m`이 검증된 뒤에만 거리 융합을 켠다. 현재 demo
-layout은 동시 접근 시 모든 slot의 robot clearance를 위반하므로 park/retrieve
-모두 기존 sequential Front-first 접근을 기본으로 쓴다.
+`use_aruco_distance`는 실제 중심간 거리와 `aruco_distance_offset_m`을 반복 측정해
+검증하기 전까지 `false`로 유지한다.
 
-## 8. 7인치 터치 UI
-
-![1024×600 kiosk preview](images/kiosk_1024x600.png)
-
-위 이미지는 실제 kiosk HTML을 1024×600 Chrome으로 렌더링한 layout
-preview다. 상태값과 CCTV 영역만 검증용 예시이며 실차 topic 결과가 아니다.
-
-Jetson 화면을 landscape 1024×600으로 설정하고 다음 주소를 연다.
-
-```text
-http://127.0.0.1:5000/kiosk
-```
-
-Chromium이 설치된 경우 자동 kiosk 예시는 다음과 같다.
-
-```bash
-chromium-browser --kiosk --noerrdialogs http://127.0.0.1:5000/kiosk
-```
-
-화면은 1024×600을 우선 설계하고 800×480까지 compact media query를 적용한다.
-입력·select·mission button은 최소 44 px touch target이다. 화면에는 내부
-vehicle pose/spec/password verifier를 표시하지 않는다.
-
-입차:
-
-1. 차량번호와 4~64자 비밀번호를 입력한다.
-2. UI에 `EMPTY`로 보이는 원하는 slot을 선택한다.
-3. 입차 요청 후 Fleet `ACCEPTED`를 확인한다.
-4. 양쪽 HOME 뒤 입차 완료 toast와 `OCCUPIED` slot을 확인한다.
-
-출차:
-
-1. 입차 때의 차량번호와 비밀번호를 입력한다.
-2. Fleet가 인증된 Registry record로 source slot을 찾는다.
-3. 양쪽 HOME 뒤 출차 완료 toast와 `EMPTY` 전환을 확인한다.
-
-Web UI는 제출만 한다. 실제 승인/거부, target pose/spec, mission ID와 slot
-lifecycle은 Fleet가 결정한다.
-
-## 9. 기동 직후 합격 확인
+## 5. 기동 확인과 모터 인가
 
 ```bash
 ros2 topic echo /front/hardware_ready
@@ -325,78 +265,49 @@ ros2 topic echo /fleet/state
 ros2 topic info /parking/map --verbose
 ```
 
-최소 합격 기준:
+양쪽 `hardware_ready=true`, fresh sensor/localization, 단일 `/parking/map`
+publisher, 올바른 marker 역할, 등록된 layout, fault 없는 Fleet/UI를 확인한 뒤에만
+모터 전원을 인가한다. 단계별 시험 gate를 건너뛰지 않는다.
 
-- 양쪽 `hardware_ready=true` 유지
-- UART heartbeat/ACK 정상, 단절 후 300 ms 안에 STM32 motor stop
-- 각 ultrasonic 12~16 Hz, 0.5 s 이내 freshness
-- CCTV Homography RMS < 0.02 m
-- `/parking/map` publisher 정확히 하나
-- 양쪽 localization initialized, stale/gate 연속 오류 없음
-- UI가 fault/active mission/HOME 미완료 상태에서 요청을 활성화하지 않음
+## 6. 7인치 UI와 Registry
 
-## 10. 단계별 실차 시험
+Jetson에서 `http://127.0.0.1:5000/kiosk`를 연다.
 
-| 단계 | 시험 | 통과 전 금지 |
-|---:|---|---|
-| 0 | 전원, 분압, fuse, 물리 ESTOP | MCU/센서 전원 인가 |
-| 1 | UART only, motor power OFF | PWM 구동 |
-| 2 | 바퀴 하나씩 jack-up, command/encoder sign | 바닥 주행 |
-| 3 | 로봇 한 대 저속 전후/횡/회전 | 두 로봇 접근 |
-| 4 | 두 로봇 빈손 Front-first 접근 | 차량 진입 |
-| 5 | 초음파 차축 중심 20회 반복 | servo grip |
-| 6 | servo 무부하와 ESTOP hold | 하중 인양 |
-| 7 | 보호 지그 저하중 | 전체 cycle |
-| 8 | park→HOME→Fleet restart→retrieve→HOME | 시연 |
+```bash
+chromium-browser --kiosk --noerrdialogs http://127.0.0.1:5000/kiosk
+```
 
-초기 속도는 0.03~0.05 m/s로 제한한다. 각 단계가 실패하면 다음 단계로
-진행하지 않는다.
+- 입차: 차량번호, 4~64자 비밀번호와 `EMPTY` slot을 제출하고 Fleet 승인과 양쪽
+  HOME 완료 후 `OCCUPIED` 전환을 확인한다.
+- 출차: 같은 차량번호와 비밀번호를 제출한다. Fleet가 source slot을 찾아
+  구현된 retrieve 흐름을 실행하며 양쪽 HOME 후 `EMPTY` 전환을 확인한다.
+- UI는 요청만 제출하며 pose, mission ID, source slot과 승인 여부는 Fleet가
+  소유한다.
 
-## 11. 해결해야 하는 과제
+비밀번호 원문은 DB나 로그에 저장하지 않는다. HTTP와 ROS String transport는
+암호화되지 않으므로 UI는 trusted LAN에서만 사용한다. SQLite Registry는 동일
+layout의 안정 `EMPTY/OCCUPIED` 상태만 복원한다. `RESERVED`, `EXIT_RESERVED`,
+`EXITING`, 손상 DB, schema/layout 불일치에서는 **fail-closed**로 시작을
+차단해야 한다.
 
-### P0 — 실차 인양 전 필수
+## 7. 정지와 복구
 
-- 실제 wheel radius, encoder PPR, `lx/ly`와 네 motor/encoder sign 확정
-- 무부하/저하중 motor PID와 PWM tuning
-- Front/Rear ultrasonic offset, threshold, lateral sign 20회 통계
-- CCTV/Rear camera calibration과 ArUco offset 실측
-- 물리 ESTOP, fuse, level shifting, 공통 GND와 낙하 방지 지그
-- `GRIP_DONE`과 별개의 실제 파지/하중 확인 sensor 추가
+위험 시 웹 버튼보다 **물리 ESTOP과 motor power 차단을 먼저** 사용한다.
 
-마지막 항목이 없으면 사람 없는 무인 인양은 NO-GO다.
+```bash
+ros2 topic pub --once /emergency_stop std_msgs/msg/Bool "{data: true}"
+```
 
-### P1 — 시연 안정화
+복구 순서:
 
-- ROS 2 Humble 실제 세 장비에서 장시간 DDS/clock/freshness 시험
-- 모든 실제 slot의 source 접근 corridor와 extraction/waiting insertion 반복시험
-- Jetson 재부팅 뒤 SQLite `OCCUPIED` 복원 및 인증 출차 시험
-- 중간 crash 때 DB를 안전하게 quarantine/reset하는 운영 훈련
-- 7인치 touch calibration, on-screen keyboard와 kiosk 자동시작 설정
-- 내부 신뢰망이 아닌 경우 HTTPS, 사용자 인증과 rate limiting 추가
+1. 물리 motor power를 차단하고 사람, 차량과 기구 상태를 확인한다.
+2. 원인과 걸림을 제거하고 ROS command가 0인지 확인한다.
+3. STM32 ESTOP latch는 원인 제거 후 보드 전원 재인가로 해제한다.
+4. 모든 preflight, `hardware_ready`, sensor/localization/Fleet 상태를 다시 확인한다.
+5. 실패한 단계부터 보호 지그와 감독 아래 재시험한다.
 
-### P2 — 다음 기능 범위
-
-- transient mission crash recovery와 Perception 기반 Registry reconciliation
-- reverse/unknown parking direction 출차 알고리즘
-- 동적 장애물 재계획과 운반 중 obstacle stop
-- password 변경/분실 복구와 감사 log
-- Registry schema migration/backup 관리 도구
-- 복수 waiting destination과 병렬 mission 지원
-
-## 12. 현재 알려진 한계
-
-- 출차 target은 저장된 final pose를 사용하며 주차 뒤 사람이 차량을 움직이지
-  않았다는 demo 조건에 의존한다.
-- 출차는 이 시스템이 forward로 주차한 차량만 지원한다.
-- source robot 접근은 막히면 거부하며 새 우회 planner를 만들지 않는다.
-- loaded A*는 주행 중 동적 재계획하지 않는다.
-- 출차 중 waiting zone에 새 입차 차량을 두지 않는다.
-- HTTP와 ROS String payload는 암호화되지 않는다. 비밀번호 원문은 DB/log에는
-  남지 않지만 전송은 격리된 신뢰 LAN에서만 한다.
-- SQLite는 안정 `EMPTY/OCCUPIED`만 자동 복원한다. 미션 중간 상태는 운영자
-  확인 없이는 재개하지 않는다.
-- 소프트웨어 ESTOP은 인증된 기능 안전 장치를 대체하지 않는다.
-
-세부 calibration과 시험 항목은 `docs/pipeline.md`,
-`docs/REAL_WORLD_READINESS.md`와 package의 `docs/HARDWARE_READINESS.md`를
-함께 확인한다.
+Registry startup이 차단되면 SQL로 상태를 임의 수정하지 않는다. DB를 보존하고
+실제 차량/slot 상태를 확인한다. 주차장을 완전히 비운 경우에만 새 DB를 만들며,
+차량이 남아 있으면 수동 제거와 재등록 없이 미션을 재개하지 않는다. 출차는
+forward로 주차한 차량만 지원하며, 경로가 막히면 거부하고 우회하거나 주행 중
+동적으로 재계획하지 않는다.

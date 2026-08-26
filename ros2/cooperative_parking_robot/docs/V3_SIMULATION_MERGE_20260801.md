@@ -1,5 +1,9 @@
 # V3 simulation findings merged into the hardware package
 
+> **과거 기록 — v1.7.0/2026-08-01 병합 스냅샷.** 현재 패키지 구조와 검증 범위는
+> 저장소의 `ros2/cooperative_parking_robot/README.md`와
+> `docs/REAL_WORLD_READINESS.md`를 따른다.
+
 This 1.7.0 package is based on
 `v8_front_first_logic_review_20260725.zip`. The original archive is kept
 unchanged. Only changes that remain meaningful on the real robots were

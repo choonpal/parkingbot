@@ -98,18 +98,20 @@ def require_file(errors: MutableSequence[str], label: str, path: str) -> bool:
     return True
 
 
-def validate_homography(errors: MutableSequence[str], path: str) -> None:
-    if not require_file(errors, 'homography', path):
+def validate_homography(
+        errors: MutableSequence[str], path: str,
+        label: str = 'homography') -> None:
+    if not require_file(errors, label, path):
         return
     try:
         import numpy as np
         matrix = np.load(Path(path).expanduser())
         if matrix.shape != (3, 3) or not np.all(np.isfinite(matrix)):
-            errors.append('homography는 finite 3x3 행렬이어야 함')
+            errors.append(f'{label}는 finite 3x3 행렬이어야 함')
         elif abs(float(np.linalg.det(matrix))) < 1e-12:
-            errors.append('homography 행렬이 singular임')
+            errors.append(f'{label} 행렬이 singular임')
     except Exception as exc:
-        errors.append(f'homography 로드 실패: {exc}')
+        errors.append(f'{label} 로드 실패: {exc}')
 
 
 def validate_camera_calib(
@@ -120,6 +122,26 @@ def validate_camera_calib(
         load_camera_calibration(path)
     except Exception as exc:
         errors.append(f'{label} 로드 실패: {exc}')
+
+
+def validate_second_cctv_assets(
+        errors: MutableSequence[str], calibration_path: str,
+        homography_path: str, required: bool = False) -> None:
+    """Validate the second camera pair without accepting a half-configured pair."""
+    calibration_path = str(calibration_path or '').strip()
+    homography_path = str(homography_path or '').strip()
+    if required and (not calibration_path or not homography_path):
+        errors.append(
+            'dual CCTV는 --cctv2-camera-calib와 --homography2-file이 모두 필요함')
+        return
+    if bool(calibration_path) != bool(homography_path):
+        errors.append(
+            '두 번째 CCTV calibration과 homography는 함께 지정해야 함')
+        return
+    if calibration_path:
+        validate_camera_calib(
+            errors, calibration_path, 'CCTV2 camera calibration')
+        validate_homography(errors, homography_path, 'CCTV2 homography')
 
 
 def validate_serial(errors: MutableSequence[str], path: str) -> None:
@@ -188,6 +210,12 @@ def parse_args(argv=None):
     parser.add_argument(
         '--cctv-camera-calib', default=default_cctv_camera_calib_path(),
         help='Jetson 천장 카메라 calibration .npz')
+    parser.add_argument('--dual-cctv', action='store_true',
+                        help='두 번째 CCTV calibration/Homography를 필수 검사')
+    parser.add_argument('--cctv2-camera-calib', default='',
+                        help='두 번째 천장 카메라 calibration .npz')
+    parser.add_argument('--homography2-file', default='',
+                        help='두 번째 천장 카메라 rectified Homography .npy')
     parser.add_argument(
         '--rear-camera-calib', default='rear_camera_calibration.npz',
         help='Rear ArUco 카메라 전용 calibration .npz')
@@ -239,6 +267,9 @@ def main(argv=None):
                 errors, args.camera_calib or args.cctv_camera_calib,
                 'CCTV camera calibration')
             validate_homography(errors, args.homography_file)
+            validate_second_cctv_assets(
+                errors, args.cctv2_camera_calib, args.homography2_file,
+                required=args.dual_cctv)
         else:
             if not args.skip_serial:
                 validate_serial(errors, args.serial_port)

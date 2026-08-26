@@ -110,8 +110,8 @@ class AStarPlanner:
         g_score = {start: 0}
 
         # 8방향 이동
-        neighbors = [(-1,0),(1,0),(0,-1),(0,1),
-                     (-1,-1),(-1,1),(1,-1),(1,1)]
+        neighbors = [(-1, 0), (1, 0), (0, -1), (0, 1),
+                     (-1, -1), (-1, 1), (1, -1), (1, 1)]
 
         while open_set:
             _, current = heapq.heappop(open_set)

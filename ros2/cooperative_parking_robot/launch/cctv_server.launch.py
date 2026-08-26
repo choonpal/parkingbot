@@ -97,8 +97,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'enable_cctv_robot_markers', default_value='true'),
         DeclareLaunchArgument('aruco_dict', default_value='DICT_4X4_50'),
-        DeclareLaunchArgument('front_marker_id', default_value='10'),
-        DeclareLaunchArgument('rear_marker_id', default_value='11'),
+        DeclareLaunchArgument('front_marker_id', default_value='2'),
+        DeclareLaunchArgument('rear_marker_id', default_value='1'),
         DeclareLaunchArgument('min_marker_area_px', default_value='100.0'),
         DeclareLaunchArgument('min_marker_area_ratio', default_value='0.0003'),
         DeclareLaunchArgument('marker_size_m', default_value='0.175'),

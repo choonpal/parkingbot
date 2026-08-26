@@ -29,7 +29,7 @@ model과 다음 실측값이 필요하다.
 
 펌웨어 소스의 `ENCODER_PPR=5182.0f`는 현재 값이지 모든 로봇의 보증값이 아니다.
 출력축을 직접 측정해 로봇별 ROS와 firmware 값을 일치시킨다. Production marker는
-Front 상판 **ID10**, Rear 상판 **ID11**, Rear가 보는 Front 후면 **ID0**이다.
+Front 상판 **ID2**, Rear 상판 **ID1**, Rear가 보는 Front 후면 **ID0**이다.
 Rear 단독 실험의 ID2/ID3을 production asset에 넣지 않는다.
 
 ## 2. 카메라 device 고정
@@ -141,7 +141,7 @@ zone, no-go와 camera coverage를 검토한다. Homography/layout 등록이 끝�
 - `/cctv/merge_status`의 multi-camera detection과 duplicate removal이 동작함
 - `/parking/map` publisher가 merge node 하나뿐임
 - 한 camera를 가렸을 때 관측하지 못한 slot을 빈자리로 만들지 않음
-- Front ID10과 Rear ID11 absolute pose가 실제 base 위치·yaw에 맞음
+- Front ID2와 Rear ID1 absolute pose가 실제 base 위치·yaw에 맞음
 - ID0 상대 yaw가 맞고, distance offset 실측 전에는
   `use_aruco_distance=false`임
 

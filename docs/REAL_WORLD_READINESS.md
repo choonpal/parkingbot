@@ -75,7 +75,7 @@ localization, 초음파 정렬, 결합 footprint A*, UI 승인과 SQLite Registr
 
 ## 실차 GO 체크리스트
 
-- [ ] Production marker가 Front **ID10**, Rear **ID11**, 상대 **ID0**이며 실험용
+- [ ] Production marker가 Front **ID2**, Rear **ID1**, 상대 **ID0**이며 실험용
       ID2/ID3이 production asset에 없음
 - [ ] 카메라마다 현장 `/dev/v4l/by-path/...` 역할이 기록·검증됨
 - [ ] CCTV/Rear intrinsic이 실제 해상도에서 검증됨

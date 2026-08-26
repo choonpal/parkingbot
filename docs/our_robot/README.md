@@ -20,7 +20,7 @@
 
 ## 현재 확정 사항
 
-- Front=`robot-2`(상판 ID10, 후방 ID0), Rear=`robot-1`(상판 ID11)
+- Front=`robot-2`(상판 ID2, 후방 ID0), Rear=`robot-1`(상판 ID1)
 - Raspberry Pi 4 두 대: Ubuntu Server 22.04.5 LTS ARM64 + ROS 2 Humble
 - STM32 Nucleo F401RE: 메카넘 역기구학, 휠 PID, 서보 실시간 제어 담당
 - 주행 모터: RB-35GM+Encoder DC24V, 1/100 ×8

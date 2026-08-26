@@ -9,7 +9,7 @@
 | 카메라 단독 점유 및 `/cctv/image_raw` 발행 | `opencv_camera_node` |
 | 렌즈 왜곡 보정 | `cctv_rectify_node` |
 | 차량/빈자리/OccupancyGrid | `yolo_bev_map_node` |
-| Front ID10·Rear ID11 천장 절대 pose | `cctv_robot_marker_node` |
+| Front ID2·Rear ID1 천장 절대 pose | `cctv_robot_marker_node` |
 | ArUco+FPS 웹 화면 | `jetson_vision_web_node` |
 
 ## 원본을 그대로 임무 코드로 쓰면 생기는 문제
@@ -74,5 +74,5 @@ debug_enable_aruco=true
    `~/.ros/adaptive_valet_bot/` 경로에서 자동으로 읽는다.
 5. 차량이 대기구역에서 연속 2초 검출되어 `/parking/target_ready=true`가 된다.
 6. 슬롯별 점유 결과가 실제와 일치한다.
-7. Front ID10과 Rear ID11 pose/yaw가 정지 상태에서 튀지 않는다.
+7. Front ID2와 Rear ID1 pose/yaw가 정지 상태에서 튀지 않는다.
 8. 웹을 켜고 꺼도 Mission 토픽 값이 변하지 않는다.

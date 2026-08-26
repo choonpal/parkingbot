@@ -213,7 +213,7 @@ Homography와 등록 layout이 준비되기 전에는 motion을 허용하지 않
 
 현재는 motor rail만 따로 끌 수 없으므로, 작업구역을 비우고 두 로봇의 모든
 바퀴를 견고하게 띄운 상태에서 공통 전원을 인가한 뒤 Jetson → Rear → Front
-순서로 기동한다. Production marker는 Front 상판 **ID10**, Rear 상판 **ID11**, Rear
+순서로 기동한다. Production marker는 Front 상판 **ID2**, Rear 상판 **ID1**, Rear
 카메라가 보는 Front 후면 상대 marker **ID0**이다. 실험용 ID2/ID3을 production
 launch나 asset에 사용하지 않는다.
 

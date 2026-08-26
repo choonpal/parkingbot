@@ -67,6 +67,18 @@ from cooperative_parking_robot.parking_geometry import (
 )
 
 
+PLANNING_VALIDATION_MODES = ('enforce', 'warn_only')
+
+
+def normalize_planning_validation_mode(value):
+    """Normalize the Fleet planning-validation policy parameter."""
+    mode = str(value).strip().lower()
+    if mode not in PLANNING_VALIDATION_MODES:
+        raise ValueError(
+            'planning_validation_mode must be enforce or warn_only')
+    return mode
+
+
 class FleetManagerNode(Node):
     def __init__(self):
         super().__init__('fleet_manager_node')
@@ -94,6 +106,7 @@ class FleetManagerNode(Node):
         self.declare_parameter('source_vehicle_fallback_mask_m', 0.90)
         self.declare_parameter('footprint_safety_margin_m', 0.06)
         self.declare_parameter('unknown_is_occupied', True)
+        self.declare_parameter('planning_validation_mode', 'enforce')
         self.declare_parameter('layout_registered', False)
         self.declare_parameter('require_registered_layout', False)
         # 브라우저 등록 결과. 같은 index가 하나의 슬롯을 나타낸다.
@@ -170,6 +183,8 @@ class FleetManagerNode(Node):
         self.vehicle_center_offset_body = [0.0, 0.0]
         self.unknown_is_occupied = bool(
             self.get_parameter('unknown_is_occupied').value)
+        self.planning_validation_mode = normalize_planning_validation_mode(
+            self.get_parameter('planning_validation_mode').value)
         if (bool(self.get_parameter('require_registered_layout').value) and
                 not bool(self.get_parameter('layout_registered').value)):
             raise RuntimeError(
@@ -275,6 +290,8 @@ class FleetManagerNode(Node):
         self.grid = None
         self.grid_w = 0
         self.grid_h = 0
+        self.grid_origin_x_m = 0.0
+        self.grid_origin_y_m = 0.0
         self.car_lifted = False
         self.state = 'WAIT_TARGET'
         self.path_published = False
@@ -294,6 +311,8 @@ class FleetManagerNode(Node):
         self.last_commit_sequence = -1
         self.pending_completion = None
         self.request_status = None
+        self.validation_warnings = []
+        self.planning_blocker = None
         self.last_completed = None
         self.completion_sequence = 0
         self.status_sequence = 0
@@ -388,6 +407,7 @@ class FleetManagerNode(Node):
             self.mission_id = (
                 f'mission-{self.get_clock().now().nanoseconds}')
             self.mission_type = 'park'
+            self._reset_planning_diagnostics()
             self.get_logger().info(f'new mission: {self.mission_id}')
         self.target_pose = msg
 
@@ -417,7 +437,11 @@ class FleetManagerNode(Node):
         width = int(msg.info.width)
         height = int(msg.info.height)
         resolution = float(msg.info.resolution)
-        if width <= 0 or height <= 0 or resolution <= 0.0:
+        origin_x = float(msg.info.origin.position.x)
+        origin_y = float(msg.info.origin.position.y)
+        if (width <= 0 or height <= 0 or resolution <= 0.0 or
+                not all(math.isfinite(value) for value in (
+                    resolution, origin_x, origin_y))):
             self.get_logger().warn('잘못된 OccupancyGrid 메타데이터 무시')
             return
         if len(msg.data) != width * height:
@@ -430,8 +454,10 @@ class FleetManagerNode(Node):
         self.grid_w = width
         self.grid_h = height
         self.resolution = resolution
-        # AStarPlanner는 생성 시 해상도를 보관하므로 수신 맵과 동기화해야 한다.
-        self.planner.resolution = resolution
+        self.grid_origin_x_m = origin_x
+        self.grid_origin_y_m = origin_y
+        # AStarPlanner의 월드↔격자 변환을 수신 맵 geometry와 동기화한다.
+        self.planner.set_map_geometry(resolution, origin_x, origin_y)
 
     def _set_request_status(self, payload, status, reason=''):
         self.request_status = {
@@ -563,6 +589,7 @@ class FleetManagerNode(Node):
             self._set_request_status(
                 payload, 'REJECTED', 'ROBOT_NOT_IDLE')
             return
+        self._reset_planning_diagnostics()
         status_payload = dict(payload)
         if ('vehicle_number' not in payload or 'password' not in payload):
             self._set_request_status(
@@ -597,7 +624,21 @@ class FleetManagerNode(Node):
             self._set_request_status(
                 status_payload, 'REJECTED', 'MISSING_VEHICLE_RECORD')
             return
-        if not self._retrieve_approach_preflight(record):
+        # 맵/현재 odometry는 모델 기반 corridor 판정이 아니라 경로 명령을
+        # 만들기 위한 필수 입력이다. WARN_ONLY에서도 절대로 우회하지 않는다.
+        if self.grid is None:
+            self._set_request_status(
+                status_payload, 'REJECTED', 'MAP_MISSING')
+            return
+        if self.current_virtual_start() is None:
+            self._set_request_status(
+                status_payload, 'REJECTED', 'ODOM_MISSING_OR_STALE')
+            return
+        approach_clear = self._retrieve_approach_preflight(record)
+        if not self._validation_allows(
+                approach_clear,
+                'APPROACH_CORRIDOR_BLOCKED',
+                mission_phase='REQUEST'):
             self._set_request_status(
                 status_payload, 'REJECTED', 'APPROACH_CORRIDOR_BLOCKED')
             return
@@ -623,6 +664,51 @@ class FleetManagerNode(Node):
         self._set_request_status(status_payload, 'ACCEPTED')
         self.get_logger().info(
             f'UI 출차 승인: {source_slot_id} ({mission_id})')
+
+    def _validation_allows(self, passed, code, mission_phase):
+        """Apply the configured policy to a model-based planning finding.
+
+        WARN_ONLY never hides the finding: it records a bounded, UI-visible
+        warning and emits a ROS warning, but permits the existing mission
+        algorithm to continue.  Missing data, identity/lifecycle checks and
+        runtime emergency stops do not call this helper.
+        """
+        if passed:
+            return True
+        if getattr(self, 'planning_validation_mode', 'enforce') != 'warn_only':
+            return False
+        warning = {
+            'code': str(code),
+            'mission_phase': str(mission_phase),
+        }
+        warnings = getattr(self, 'validation_warnings', [])
+        is_new = warning not in warnings
+        if is_new:
+            warnings.append(warning)
+            del warnings[:-16]
+        self.validation_warnings = warnings
+        if is_new:
+            self.get_logger().warn(
+                f'WARN_ONLY planning validation: {code} '
+                f'(phase={mission_phase})')
+        return True
+
+    def _reset_planning_diagnostics(self):
+        self.validation_warnings = []
+        self.planning_blocker = None
+
+    def _set_planning_blocker(self, code, mission_phase='PLAN_PATH'):
+        """Publish a stable reason when no executable command can be built."""
+        blocker = {
+            'code': str(code),
+            'mission_phase': str(mission_phase),
+        }
+        if getattr(self, 'planning_blocker', None) != blocker:
+            self.planning_blocker = blocker
+            publish_state = getattr(self, 'publish_state', None)
+            if callable(publish_state):
+                publish_state()
+        return False
 
     def sync_status_cb(self, msg):
         try:
@@ -786,6 +872,7 @@ class FleetManagerNode(Node):
         self.active_committed_stages.clear()
         self.last_commit_sequence = -1
         self.pending_completion = None
+        self._reset_planning_diagnostics()
         self.car_lifted = False
         self.target_pose = None
         self.empty_slots = []
@@ -952,8 +1039,6 @@ class FleetManagerNode(Node):
                      if slot.slot_id == slot_id), None)
 
     def _retrieve_approach_preflight(self, record):
-        if self.grid is None or self.current_virtual_start() is None:
-            return False
         target = record.final_vehicle_pose
         routes = {}
         for role, odom in (
@@ -965,16 +1050,37 @@ class FleetManagerNode(Node):
                 longitudinal, 0.0,
                 target.x_m, target.y_m, target.yaw_rad)
             start = (odom['x'], odom['y'])
+            translation_goal_yaw = (
+                target.yaw_rad if self.simultaneous_entry else None)
             if not corridor_is_free(
                     self.grid, self.grid_w, self.grid_h, self.resolution,
                     start, goal, odom['yaw'],
                     self.robot_length, self.robot_width,
                     margin_m=0.0,
                     unknown_is_occupied=self.unknown_is_occupied,
-                    goal_yaw_rad=target.yaw_rad,
+                    goal_yaw_rad=translation_goal_yaw,
                     speed_mps=self.approach_speed,
                     yaw_gain=self.approach_yaw_gain,
-                    max_yaw_rate=self.approach_max_yaw_rate):
+                    max_yaw_rate=self.approach_max_yaw_rate,
+                    origin_x_m=getattr(self, 'grid_origin_x_m', 0.0),
+                    origin_y_m=getattr(self, 'grid_origin_y_m', 0.0)):
+                return False
+            if (not self.simultaneous_entry and
+                    not corridor_is_free(
+                        self.grid, self.grid_w, self.grid_h,
+                        self.resolution,
+                        goal, goal, odom['yaw'],
+                        self.robot_length, self.robot_width,
+                        margin_m=0.0,
+                        unknown_is_occupied=self.unknown_is_occupied,
+                        goal_yaw_rad=target.yaw_rad,
+                        speed_mps=self.approach_speed,
+                        yaw_gain=self.approach_yaw_gain,
+                        max_yaw_rate=self.approach_max_yaw_rate,
+                        origin_x_m=getattr(
+                            self, 'grid_origin_x_m', 0.0),
+                        origin_y_m=getattr(
+                            self, 'grid_origin_y_m', 0.0))):
                 return False
             routes[role] = (start, goal)
         route_clearance = (simultaneous_routes_clear
@@ -1037,15 +1143,21 @@ class FleetManagerNode(Node):
 
     def _oriented_footprint_free(self, x_m, y_m, yaw_rad):
         """한 자세에서 회전된 loaded rectangle가 점유 셀과 겹치는지 검사."""
+        origin_x = getattr(self, 'grid_origin_x_m', 0.0)
+        origin_y = getattr(self, 'grid_origin_y_m', 0.0)
         half_length = (
             self.loaded_footprint.half_length_m + self.slot_fit_long_margin)
         half_width = (
             self.loaded_footprint.half_width_m + self.slot_fit_lat_margin)
         radius = math.hypot(half_length, half_width)
-        min_gx = int(math.floor((x_m - radius) / self.resolution))
-        max_gx = int(math.floor((x_m + radius) / self.resolution))
-        min_gy = int(math.floor((y_m - radius) / self.resolution))
-        max_gy = int(math.floor((y_m + radius) / self.resolution))
+        min_gx = int(math.floor(
+            (x_m - radius - origin_x) / self.resolution))
+        max_gx = int(math.floor(
+            (x_m + radius - origin_x) / self.resolution))
+        min_gy = int(math.floor(
+            (y_m - radius - origin_y) / self.resolution))
+        max_gy = int(math.floor(
+            (y_m + radius - origin_y) / self.resolution))
         c, s = math.cos(yaw_rad), math.sin(yaw_rad)
         # 셀 중심만 검사할 때 모서리 접촉을 놓치지 않도록 셀 반대각을 더한다.
         cell_padding = self.resolution / math.sqrt(2.0)
@@ -1053,8 +1165,8 @@ class FleetManagerNode(Node):
             for gx in range(min_gx, max_gx + 1):
                 if not self._grid_occupied(gx, gy):
                     continue
-                cell_x = (gx + 0.5) * self.resolution
-                cell_y = (gy + 0.5) * self.resolution
+                cell_x = origin_x + (gx + 0.5) * self.resolution
+                cell_y = origin_y + (gy + 0.5) * self.resolution
                 dx, dy = cell_x - x_m, cell_y - y_m
                 local_x = dx * c + dy * s
                 local_y = -dx * s + dy * c
@@ -1065,18 +1177,24 @@ class FleetManagerNode(Node):
 
     def _rotation_space_free(self, x_m, y_m):
         """정렬점에서 어떤 중간 Yaw로 돌아도 되는 반대각 원 공간 검사."""
+        origin_x = getattr(self, 'grid_origin_x_m', 0.0)
+        origin_y = getattr(self, 'grid_origin_y_m', 0.0)
         radius = 0.5 * math.hypot(
             self.loaded_footprint.length_m + 2.0 * self.slot_fit_long_margin,
             self.loaded_footprint.width_m + 2.0 * self.slot_fit_lat_margin)
         cell_padding = self.resolution / math.sqrt(2.0)
-        min_gx = int(math.floor((x_m - radius) / self.resolution))
-        max_gx = int(math.floor((x_m + radius) / self.resolution))
-        min_gy = int(math.floor((y_m - radius) / self.resolution))
-        max_gy = int(math.floor((y_m + radius) / self.resolution))
+        min_gx = int(math.floor(
+            (x_m - radius - origin_x) / self.resolution))
+        max_gx = int(math.floor(
+            (x_m + radius - origin_x) / self.resolution))
+        min_gy = int(math.floor(
+            (y_m - radius - origin_y) / self.resolution))
+        max_gy = int(math.floor(
+            (y_m + radius - origin_y) / self.resolution))
         for gy in range(min_gy, max_gy + 1):
             for gx in range(min_gx, max_gx + 1):
-                cell_x = (gx + 0.5) * self.resolution
-                cell_y = (gy + 0.5) * self.resolution
+                cell_x = origin_x + (gx + 0.5) * self.resolution
+                cell_y = origin_y + (gy + 0.5) * self.resolution
                 if (math.hypot(cell_x - x_m, cell_y - y_m) <=
                         radius + cell_padding and self._grid_occupied(gx, gy)):
                     return False
@@ -1180,17 +1298,17 @@ class FleetManagerNode(Node):
             return self.plan_retrieve_and_publish()
         if self.grid is None:
             self.get_logger().warn('맵 미수신 — 대기', throttle_duration_sec=2.0)
-            return False
+            return self._set_planning_blocker('MAP_MISSING')
         if not self.empty_slots:
             self.get_logger().warn('빈자리 없음', throttle_duration_sec=2.0)
-            return False
+            return self._set_planning_blocker('NO_EMPTY_SLOT')
 
         raw_start = self.current_virtual_start()
         if raw_start is None:
             self.get_logger().warn(
                 'Front/Rear 최신 odom 없음 — 실제 base_virtual 시작점 대기',
                 throttle_duration_sec=2.0)
-            return False
+            return self._set_planning_blocker('ODOM_MISSING_OR_STALE')
         start = raw_start
 
         # rigid_body_sync는 인양 직후 target_pose로 차량중심 offset을 초기화한다.
@@ -1249,19 +1367,24 @@ class FleetManagerNode(Node):
                 self.loaded_footprint.width_m,
                 self.slot_fit_long_margin,
                 self.slot_fit_lat_margin)
-            if fit.fits:
-                compatible.append((slot, fit))
-            else:
+            if not fit.fits:
+                allowed = self._validation_allows(
+                    False, fit.reason, mission_phase='PLAN_PATH')
                 self.get_logger().warn(
-                    f'슬롯 {slot.slot_id} 제외: {fit.reason} | '
+                    f'슬롯 {slot.slot_id} '
+                    f'{"경고 후 사용" if allowed else "제외"}: '
+                    f'{fit.reason} | '
                     f'clearance L={fit.length_clearance_m:+.3f}m '
                     f'W={fit.width_clearance_m:+.3f}m',
                     throttle_duration_sec=2.0)
+                if not allowed:
+                    continue
+            compatible.append((slot, fit))
         if not compatible:
             self.get_logger().warn(
                 '빈 슬롯은 있지만 loaded footprint가 들어갈 슬롯이 없음',
                 throttle_duration_sec=2.0)
-            return False
+            return self._set_planning_blocker('PARK_SLOT_FIT_BLOCKED')
 
         compatible.sort(key=lambda item: math.hypot(
             item[0].center_x_m - start.x_m,
@@ -1270,6 +1393,8 @@ class FleetManagerNode(Node):
         selected_fit = None
         selected_approach = None
         waypoints = None
+        saw_astar_failure = False
+        saw_validation_failure = False
         for slot, fit in compatible:
             if self.use_staged_slot_entry:
                 approach_candidates = make_approach_candidates(
@@ -1293,14 +1418,27 @@ class FleetManagerNode(Node):
                     self.grid, self.grid_w, self.grid_h,
                     start.position, path_goal)
                 if candidate_path is None:
+                    saw_astar_failure = True
                     continue
                 if self.use_staged_slot_entry:
                     # 2D A*는 회전/삽입을 모른다. 정렬점 회전 원과 슬롯 축
-                    # 직선 삽입 corridor를 별도로 검사한 후보만 선택한다.
-                    if not self._rotation_space_free(*approach.staging_pose.position):
+                    # 직선 삽입 corridor를 별도로 검사한다. WARN_ONLY에서는
+                    # 진단 결과를 남기되 기존 trajectory 생성을 계속한다.
+                    rotation_free = self._rotation_space_free(
+                        *approach.staging_pose.position)
+                    if not self._validation_allows(
+                            rotation_free,
+                            'PARK_ROTATION_SPACE_BLOCKED',
+                            mission_phase='PLAN_PATH'):
+                        saw_validation_failure = True
                         continue
-                    if not self._insertion_corridor_free(
-                            approach.staging_pose, approach.target_pose):
+                    insertion_free = self._insertion_corridor_free(
+                        approach.staging_pose, approach.target_pose)
+                    if not self._validation_allows(
+                            insertion_free,
+                            'PARK_INSERTION_CORRIDOR_BLOCKED',
+                            mission_phase='PLAN_PATH'):
+                        saw_validation_failure = True
                         continue
                     if math.hypot(
                             candidate_path[-1][0] - path_goal[0],
@@ -1317,7 +1455,11 @@ class FleetManagerNode(Node):
         if selected_slot is None or selected_approach is None or waypoints is None:
             self.get_logger().error(
                 '모든 적합 슬롯의 A*/회전공간/삽입경로 검사 실패 — 재계획')
-            return False
+            return self._set_planning_blocker(
+                'PARK_PATH_VALIDATION_BLOCKED'
+                if saw_validation_failure else
+                ('ASTAR_NO_PATH' if saw_astar_failure
+                 else 'PARK_PATH_VALIDATION_BLOCKED'))
 
         if self.active_vehicle_spec is None:
             self.active_vehicle_spec = {
@@ -1373,6 +1515,7 @@ class FleetManagerNode(Node):
             self.get_logger().error(f'park plan publish failed: {exc}')
             return False
         self.path_published = True
+        self.planning_blocker = None
         self.active_plan_stamp_ns = stamp_to_ns(mission_stamp)
         self.publish_state()
 
@@ -1419,8 +1562,10 @@ class FleetManagerNode(Node):
             final_pose,
             self.vehicle_length,
             self.vehicle_width,
-            self.source_vehicle_fallback_mask)
-        if not corridor_is_free(
+            self.source_vehicle_fallback_mask,
+            origin_x_m=getattr(self, 'grid_origin_x_m', 0.0),
+            origin_y_m=getattr(self, 'grid_origin_y_m', 0.0))
+        extraction_clear = corridor_is_free(
                 planning_grid, self.grid_w, self.grid_h, self.resolution,
                 final_pose.position, extraction.clear_pose.position,
                 final_pose.yaw_rad,
@@ -1428,19 +1573,32 @@ class FleetManagerNode(Node):
                 self.loaded_footprint.width_m,
                 margin_m=max(
                     self.slot_fit_long_margin, self.slot_fit_lat_margin),
-                unknown_is_occupied=self.unknown_is_occupied):
+                unknown_is_occupied=self.unknown_is_occupied,
+                origin_x_m=getattr(self, 'grid_origin_x_m', 0.0),
+                origin_y_m=getattr(self, 'grid_origin_y_m', 0.0))
+        if not self._validation_allows(
+                extraction_clear,
+                'RETRIEVE_EXTRACTION_CORRIDOR_BLOCKED',
+                mission_phase='PLAN_PATH'):
             self.get_logger().error('retrieve extraction corridor blocked')
-            return False
+            return self._set_planning_blocker(
+                'RETRIEVE_EXTRACTION_CORRIDOR_BLOCKED')
 
         waiting_pose = Pose2D(self.wait_x, self.wait_y, self.wait_yaw)
         waiting_staging = make_waiting_staging(
             waiting_pose,
             self.loaded_footprint.length_m,
             self.slot_staging_gap)
-        if not self._rotation_space_free(*waiting_staging.position):
+        waiting_rotation_clear = self._rotation_space_free(
+            *waiting_staging.position)
+        if not self._validation_allows(
+                waiting_rotation_clear,
+                'WAITING_ROTATION_SPACE_BLOCKED',
+                mission_phase='PLAN_PATH'):
             self.get_logger().error('waiting staging rotation space blocked')
-            return False
-        if not corridor_is_free(
+            return self._set_planning_blocker(
+                'WAITING_ROTATION_SPACE_BLOCKED')
+        waiting_insertion_clear = corridor_is_free(
                 planning_grid, self.grid_w, self.grid_h, self.resolution,
                 waiting_staging.position, waiting_pose.position,
                 waiting_pose.yaw_rad,
@@ -1448,9 +1606,16 @@ class FleetManagerNode(Node):
                 self.loaded_footprint.width_m,
                 margin_m=max(
                     self.slot_fit_long_margin, self.slot_fit_lat_margin),
-                unknown_is_occupied=self.unknown_is_occupied):
+                unknown_is_occupied=self.unknown_is_occupied,
+                origin_x_m=getattr(self, 'grid_origin_x_m', 0.0),
+                origin_y_m=getattr(self, 'grid_origin_y_m', 0.0))
+        if not self._validation_allows(
+                waiting_insertion_clear,
+                'WAITING_INSERTION_CORRIDOR_BLOCKED',
+                mission_phase='PLAN_PATH'):
             self.get_logger().error('waiting insertion corridor blocked')
-            return False
+            return self._set_planning_blocker(
+                'WAITING_INSERTION_CORRIDOR_BLOCKED')
 
         path_length, path_width = footprint_extents_in_slot_axes(
             self.loaded_footprint.length_m,
@@ -1463,7 +1628,7 @@ class FleetManagerNode(Node):
             waiting_staging.position)
         if astar_path is None:
             self.get_logger().error('retrieve clear-to-waiting A* failed')
-            return False
+            return self._set_planning_blocker('ASTAR_NO_PATH')
 
         waypoints = [
             final_pose.position,
@@ -1506,6 +1671,7 @@ class FleetManagerNode(Node):
             self.get_logger().error(f'retrieve plan publish failed: {exc}')
             return False
         self.path_published = True
+        self.planning_blocker = None
         self.active_plan_stamp_ns = stamp_to_ns(mission_stamp)
         self.publish_state()
         self.get_logger().info(
@@ -1535,6 +1701,9 @@ class FleetManagerNode(Node):
             'destination_kind': self.destination_kind,
             'plan_stamp_ns': self.active_plan_stamp_ns,
             'request_status': self.request_status,
+            'planning_validation_mode': self.planning_validation_mode,
+            'validation_warnings': list(self.validation_warnings),
+            'planning_blocker': self.planning_blocker,
             'last_completed': self.last_completed,
             'footprint_length_m': round(
                 self.loaded_footprint.length_m, 4),

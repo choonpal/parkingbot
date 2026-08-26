@@ -115,6 +115,8 @@ def render_parking_layout_yaml(
         waiting_polygon: Sequence[Sequence[float]],
         *,
         slot_polygons: Sequence[Sequence[Sequence[float]]] | None = None,
+        map_origin_x_m: float = 0.0,
+        map_origin_y_m: float = 0.0,
         map_width_m: float,
         map_height_m: float,
         map_resolution_m: float,
@@ -142,6 +144,8 @@ def render_parking_layout_yaml(
             raise ValueError('waiting_polygon contains NaN/Inf')
         waiting.extend((x_m, y_m))
 
+    map_origin_x = float(map_origin_x_m)
+    map_origin_y = float(map_origin_y_m)
     map_width = float(map_width_m)
     map_height = float(map_height_m)
     resolution = float(map_resolution_m)
@@ -151,6 +155,8 @@ def render_parking_layout_yaml(
     staging_gap = float(slot_staging_gap_m)
     waiting_yaw = float(waiting_yaw_deg)
     car_size = float(car_size_m)
+    if not math.isfinite(map_origin_x) or not math.isfinite(map_origin_y):
+        raise ValueError('map origin must be finite')
     if map_width <= 0.0 or map_height <= 0.0 or resolution <= 0.0:
         raise ValueError('map dimensions/resolution must be positive')
     if not 0.0 <= overlap <= 1.0:
@@ -162,12 +168,12 @@ def render_parking_layout_yaml(
     if not math.isfinite(car_size) or car_size <= 0.0:
         raise ValueError('car_size_m must be finite and positive')
 
-    # 현재 OccupancyGrid의 origin은 (0,0)으로 고정되어 있다. 음수 좌표나
-    # map 밖 슬롯을 저장하면 후단에서 갑자기 경로 실패가 나므로 등록
-    # 단계에서 즉시 알린다.
+    # OccupancyGrid origin은 반드시 raster metadata와 같은 map frame이다.
+    # 등록 범위 밖 슬롯을 저장하면 후단에서 갑자기 경로 실패가 나므로
+    # 등록 단계에서 즉시 알린다.
     def inside_map(point):
-        return (0.0 <= float(point[0]) <= map_width and
-                0.0 <= float(point[1]) <= map_height)
+        return (map_origin_x <= float(point[0]) <= map_origin_x + map_width and
+                map_origin_y <= float(point[1]) <= map_origin_y + map_height)
 
     waiting_points = list(zip(waiting[0::2], waiting[1::2]))
     if not all(inside_map(point) for point in waiting_points):
@@ -224,6 +230,8 @@ def render_parking_layout_yaml(
   ros__parameters:
     layout_registered: true
     map_resolution: {resolution:.6f}
+    map_origin_x_m: {map_origin_x:.6f}
+    map_origin_y_m: {map_origin_y:.6f}
     map_width_m: {map_width:.6f}
     map_height_m: {map_height:.6f}
     car_size_m: {car_size:.6f}
@@ -274,6 +282,8 @@ fleet_manager_node:
     parking_direction: "forward"
     # 현 실증 배치의 기본 운용은 기존 sequential Front-first 접근이다.
     simultaneous_entry: false
+    # MVP 계획 기하 검사는 UI/로그에 남기고 실행 가능한 기존 경로는 계속 사용한다.
+    planning_validation_mode: "warn_only"
     # IndividualMoveNode 접근 yaw controller와 동일한 preflight 모델.
     approach_yaw_gain: 1.500000
     approach_max_yaw_rate_rps: 0.150000
@@ -284,6 +294,8 @@ cctv_merge_node:
   ros__parameters:
     layout_registered: true
     map_resolution: {resolution:.6f}
+    map_origin_x_m: {map_origin_x:.6f}
+    map_origin_y_m: {map_origin_y:.6f}
     map_width_m: {map_width:.6f}
     map_height_m: {map_height:.6f}
     car_size_m: {car_size:.6f}
@@ -307,7 +319,8 @@ def load_layout_yaml(path: str):
     주차면을 지우지 않고 이어붙이기 위해 필요하다. 파일이 없으면 ``None``.
 
     반환: ``{'slots': [ParkingSlot...], 'slot_polygons': [[(x,y)x4]...],
-    'waiting_polygon': [(x,y)x4], 'map_width_m':, 'map_height_m':,
+    'waiting_polygon': [(x,y)x4], 'map_origin_x_m':, 'map_origin_y_m':,
+    'map_width_m':, 'map_height_m':,
     'map_resolution_m':}``
     """
     import yaml
@@ -355,6 +368,8 @@ def load_layout_yaml(path: str):
         'slots': slots,
         'slot_polygons': polygons,
         'waiting_polygon': waiting,
+        'map_origin_x_m': float(params.get('map_origin_x_m', 0.0)),
+        'map_origin_y_m': float(params.get('map_origin_y_m', 0.0)),
         'map_width_m': float(params.get('map_width_m', 0.0)),
         'map_height_m': float(params.get('map_height_m', 0.0)),
         'map_resolution_m': float(params.get('map_resolution', 0.05)),

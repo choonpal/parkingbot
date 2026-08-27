@@ -270,6 +270,43 @@ def test_pre_mission_latch_expires_but_active_mission_can_preserve_it():
         (2.3, 0.6))
 
 
+def test_intermittent_noisy_detection_can_reach_ready_with_filter_and_grace():
+    latch = TargetLatchTracker(
+        stationary_tolerance_m=0.04,
+        stationary_hold_s=2.0,
+        detection_timeout_s=1.2,
+        position_filter_window=3)
+    observations = [
+        (0.00, (0.420, 0.680)),
+        (0.35, None),
+        (0.70, (0.430, 0.690)),
+        (1.05, None),
+        (1.40, (0.410, 0.680)),
+        (1.75, None),
+        (2.10, (0.440, 0.690)),
+    ]
+
+    result = None
+    for now, target in observations:
+        result = latch.update(target, now)
+
+    assert result is not None
+    assert latch.just_latched
+
+
+def test_visible_movement_revokes_ready_without_waiting_for_miss_timeout():
+    latch = TargetLatchTracker(
+        stationary_tolerance_m=0.04,
+        stationary_hold_s=0.0,
+        detection_timeout_s=1.2,
+        position_filter_window=3)
+    assert latch.update((0.42, 0.68), 0.0) is None
+    assert latch.update((0.42, 0.68), 0.0) is not None
+
+    assert latch.update((0.52, 0.68), 0.1) is None
+    assert latch.latched is None
+
+
 def test_dual_launch_fails_closed_when_any_camera_is_missing_by_default():
     dual = (ROOT / 'launch/cctv_server_dual.launch.py').read_text()
     assert "'require_all_cameras', default_value='true'" in dual

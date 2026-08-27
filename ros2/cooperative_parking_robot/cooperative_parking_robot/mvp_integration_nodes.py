@@ -21,7 +21,9 @@ from cooperative_parking_robot import bev_layout_calibrator_node as calibrator_m
 from cooperative_parking_robot import cctv_merge_node as cctv_module
 from cooperative_parking_robot import individual_move_node as move_module
 from cooperative_parking_robot import yolo_bev_map_node as yolo_module
-from cooperative_parking_robot.bev_fusion_core import CameraDetection
+from cooperative_parking_robot.bev_fusion_core import (
+    CameraDetection, MergedDetection,
+)
 from cooperative_parking_robot.parking_geometry import grid_cell_count
 from cooperative_parking_robot.vehicle_entry import angle_norm
 
@@ -66,6 +68,19 @@ def _shift_pose(pose, origin_x, origin_y):
 
 
 def _shift_detection(detection, origin_x, origin_y):
+    if isinstance(detection, MergedDetection):
+        shifted = MergedDetection(
+            _shift_detection(detection.primary, origin_x, origin_y))
+        shifted.center = _shift_point(
+            detection.center, origin_x, origin_y)
+        shifted.polygon = _shift_polygon(
+            detection.polygon, origin_x, origin_y)
+        shifted.yaw = detection.yaw
+        shifted.length_m = detection.length_m
+        shifted.width_m = detection.width_m
+        shifted.in_waiting = detection.in_waiting
+        shifted.sources = list(detection.sources)
+        return shifted
     return CameraDetection(
         camera_id=detection.camera_id,
         center=_shift_point(detection.center, origin_x, origin_y),
@@ -354,9 +369,10 @@ class OriginAwareCctvMergeNode(cctv_module.CctvMergeNode):
         shifted_latched = (
             None if latched is None else
             _shift_point(latched, origin_x, origin_y))
-        shifted_coverage = [
-            _shift_polygon(polygon, origin_x, origin_y)
-            for polygon in coverage_polygons]
+        shifted_coverage = {
+            camera_id: _shift_polygon(polygon, origin_x, origin_y)
+            for camera_id, polygon in coverage_polygons.items()
+        }
         original_pose = self.robot_pose
         original_publisher = self.pub_map
         self.robot_pose = {

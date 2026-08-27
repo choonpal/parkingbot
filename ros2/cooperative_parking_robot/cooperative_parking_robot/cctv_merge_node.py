@@ -21,6 +21,7 @@ rigid_body_sync, UI는 코드를 한 줄도 바꾸지 않는다.
   /parking/vehicle_spec (std_msgs/String, TRANSIENT_LOCAL)
   /parking/vehicle_pose_feedback (geometry_msgs/PoseStamped)
   /parking/target_ready (std_msgs/Bool)
+  /parking/target_status (std_msgs/String, JSON)
 출력 (신규 진단):
   /cctv/merge_status (std_msgs/String, JSON)
 
@@ -122,9 +123,13 @@ class CctvMergeNode(Node):
         self.declare_parameter('require_full_slot_coverage', False)
 
         # ===== 타겟/제원 =====
-        self.declare_parameter('stationary_tolerance_m', 0.02)
+        # 실측 YOLO 중심 노이즈(p90 약 2.3cm)보다 여유 있게 잡되, 움직이는
+        # 차량은 즉시 READY를 해제한다. launch/YAML에서 현장별 조정 가능하다.
+        self.declare_parameter('stationary_tolerance_m', 0.04)
         self.declare_parameter('stationary_hold_s', 2.0)
-        self.declare_parameter('target_detection_timeout_s', 0.5)
+        self.declare_parameter('target_detection_timeout_s', 1.2)
+        self.declare_parameter('target_presence_timeout_s', 1.2)
+        self.declare_parameter('target_position_filter_window', 3)
         self.declare_parameter('vehicle_feedback_association_gate_m', 0.45)
         self.declare_parameter('use_fixed_wheelbase', True)
         self.declare_parameter('fixed_wheelbase_m', 0.785)
@@ -260,6 +265,14 @@ class CctvMergeNode(Node):
             raise ValueError('fixed_wheelbase_m must be positive')
         self.require_full_slot_coverage = bool(
             self.get_parameter('require_full_slot_coverage').value)
+        self.target_presence_timeout_s = float(
+            self.get_parameter('target_presence_timeout_s').value)
+        self.target_position_filter_window = int(
+            self.get_parameter('target_position_filter_window').value)
+        if self.target_presence_timeout_s <= 0.0:
+            raise ValueError('target_presence_timeout_s must be positive')
+        if self.target_position_filter_window <= 0:
+            raise ValueError('target_position_filter_window must be positive')
 
     def _build_state(self):
         now = time.monotonic()
@@ -278,7 +291,8 @@ class CctvMergeNode(Node):
             stationary_hold_s=float(
                 self.get_parameter('stationary_hold_s').value),
             detection_timeout_s=float(
-                self.get_parameter('target_detection_timeout_s').value))
+                self.get_parameter('target_detection_timeout_s').value),
+            position_filter_window=self.target_position_filter_window)
         self.dimension_tracker = VehicleDimensionTracker(
             default_length_m=float(
                 self.get_parameter('default_vehicle_length_m').value),
@@ -302,6 +316,7 @@ class CctvMergeNode(Node):
         self.latest_vehicle_class = 'default'
         self.latest_classified_wheelbase = self.fixed_wheelbase
         self._last_target_ready = None
+        self._target_last_observed_wall = 0.0
         self.fleet_state = 'UNKNOWN'
 
     def _setup_ros_interfaces(self):
@@ -337,6 +352,8 @@ class CctvMergeNode(Node):
             qos_profile_sensor_data)
         self.pub_target_ready = self.create_publisher(
             Bool, '/parking/target_ready', 10)
+        self.pub_target_status = self.create_publisher(
+            String, '/parking/target_status', 10)
         self.pub_status = self.create_publisher(
             String, '/cctv/merge_status', 10)
 
@@ -406,6 +423,10 @@ class CctvMergeNode(Node):
         self.latest_vehicle_class = 'default'
         self.latest_classified_wheelbase = self.fixed_wheelbase
         self.pub_target_ready.publish(Bool(data=False))
+        self._target_last_observed_wall = 0.0
+        self._publish_target_status(
+            time.monotonic(), current_visible=False, ready=False,
+            reason='MISSION_COMPLETE')
         self.get_logger().info(f'임무 {mission_id} 완료 — 타겟 latch 해제')
 
     # ------------------------------------------------------------------
@@ -477,6 +498,7 @@ class CctvMergeNode(Node):
                 target_detection = detection
                 break
         if target_detection is not None:
+            self._target_last_observed_wall = now
             self.dimension_tracker.update_yaw(target_detection.yaw)
             self.dimension_tracker.update_dimensions(
                 target_detection.length_m, target_detection.width_m)
@@ -530,6 +552,11 @@ class CctvMergeNode(Node):
         if ready != self._last_target_ready:
             self._last_target_ready = ready
         self.pub_target_ready.publish(Bool(data=ready))
+        self._publish_target_status(
+            now,
+            current_visible=target_detection is not None,
+            ready=ready,
+        )
 
     # ------------------------------------------------------------------
     # 발행 helper
@@ -542,6 +569,10 @@ class CctvMergeNode(Node):
         self.latest_classified_wheelbase = self.fixed_wheelbase
         self.pub_target_ready.publish(Bool(data=False))
         self._last_target_ready = False
+        self._target_last_observed_wall = 0.0
+        self._publish_target_status(
+            time.monotonic(), current_visible=False, ready=False,
+            reason='PERCEPTION_UNAVAILABLE')
         self._publish_empty_slots(force_empty=True)
         self._publish_map([], None, {})
         self._publish_status(camera_states, [], 0)
@@ -556,6 +587,45 @@ class CctvMergeNode(Node):
         msg.pose.orientation.z = math.sin(half_yaw)
         msg.pose.orientation.w = math.cos(half_yaw)
         self.pub_target.publish(msg)
+
+    def _publish_target_status(
+            self, now, current_visible, ready, reason=''):
+        """Publish customer-facing presence separately from the safety gate."""
+        if self._target_last_observed_wall > 0.0:
+            last_seen_age_s = max(
+                0.0, float(now) - self._target_last_observed_wall)
+            observed_recently = (
+                last_seen_age_s <= self.target_presence_timeout_s)
+        else:
+            last_seen_age_s = None
+            observed_recently = False
+        state = (
+            'READY' if ready else
+            'DETECTING' if observed_recently else
+            'ABSENT'
+        )
+        stable_for_s = 0.0
+        if self.target_tracker.stable_since is not None:
+            stable_for_s = max(
+                0.0, float(now) - self.target_tracker.stable_since)
+        payload = {
+            'version': 1,
+            'state': state,
+            'visible': bool(current_visible),
+            'observed_recently': bool(observed_recently),
+            'ready': bool(ready),
+            'stable_for_s': round(stable_for_s, 3),
+            'last_seen_age_s': (
+                None if last_seen_age_s is None
+                else round(last_seen_age_s, 3)),
+            'stationary_tolerance_m': self.target_tracker.tolerance,
+            'stationary_hold_s': self.target_tracker.hold_s,
+            'detection_timeout_s': self.target_tracker.timeout_s,
+        }
+        if reason:
+            payload['reason'] = str(reason)
+        self.pub_target_status.publish(String(
+            data=json.dumps(payload, ensure_ascii=False)))
 
     def _publish_vehicle_spec(self):
         wheelbase = (

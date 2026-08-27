@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Jetson MJPEG monitor plus the touchscreen operator UI.
 
-This node stays a *view*. It renders status and forwards two operator
-intents (``/ui/mission_request``, ``/emergency_stop``); it never decides
+This node stays a *view*. It renders status and forwards operator mission
+intents on ``/ui/mission_request``; it never decides
 whether a mission may start. ``fleet_manager_node`` owns that gate, so
 killing this process must never change robot behaviour.
 
@@ -15,7 +15,7 @@ Endpoints:
   ``/kiosk``   7" 터치스크린용 운용 화면 (1024x600)
   ``/api/status``  상태 JSON (500 ms 폴링)
   ``/api/park``    입차 요청 (서버측 조건 재검사 후 발행)
-  ``/api/estop``   비상정지
+  ``/api/retrieve`` 출차 요청
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ import queue
 import threading
 import time
 import uuid
+from importlib.resources import files as resource_files
 
 import rclpy
 from rclpy.node import Node
@@ -66,197 +67,12 @@ try:
 except ImportError:
     WEB_DEPS_OK = False
 
-# 1024x600 Waveshare 7" Display-C 고정 레이아웃.
-# 시연장에 인터넷이 없을 수 있으므로 외부 CDN을 쓰지 않는다.
-KIOSK_PAGE = """<!DOCTYPE html>
-<html lang="ko"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,
- user-scalable=no,viewport-fit=cover">
-<title>협동 주차 로봇</title><style>
-*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-:root{--touch-target:44px}
-html,body{width:100%;height:100%}
-body{min-width:800px;min-height:480px;overflow:hidden;background:#141a21;
- color:#eef2f6;font-family:"Noto Sans KR","Malgun Gothic",sans-serif;display:flex}
-#video{flex:0 0 56%;height:100%;background:#000;display:flex;align-items:center;
- justify-content:center}
-#video img{max-width:100%;max-height:100%}
-#panel{flex:1;min-width:0;height:100%;padding:8px;display:flex;
- flex-direction:column;gap:5px}
-#banner{background:#1e2a36;border-radius:10px;padding:10px;font-size:18px;
- font-weight:700;text-align:center;min-height:52px;display:flex;
- align-items:center;justify-content:center}
-#banner.alert{background:#7f1d1d}
-#banner.warn{background:#78350f}
-.robots{display:flex;gap:10px}
-.robot{flex:1;background:#1e2a36;border-radius:10px;padding:7px}
-.robot h3{font-size:14px;color:#94a3b8;margin-bottom:4px}
-.robot .st{font-size:17px;font-weight:700}
-.robot .ph{font-size:13px;color:#94a3b8;margin-top:2px}
-.robot.fault{background:#7f1d1d}
-.robot.stale{opacity:.45}
-button{width:100%;border:0;border-radius:10px;color:#fff;font-size:19px;
- font-weight:800;font-family:inherit;min-height:var(--touch-target);
- touch-action:manipulation}
-.mission{background:#1e2a36;border-radius:10px;padding:7px}
-.mission h3{font-size:14px;color:#cbd5e1;margin-bottom:5px}
-.fields{display:grid;gap:5px;margin-bottom:5px}
-.fields.park{grid-template-columns:1.15fr .85fr .72fr}
-.fields.retrieve{grid-template-columns:1.2fr .8fr}
-input,select{width:100%;height:var(--touch-target);
- min-height:var(--touch-target);border:1px solid #475569;border-radius:7px;
- background:#0f172a;color:#f8fafc;padding:0 7px;font:14px inherit;min-width:0}
-input::placeholder{color:#94a3b8}
-#park,#retrieve{height:var(--touch-target)}
-#park{background:#15803d}#retrieve{background:#0f766e}
-#park:disabled,#retrieve:disabled{background:#334155;color:#64748b}
-#slots{min-height:52px;max-height:82px;flex:1;overflow-y:auto;display:grid;
- grid-template-columns:1fr 1fr;gap:5px}
-.slot{min-height:32px;background:#263646;font-size:13px;border-radius:7px;
- display:flex;align-items:center;justify-content:center;color:#cbd5e1}
-.slot.empty{background:#14532d}.slot.occupied{background:#164e63}
-#estop{height:54px;background:#b91c1c;font-size:22px;flex:0 0 auto}
-#hint{font-size:12px;color:#94a3b8;text-align:center}
-#toast{position:fixed;left:50%;top:24px;transform:translateX(-50%);
- background:#0f172a;border:2px solid #38bdf8;padding:12px 22px;border-radius:10px;
- font-size:18px;display:none}
-#offline{position:fixed;inset:0;background:rgba(0,0,0,.86);display:none;
- align-items:center;justify-content:center;font-size:30px;font-weight:800}
-@media (max-width:900px){
- #video{flex-basis:45%}
- #panel{padding:6px;gap:4px}
- .fields{gap:4px}
-}
-@media (max-height:520px){
- #banner{min-height:40px;padding:4px;font-size:16px}
- .robot{padding:4px}.robot h3{margin-bottom:2px}
- .robot .st{font-size:16px}.robot .ph{font-size:12px}
- .mission{padding:4px}.mission h3{margin-bottom:2px}
- .fields{margin-bottom:3px}
- input,select{height:var(--touch-target);min-height:var(--touch-target)}
- #park,#retrieve{height:var(--touch-target);min-height:var(--touch-target)}
- #slots{min-height:36px;max-height:44px}
- .slot{min-height:22px}
- #estop{height:44px;min-height:44px;font-size:20px}
- #hint{display:none}
-}
-</style></head><body>
-<div id="video"><img src="/video_feed" alt="CCTV"></div>
-<div id="panel">
-  <div id="banner">연결 중…</div>
-  <div class="robots">
-    <div class="robot" id="rf"><h3>FRONT</h3>
-      <div class="st">-</div><div class="ph">-</div></div>
-    <div class="robot" id="rr"><h3>REAR</h3>
-      <div class="st">-</div><div class="ph">-</div></div>
-  </div>
-  <div class="mission"><h3>입차 등록</h3>
-    <div class="fields park">
-      <input id="parkVehicle" maxlength="32" autocomplete="off" placeholder="차량번호">
-      <input id="parkPassword" type="password" minlength="4" maxlength="64"
-        autocomplete="new-password" placeholder="비밀번호">
-      <select id="parkSlot" aria-label="주차 슬롯"></select>
-    </div>
-    <button id="park" disabled>입차 요청</button>
-  </div>
-  <div class="mission"><h3>출차 인증</h3>
-    <div class="fields retrieve">
-      <input id="retrieveVehicle" maxlength="32" autocomplete="off" placeholder="차량번호">
-      <input id="retrievePassword" type="password" minlength="4" maxlength="64"
-        autocomplete="current-password" placeholder="비밀번호">
-    </div>
-    <button id="retrieve" disabled>출차 요청</button>
-  </div>
-  <div id="slots"></div>
-  <button id="estop">비 상 정 지</button>
-  <div id="hint">물리 비상정지 스위치가 우선입니다</div>
-</div>
-<div id="toast"></div><div id="offline">UI 서버 연결 끊김</div>
-<script>
-var park=document.getElementById('park'),retrieve=document.getElementById('retrieve'),
-    parkVehicle=document.getElementById('parkVehicle'),
-    parkPassword=document.getElementById('parkPassword'),
-    parkSlot=document.getElementById('parkSlot'),
-    retrieveVehicle=document.getElementById('retrieveVehicle'),
-    retrievePassword=document.getElementById('retrievePassword'),
-    banner=document.getElementById('banner'),
-    slotsEl=document.getElementById('slots'),toastEl=document.getElementById('toast'),
-    offline=document.getElementById('offline'),lastCompletion=null,lastRequest=null,
-    pendingRequest='',latestStatus=null;
-var reasons={INVALID_REQUEST:'잘못된 요청',MISSION_ALREADY_ACTIVE:'미션 진행 중',
-  INVALID_VEHICLE_NUMBER:'차량번호 형식 오류',INVALID_PASSWORD:'비밀번호 형식 오류',
-  VEHICLE_ALREADY_PARKED:'이미 입차된 차량번호',
-  VEHICLE_OR_PASSWORD_INVALID:'차량번호 또는 비밀번호 불일치',
-  DESTINATION_SLOT_NOT_FOUND:'주차면 없음',DESTINATION_SLOT_NOT_EMPTY:'주차면 사용 중',
-  DESTINATION_SLOT_UNAVAILABLE:'주차면을 현재 사용할 수 없음',
-  SOURCE_SLOT_NOT_FOUND:'슬롯 없음',SOURCE_SLOT_NOT_OCCUPIED:'차량 없는 슬롯',
-  UNSUPPORTED_PARKING_DIRECTION:'지원하지 않는 주차 방향',
-  MISSING_VEHICLE_RECORD:'차량 기록 없음',APPROACH_CORRIDOR_BLOCKED:'접근 경로 막힘',
-  ROBOT_NOT_IDLE:'로봇 복귀 대기',STALE_REQUEST:'오래된 요청',
-  DUPLICATE_REQUEST_ID:'중복 요청',DUPLICATE_SEQUENCE:'중복 순번'};
-function toast(m){toastEl.textContent=m;toastEl.style.display='block';
-  setTimeout(function(){toastEl.style.display='none'},2500);}
-function robot(id,d){var e=document.getElementById(id);
-  e.querySelector('.st').textContent=d.state;
-  e.querySelector('.ph').textContent=d.phase;
-  e.className='robot'+(d.state==='FAULT'?' fault':'')+(d.fresh?'':' stale');}
-function validVehicle(v){return v.replace(/\\s/g,'').length>0;}
-function updateButtons(){var s=latestStatus||{};
-  park.disabled=!(s.park_enabled&&validVehicle(parkVehicle.value)&&
-    parkPassword.value.length>=4&&parkSlot.value);
-  retrieve.disabled=!(s.retrieve_enabled&&validVehicle(retrieveVehicle.value)&&
-    retrievePassword.value.length>=4);}
-function renderSlots(slots){var previous=parkSlot.value;
-  slotsEl.textContent='';parkSlot.textContent='';
-  slots.forEach(function(s){var d=document.createElement('div');
-    d.className='slot '+(s.lifecycle==='EMPTY'?'empty':'occupied');
-    d.textContent=s.slot_id+' · '+s.lifecycle;slotsEl.appendChild(d);
-    if(s.lifecycle==='EMPTY'){var o=document.createElement('option');
-      o.value=s.slot_id;o.textContent=s.slot_id;parkSlot.appendChild(o);}});
-  if(previous&&Array.from(parkSlot.options).some(function(o){return o.value===previous;})){
-    parkSlot.value=previous;}updateButtons();}
-function render(s){
-  latestStatus=s;
-  banner.textContent=s.banner;
-  banner.className=(s.fault||s.planning_blocker)?'alert':
-    ((s.localization_warning||s.planning_warning)?'warn':'');
-  if(s.localization_warning&&!s.fault){
-    banner.textContent=s.banner+' / 위치추정 경고';}
-  robot('rf',s.front);robot('rr',s.rear);renderSlots(s.parking_slots||[]);
-  updateButtons();
-  var c=s.last_completed,seq=c?Number(c.completion_sequence):-1;
-  if(lastCompletion===null){lastCompletion=seq;}else if(seq>lastCompletion){
-    lastCompletion=seq;toast(c.mission_type==='retrieve'?'출차 완료':'입차 완료');}
-  var r=s.request_status,key=r?(r.request_id+':'+r.status):'';
-  if(lastRequest===null){lastRequest=key;}
-  else if(key&&key!==lastRequest&&r.request_id===pendingRequest){
-    lastRequest=key;if(r.status==='ACCEPTED'){toast('Fleet 승인');}
-    else if(r.status==='REJECTED'){toast('요청 거부: '+(reasons[r.reason]||r.reason));}}}
-function poll(){fetch('/api/status').then(function(r){return r.json();})
-  .then(function(s){offline.style.display='none';render(s);})
-  .catch(function(){offline.style.display='flex';});}
-park.onclick=function(){park.disabled=true;
-  fetch('/api/park',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({vehicle_number:parkVehicle.value,password:parkPassword.value,
-      destination_slot_id:parkSlot.value})}).then(function(r){return r.json();})
-  .then(function(r){if(r.submitted){pendingRequest=r.request_id;}
-    parkPassword.value='';toast(r.message);render(r.status);})
-  .catch(function(){parkPassword.value='';toast('요청 실패');});};
-retrieve.onclick=function(){retrieve.disabled=true;
-  fetch('/api/retrieve',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({vehicle_number:retrieveVehicle.value,
-      password:retrievePassword.value})}).then(function(r){return r.json();})
-  .then(function(r){if(r.submitted){pendingRequest=r.request_id;}
-    retrievePassword.value='';toast(r.message);render(r.status);})
-  .catch(function(){retrievePassword.value='';toast('요청 실패');});};
-['input','change'].forEach(function(eventName){
-  [parkVehicle,parkPassword,parkSlot,retrieveVehicle,retrievePassword].forEach(
-    function(e){e.addEventListener(eventName,updateButtons);});});
-// 비상정지에는 확인창을 두지 않는다. 누르는 즉시 나가야 한다.
-document.getElementById('estop').onclick=function(){
-  fetch('/api/estop',{method:'POST'});toast('비상정지 발행');};
-poll();setInterval(poll,500);
-</script></body></html>"""
+# 1024x600 Waveshare 7" Display-C layout. Assets are local because the
+# exhibition network may not provide internet access.
+_WEB_ASSET_DIR = resource_files('cooperative_parking_robot').joinpath('web')
+KIOSK_PAGE = _WEB_ASSET_DIR.joinpath('kiosk.html').read_text(encoding='utf-8')
+KIOSK_CSS = _WEB_ASSET_DIR.joinpath('kiosk.css').read_text(encoding='utf-8')
+KIOSK_JS = _WEB_ASSET_DIR.joinpath('kiosk.js').read_text(encoding='utf-8')
 
 
 MAP_PAGE = """<!DOCTYPE html>
@@ -443,6 +259,9 @@ class JetsonVisionWebNode(Node):
         self.declare_parameter('status_stale_s', 3.0)
         self.declare_parameter('ui_button_cooldown_s', 2.0)
         self.declare_parameter('localization_warning_streak', 5)
+        # cam2 화면은 ROS map +x와 좌우가 반대다. 고객 도식은 실제 CCTV
+        # 화면을 기준으로 보여 주므로 전체 배치를 좌우 반전한다.
+        self.declare_parameter('site_plan_mirror_x', True)
         # ===== 실제 BEV/Occupancy 맵 화면 =====
         self.declare_parameter('map_topic', '/parking/map')
         self.declare_parameter('map_pixels_per_m', 120)
@@ -500,6 +319,8 @@ class JetsonVisionWebNode(Node):
             self.get_parameter('ui_button_cooldown_s').value)
         self.localization_warning_streak = int(
             self.get_parameter('localization_warning_streak').value)
+        self.site_plan_mirror_x = bool(
+            self.get_parameter('site_plan_mirror_x').value)
         self.map_topic = str(self.get_parameter('map_topic').value)
         self.map_pixels_per_m = int(
             self.get_parameter('map_pixels_per_m').value)
@@ -609,11 +430,10 @@ class JetsonVisionWebNode(Node):
         if self.enable_debug_overlay:
             self.annotated_publisher = self.create_publisher(
                 Image, self.annotated_topic, qos_profile_sensor_data)
-        self.create_subscription(
-            Image, self.image_topic, self.image_cb, qos_profile_sensor_data)
-        self.create_subscription(
-            OccupancyGrid, self.map_topic, self.map_cb, 10)
 
+        # Subscriptions can invoke callbacks as soon as they are created.
+        # Allocate every callback-owned buffer first so the first camera frame
+        # cannot race node construction.
         self._frame_condition = threading.Condition()
         self._latest_frame = None
         self._latest_header = None
@@ -629,6 +449,11 @@ class JetsonVisionWebNode(Node):
         self._last_map_time = None
         self._stop_event = threading.Event()
         self._last_process_time = None
+
+        self.create_subscription(
+            Image, self.image_topic, self.image_cb, qos_profile_sensor_data)
+        self.create_subscription(
+            OccupancyGrid, self.map_topic, self.map_cb, 10)
 
         placeholder_width = max(
             1, int(round(self.map_width_m / self.map_resolution)))
@@ -695,7 +520,7 @@ class JetsonVisionWebNode(Node):
     # 터치 UI — 상태 수집
     # ==================================================
     def _setup_operator_ui(self) -> None:
-        """상태 구독과 두 개의 운용 발행자를 만든다.
+        """상태 구독과 미션 요청 발행자를 만든다.
 
         모든 콜백은 값과 수신 시각만 저장한다. 표시 판단은 /api/status에서
         하는데, 그래야 staleness 기준을 한 곳에서 일관되게 적용할 수 있다.
@@ -709,6 +534,8 @@ class JetsonVisionWebNode(Node):
         self.create_subscription(String, '/fleet/state', store('fleet'), 10)
         self.create_subscription(Bool, '/parking/target_ready',
                                  store('target_ready'), 10)
+        self.create_subscription(String, '/parking/target_status',
+                                 store('target_status'), 10)
         self.create_subscription(String, '/sync/error_state',
                                  store('sync_error'), 10)
         for role in ('front', 'rear'):
@@ -729,7 +556,6 @@ class JetsonVisionWebNode(Node):
         )
         self.pub_ui_request = self.create_publisher(
             String, '/ui/mission_request', request_qos)
-        self.pub_estop = self.create_publisher(Bool, '/emergency_stop', 10)
         # Flask 워커 스레드에서 직접 publish하지 않는다. 큐를 통해 rclpy
         # 실행 컨텍스트로 넘긴다.
         self.create_timer(0.05, self._drain_ui_queue)
@@ -765,9 +591,6 @@ class JetsonVisionWebNode(Node):
                 self.get_logger().info(
                     'UI mission request 발행: '
                     f'type={request_type}, request_id={request_id}')
-            elif kind == 'estop':
-                self.pub_estop.publish(Bool(data=True))
-                self.get_logger().error('UI 비상정지 발행')
 
     def _fresh(self, key):
         """(값, 신선함) 반환. 값이 없으면 (None, False)."""
@@ -794,6 +617,75 @@ class JetsonVisionWebNode(Node):
         'NAVIGATING': '차량 운반 중',
     }
 
+    def _ui_polygon(self, polygon) -> list[list[float]]:
+        """Convert map metres to the camera-oriented 0..100 UI canvas."""
+        width = float(getattr(self, 'map_width_m', 0.0))
+        height = float(getattr(self, 'map_height_m', 0.0))
+        if width <= 0.0 or height <= 0.0:
+            return []
+        converted = []
+        for point in polygon:
+            x = max(0.0, min(100.0, float(point[0]) / width * 100.0))
+            if getattr(self, 'site_plan_mirror_x', True):
+                x = 100.0 - x
+            # ROS map +y points up; the SVG/camera image +y points down.
+            y = max(
+                0.0,
+                min(100.0, (height - float(point[1])) / height * 100.0),
+            )
+            converted.append([round(x, 2), round(y, 2)])
+        return converted
+
+    def _site_layout_payload(self, fleet, parking_slots) -> tuple[list, dict]:
+        """Build a customer-safe view of the configured physical layout."""
+        lifecycle_by_id = {
+            slot['slot_id']: slot['lifecycle'] for slot in parking_slots}
+        available_values = fleet.get('available_slot_ids')
+        available_ids = (
+            {str(value) for value in available_values}
+            if isinstance(available_values, list) else None)
+        assigned_id = str(fleet.get('active_destination_slot_id', ''))
+        map_slots = list(getattr(self, 'map_slots', []))
+        converted_by_id = {
+            str(value[0]): self._ui_polygon(value[1])
+            for value in map_slots
+        }
+        # Customer space 1 is the rightmost polygon in the CCTV-oriented UI.
+        customer_order = sorted(
+            map_slots,
+            key=lambda value: sum(
+                point[0] for point in converted_by_id[str(value[0])]
+            ) / len(converted_by_id[str(value[0])]),
+            reverse=True,
+        )
+        display_number_by_id = {
+            str(value[0]): number
+            for number, value in enumerate(customer_order, start=1)
+        }
+        parking_spaces = []
+        for value in map_slots:
+            slot_id, polygon = value
+            lifecycle = lifecycle_by_id.get(str(slot_id), 'UNKNOWN')
+            parking_spaces.append({
+                # slot_id is retained for diagnostics/API compatibility only.
+                # The kiosk renders display_number instead.
+                'slot_id': str(slot_id),
+                'display_number': display_number_by_id[str(slot_id)],
+                'polygon': converted_by_id[str(slot_id)],
+                'available': bool(
+                    lifecycle == 'EMPTY' and
+                    (available_ids is None or str(slot_id) in available_ids)),
+                'assigned': bool(
+                    assigned_id and str(slot_id) == assigned_id),
+            })
+        site_layout = {
+            'waiting_polygon': self._ui_polygon(
+                getattr(self, 'waiting_polygon', [])),
+            'robot_start_polygon': self._ui_polygon(
+                getattr(self, 'robot_start_polygon', [])),
+        }
+        return parking_spaces, site_layout
+
     def build_status(self) -> dict:
         """UI 표시와 버튼 활성 판정을 한 곳에서 계산한다."""
         fleet_raw, fleet_fresh = self._fresh('fleet')
@@ -808,6 +700,26 @@ class JetsonVisionWebNode(Node):
 
         target_ready, target_fresh = self._fresh('target_ready')
         target_ready = bool(target_ready) and target_fresh
+        target_status_raw, target_status_fresh = self._fresh('target_status')
+        target_status = {}
+        if target_status_raw is not None and target_status_fresh:
+            try:
+                target_status = json.loads(target_status_raw)
+            except (TypeError, ValueError):
+                target_status, target_status_fresh = {}, False
+        target_state = str(target_status.get('state', '')).upper()
+        if target_state not in ('ABSENT', 'DETECTING', 'READY'):
+            target_state = 'READY' if target_ready else 'ABSENT'
+        # /parking/target_ready remains the authoritative safety gate. A
+        # slightly newer status message must never make the UI claim READY
+        # while the Bool gate is false.
+        if target_ready:
+            target_state = 'READY'
+        elif target_state == 'READY':
+            target_state = (
+                'DETECTING'
+                if bool(target_status.get('observed_recently', False))
+                else 'ABSENT')
 
         robots = {}
         for role in ('front', 'rear'):
@@ -873,6 +785,10 @@ class JetsonVisionWebNode(Node):
             parking_slots.append(slot)
         retrieve_enabled = any(
             slot['retrieve_enabled'] for slot in parking_slots)
+        parking_spaces, site_layout = self._site_layout_payload(
+            fleet, parking_slots)
+        site_layout['vehicle_state'] = target_state
+        site_layout['vehicle_present'] = target_state != 'ABSENT'
 
         if fault is not None:
             banner = f"오류: {fault['source']} — {fault['reason']}"
@@ -897,7 +813,10 @@ class JetsonVisionWebNode(Node):
         elif not target_fresh:
             banner = '일부 노드와 통신이 끊겼습니다'
         elif not target_ready:
-            banner = '대기공간에 차량을 x축 방향으로 세워 주세요'
+            banner = (
+                '차량 감지 중 — 정차 확인까지 잠시 기다려 주세요'
+                if target_state == 'DETECTING'
+                else '대기공간에 차량을 x축 방향으로 세워 주세요')
         elif empty_count < 1:
             banner = '빈 주차면이 없습니다'
         else:
@@ -915,9 +834,13 @@ class JetsonVisionWebNode(Node):
             'front': robots['front'],
             'rear': robots['rear'],
             'target_ready': target_ready,
+            'target_state': target_state,
+            'target_status': target_status,
             'park_enabled': park_enabled,
             'retrieve_enabled': retrieve_enabled,
             'parking_slots': parking_slots,
+            'parking_spaces': parking_spaces,
+            'site_layout': site_layout,
             'request_status': fleet.get('request_status'),
             'last_completed': fleet.get('last_completed'),
             'fault': fault,
@@ -931,7 +854,7 @@ class JetsonVisionWebNode(Node):
         }
 
     def request_park(
-            self, vehicle_number, password, destination_slot_id):
+            self, vehicle_number, password, destination_slot_id=''):
         """서버측에서 조건을 다시 확인한 뒤에만 발행한다."""
         status = self.build_status()
         if not status['park_enabled']:
@@ -942,26 +865,37 @@ class JetsonVisionWebNode(Node):
         except ValueError:
             return False, '차량번호 또는 비밀번호 형식을 확인하세요', status, ''
         destination_slot_id = str(destination_slot_id).strip()
-        selected = next((
+        empty_slots = [
             slot for slot in status['parking_slots']
-            if slot['slot_id'] == destination_slot_id and
-            slot['lifecycle'] == 'EMPTY'), None)
-        if selected is None:
-            return False, '선택한 주차면을 사용할 수 없습니다', status, ''
+            if slot['lifecycle'] == 'EMPTY']
+        if destination_slot_id:
+            selected = next((
+                space for space in status.get('parking_spaces', [])
+                if space['slot_id'] == destination_slot_id and
+                space['available']), None)
+            if selected is None:
+                return (
+                    False, '선택한 주차면을 사용할 수 없습니다', status, '')
+        elif not empty_slots:
+            return False, '현재 사용할 수 있는 주차공간이 없습니다', status, ''
         now = time.monotonic()
         if now - self._last_park_publish < self.ui_button_cooldown:
             return False, '요청 처리 중입니다', status, ''
         self._ui_sequence += 1
-        payload = json.dumps({
+        payload_fields = {
             'type': 'park',
             'vehicle_number': vehicle_number,
             'password': password,
-            'destination_slot_id': destination_slot_id,
             'request_id': f'ui-{uuid.uuid4()}',
             'client_id': self._ui_client_id,
             'sequence': self._ui_sequence,
             'stamp_ns': self.get_clock().now().nanoseconds,
-        })
+        }
+        # Customer kiosk requests omit the internal slot ID. Fleet Manager
+        # chooses from registry-empty AND perception-empty spaces atomically.
+        if destination_slot_id:
+            payload_fields['destination_slot_id'] = destination_slot_id
+        payload = json.dumps(payload_fields)
         try:
             self._ui_queue.put_nowait(('mission', payload))
         except queue.Full:
@@ -999,13 +933,6 @@ class JetsonVisionWebNode(Node):
             return False, '요청 큐가 가득 찼습니다', status, ''
         self._last_retrieve_publish = now
         return True, '출차 요청을 제출했습니다', status, request_id
-
-    def request_estop(self) -> bool:
-        try:
-            self._ui_queue.put_nowait(('estop', ''))
-        except queue.Full:
-            return False
-        return True
 
     def _make_flask_app(self):
         app = Flask('jetson_vision_web')
@@ -1076,6 +1003,22 @@ class JetsonVisionWebNode(Node):
                         '(enable_operator_ui:=true)', 404)
             return Response(KIOSK_PAGE, mimetype='text/html')
 
+        @app.route('/assets/kiosk.css')
+        def kiosk_css():
+            return Response(
+                KIOSK_CSS,
+                mimetype='text/css',
+                headers={'Cache-Control': 'no-store'},
+            )
+
+        @app.route('/assets/kiosk.js')
+        def kiosk_js():
+            return Response(
+                KIOSK_JS,
+                mimetype='application/javascript',
+                headers={'Cache-Control': 'no-store'},
+            )
+
         @app.route('/api/status')
         def api_status():
             if not self.enable_operator_ui:
@@ -1112,12 +1055,6 @@ class JetsonVisionWebNode(Node):
                 'status': status,
             })
 
-        @app.route('/api/estop', methods=['POST'])
-        def api_estop():
-            if not self.enable_operator_ui:
-                return jsonify({'error': 'operator UI disabled'}), 404
-            return jsonify({'accepted': self.request_estop()})
-
         @app.route('/health')
         def health():
             with self._jpeg_condition:
@@ -1143,7 +1080,7 @@ class JetsonVisionWebNode(Node):
         last_sequence = -1
         while not self._stop_event.is_set():
             with self._jpeg_condition:
-                self._jpeg_condition.wait_for(
+                ready = self._jpeg_condition.wait_for(
                     lambda: self._stop_event.is_set()
                     or (self._latest_jpeg is not None
                         and self._jpeg_sequence != last_sequence),
@@ -1151,6 +1088,8 @@ class JetsonVisionWebNode(Node):
                 )
                 if self._stop_event.is_set():
                     break
+                if not ready or self._latest_jpeg is None:
+                    continue
                 jpeg = self._latest_jpeg
                 last_sequence = self._jpeg_sequence
             yield (
@@ -1162,7 +1101,7 @@ class JetsonVisionWebNode(Node):
         last_sequence = -1
         while not self._stop_event.is_set():
             with self._map_condition:
-                self._map_condition.wait_for(
+                ready = self._map_condition.wait_for(
                     lambda: self._stop_event.is_set()
                     or (self._latest_map_jpeg is not None
                         and self._map_sequence != last_sequence),
@@ -1170,6 +1109,8 @@ class JetsonVisionWebNode(Node):
                 )
                 if self._stop_event.is_set():
                     break
+                if not ready or self._latest_map_jpeg is None:
+                    continue
                 jpeg = self._latest_map_jpeg
                 last_sequence = self._map_sequence
             yield (
@@ -1220,7 +1161,7 @@ class JetsonVisionWebNode(Node):
     def _worker_loop(self) -> None:
         while not self._stop_event.is_set():
             with self._frame_condition:
-                self._frame_condition.wait_for(
+                ready = self._frame_condition.wait_for(
                     lambda: self._stop_event.is_set()
                     or (self._latest_frame is not None
                         and self._input_sequence != self._processed_sequence),
@@ -1228,6 +1169,8 @@ class JetsonVisionWebNode(Node):
                 )
                 if self._stop_event.is_set():
                     return
+                if not ready or self._latest_frame is None:
+                    continue
                 frame = self._latest_frame.copy()
                 header = self._latest_header
                 self._processed_sequence = self._input_sequence
@@ -1355,7 +1298,8 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     node.destroy_node()
-    rclpy.shutdown()
+    if rclpy.ok():
+        rclpy.shutdown()
 
 
 if __name__ == '__main__':

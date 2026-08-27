@@ -8,6 +8,12 @@ typedef struct { void *Instance; } UART_HandleTypeDef;
 typedef struct { int unused; } TIM_HandleTypeDef;
 typedef struct { int unused; } GPIO_TypeDef;
 typedef enum { GPIO_PIN_RESET = 0, GPIO_PIN_SET = 1 } GPIO_PinState;
+typedef enum {
+    HAL_OK = 0,
+    HAL_ERROR = 1,
+    HAL_BUSY = 2,
+    HAL_TIMEOUT = 3,
+} HAL_StatusTypeDef;
 
 #define USART2 ((void *)2)
 #define GPIOB ((GPIO_TypeDef *)0)
@@ -50,9 +56,12 @@ typedef enum { GPIO_PIN_RESET = 0, GPIO_PIN_SET = 1 } GPIO_PinState;
 uint32_t HAL_GetTick(void);
 int HAL_TIM_Encoder_Start(TIM_HandleTypeDef *, uint32_t);
 int HAL_TIM_PWM_Start(TIM_HandleTypeDef *, uint32_t);
+int HAL_TIM_PWM_Stop(TIM_HandleTypeDef *, uint32_t);
 int HAL_TIM_Base_Start(TIM_HandleTypeDef *);
-int HAL_UART_Receive_IT(UART_HandleTypeDef *, uint8_t *, uint16_t);
-int HAL_UART_Transmit(UART_HandleTypeDef *, uint8_t *, uint16_t, uint32_t);
+HAL_StatusTypeDef HAL_UART_Receive_IT(
+    UART_HandleTypeDef *, uint8_t *, uint16_t);
+HAL_StatusTypeDef HAL_UART_Transmit(
+    UART_HandleTypeDef *, uint8_t *, uint16_t, uint32_t);
 void HAL_GPIO_WritePin(GPIO_TypeDef *, uint16_t, GPIO_PinState);
 GPIO_PinState HAL_GPIO_ReadPin(GPIO_TypeDef *, uint16_t);
 
@@ -62,5 +71,7 @@ GPIO_PinState HAL_GPIO_ReadPin(GPIO_TypeDef *, uint16_t);
     do { (void)(handle); (void)(value); } while (0)
 #define __HAL_TIM_SET_COMPARE(handle, channel, value) \
     do { (void)(handle); (void)(channel); (void)(value); } while (0)
+#define __disable_irq() do {} while (0)
+#define __enable_irq() do {} while (0)
 
 #endif

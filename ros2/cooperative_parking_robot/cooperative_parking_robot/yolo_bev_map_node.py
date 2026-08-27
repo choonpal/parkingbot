@@ -35,7 +35,6 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import (
     DurabilityPolicy, QoSProfile, ReliabilityPolicy,
-    qos_profile_sensor_data,
 )
 from sensor_msgs.msg import Image
 from nav_msgs.msg import OccupancyGrid, Odometry
@@ -50,6 +49,7 @@ from cooperative_parking_robot.vision_utils import (
     parse_class_ids,
     principal_axis_yaw,
 )
+from cooperative_parking_robot.latest_qos import SENSOR_LATEST_QOS
 from cooperative_parking_robot.parking_geometry import (
     parse_registered_slots,
     polygon_overlap_ratio,
@@ -397,12 +397,12 @@ class YoloBevMapNode(Node):
         if not self.image_topic:
             raise ValueError('image_topic must not be empty')
         self.create_subscription(Image, self.image_topic,
-                                 self.image_cb, qos_profile_sensor_data)
+                                 self.image_cb, SENSOR_LATEST_QOS)
         for role in ('front', 'rear'):
             self.create_subscription(
                 Odometry, f'/{role}/odom',
                 lambda msg, r=role: self.odom_cb(r, msg),
-                qos_profile_sensor_data)
+                SENSOR_LATEST_QOS)
         # P3: 임무가 끝나면 타겟 latch를 풀어 다음 차량을 인식할 수 있게 한다.
         self.create_subscription(
             String, '/mission/complete', self.mission_complete_cb, 10)
@@ -430,7 +430,7 @@ class YoloBevMapNode(Node):
             # 협조주행 중 든 차량 실위치 피드백 (rigid_body_sync 절대보정용)
             self.pub_vehicle_fb = self.create_publisher(
                 PoseStamped, '/parking/vehicle_pose_feedback',
-                qos_profile_sensor_data)
+                SENSOR_LATEST_QOS)
             self.pub_target_ready = self.create_publisher(
                 Bool, '/parking/target_ready', 10)
             # 맵은 주기적으로도 발행
@@ -451,7 +451,7 @@ class YoloBevMapNode(Node):
                 detection_topic = f'/{self.camera_id}/detections'
             self.detection_topic = detection_topic
             self.pub_detections = self.create_publisher(
-                String, detection_topic, qos_profile_sensor_data)
+                String, detection_topic, SENSOR_LATEST_QOS)
         else:
             self.detection_topic = ''
 

@@ -32,13 +32,16 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import (
     DurabilityPolicy, QoSProfile, ReliabilityPolicy,
-    qos_profile_sensor_data,
 )
 from nav_msgs.msg import OccupancyGrid
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, String
 
 from cooperative_parking_robot.aruco_utils import ArucoDetectorCompat
+from cooperative_parking_robot.latest_qos import (
+    SENSOR_LATEST_QOS,
+    STATE_LATEST_QOS,
+)
 from cooperative_parking_robot.camera_calibration import (
     load_camera_calibration,
     scale_camera_matrix,
@@ -429,7 +432,7 @@ class JetsonVisionWebNode(Node):
         self.annotated_publisher = None
         if self.enable_debug_overlay:
             self.annotated_publisher = self.create_publisher(
-                Image, self.annotated_topic, qos_profile_sensor_data)
+                Image, self.annotated_topic, SENSOR_LATEST_QOS)
 
         # Subscriptions can invoke callbacks as soon as they are created.
         # Allocate every callback-owned buffer first so the first camera frame
@@ -451,7 +454,7 @@ class JetsonVisionWebNode(Node):
         self._last_process_time = None
 
         self.create_subscription(
-            Image, self.image_topic, self.image_cb, qos_profile_sensor_data)
+            Image, self.image_topic, self.image_cb, SENSOR_LATEST_QOS)
         self.create_subscription(
             OccupancyGrid, self.map_topic, self.map_cb, 10)
 
@@ -531,7 +534,8 @@ class JetsonVisionWebNode(Node):
                     self._status[key] = (msg.data, time.monotonic())
             return callback
 
-        self.create_subscription(String, '/fleet/state', store('fleet'), 10)
+        self.create_subscription(
+            String, '/fleet/state', store('fleet'), STATE_LATEST_QOS)
         self.create_subscription(Bool, '/parking/target_ready',
                                  store('target_ready'), 10)
         self.create_subscription(String, '/parking/target_status',
@@ -540,7 +544,8 @@ class JetsonVisionWebNode(Node):
                                  store('sync_error'), 10)
         for role in ('front', 'rear'):
             self.create_subscription(
-                String, f'/{role}/robot_state', store(f'{role}_state'), 10)
+                String, f'/{role}/robot_state', store(f'{role}_state'),
+                STATE_LATEST_QOS)
             self.create_subscription(
                 String, f'/{role}/motion_phase', store(f'{role}_phase'), 10)
             self.create_subscription(

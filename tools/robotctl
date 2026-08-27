@@ -24,6 +24,28 @@ HERE = Path(__file__).resolve().parent
 DEFAULT_CONFIG = Path("~/.config/parkingbot/production_hosts.env").expanduser()
 
 
+def repo_root():
+    """저장소 루트를 찾는다.
+
+    ``install_robot_commands.sh`` 는 이 스크립트를 ``~/.local/bin`` 으로
+    복사한다. 그러면 ``HERE.parent`` 는 ``~/.local`` 이 되어 소스 대조가
+    항상 "source missing" 으로 실패한다. 설치본에서도 동작하도록 실제
+    저장소를 찾는다.
+    """
+    override = os.environ.get("PARKINGBOT_REPO")
+    if override:
+        return Path(override).expanduser()
+    # 저장소 안에서 직접 실행한 경우
+    if (HERE.parent / "ros2" / "cooperative_parking_robot").is_dir():
+        return HERE.parent
+    for candidate in (Path("~/parkingbot").expanduser(),
+                      Path.home() / "parkingbot"):
+        if (candidate / "ros2" / "cooperative_parking_robot").is_dir():
+            return candidate
+    # 못 찾으면 예전 동작을 유지한다. 오류 메시지가 경로를 알려준다.
+    return HERE.parent
+
+
 def config_path(args):
     return Path(args.config or os.environ.get("PARKINGBOT_CONFIG", DEFAULT_CONFIG)).expanduser()
 
@@ -184,7 +206,7 @@ def start(args):
     config = checked_config(args)
     runner = Runner()
     print("ParkingBot Production Start\n===========================\n")
-    protocol_errors = protocol_consistency_errors(HERE.parent)
+    protocol_errors = protocol_consistency_errors(repo_root())
     if protocol_errors:
         for error in protocol_errors:
             print(f"[FAIL] protocol consistency: {error}")
@@ -424,7 +446,7 @@ def doctor(args):
     blockers = []
     blockers.extend(
         f"control: protocol consistency: {error}"
-        for error in protocol_consistency_errors(HERE.parent))
+        for error in protocol_consistency_errors(repo_root()))
     if shutil.which("tmux") is None:
         blockers.append("control: tmux missing")
     if not Path(config["ROS_SETUP"]).is_file():

@@ -14,6 +14,10 @@ def test_ros_frames_use_prefix_and_legacy_commands_remain_unambiguous():
     protocol = UartProtocol()
     assert protocol.encode_velocity(0.1, -0.2, 0.3) == \
         '@V,0.100,-0.200,0.300\n'
+    assert protocol.encode_hello('abcdef0123456789') == \
+        '@HELLO,2,abcdef0123456789\n'
+    assert protocol.encode_heartbeat('abcdef0123456789:1') == \
+        '@HB,abcdef0123456789:1\n'
     assert protocol.encode_servo('grip') == '@S,grip\n'
     assert protocol.encode_heartbeat(1.25) == '@HB,1.250\n'
     assert protocol.encode_estop() == '@ESTOP\n'
@@ -61,7 +65,8 @@ def test_production_firmware_uses_real_robot_hardware_baseline():
     assert 'kServoOpenPulseUs[SERVO_NUM] = {2600.0f, 400.0f}' in source
     assert 'kServoOpenPulseUs[SERVO_NUM] = {400.0f, 2600.0f}' in source
     assert "if (uart_rx_byte == '@')" in source
-    assert 'Legacy_ApplyCommand(uart_rx_byte)' in source
+    assert 'UART_QueueRxCommand(legacy)' in source
+    assert source.count('HAL_UART_Transmit(') == 1
     assert 'ParseDecimalToken' in source
     assert 'sscanf(cmd, "V,%f,%f,%f"' not in source
 

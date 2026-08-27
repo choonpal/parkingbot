@@ -60,6 +60,7 @@ PRESENCE_TOPICS = {
     "map_stream": "/parking/map",
 }
 EXPECTED_UART_PROTOCOL_VERSION = 2
+EXPECTED_UART_BAUD_RATE = 115200
 
 
 def protocol_consistency_errors(repository_root) -> list[str]:
@@ -88,11 +89,13 @@ def protocol_consistency_errors(repository_root) -> list[str]:
     required = {
         "firmware": (
             rf"#define\s+UART_PROTOCOL_VERSION\s+{version}U",
+            rf"#define\s+UART_BAUD_RATE\s+{EXPECTED_UART_BAUD_RATE}U",
             rf'"HELLO:%u:%s"',
             "protocol_session_active",
         ),
         "uart_protocol": (
             rf"PROTOCOL_VERSION\s*=\s*{version}",
+            rf"UART_BAUD_RATE\s*=\s*{EXPECTED_UART_BAUD_RATE}",
             "def encode_hello",
             "def encode_zero_velocity",
         ),
@@ -113,17 +116,16 @@ def protocol_consistency_errors(repository_root) -> list[str]:
 
 def protocol_source_check_command(repository_root) -> str:
     """Render the remote doctor equivalent of protocol_consistency_errors."""
-    root = shlex.quote(str(repository_root))
-    firmware = (
-        f"{root}/stm32/parking_robot/Core/Src/parking_robot_firmware.c")
-    package = (
-        f"{root}/ros2/cooperative_parking_robot/"
-        "cooperative_parking_robot")
+    # 원격에 배포되는 것은 ROS 패키지뿐이고 펌웨어 소스(stm32/)는 저장소
+    # 루트에만 있다. 여기서 펌웨어까지 찾으면 어떤 장비에서도 통과할 수
+    # 없다. 펌웨어 대조는 제어 장비의 protocol_consistency_errors() 가
+    # 이미 수행하므로, 원격에서는 배포된 ROS 소스만 확인한다.
+    package = shlex.quote(str(repository_root))
     return (
-        f"grep -Eq '#define[[:space:]]+UART_PROTOCOL_VERSION[[:space:]]+"
-        f"{EXPECTED_UART_PROTOCOL_VERSION}U' {firmware} && "
         f"grep -Eq 'PROTOCOL_VERSION[[:space:]]*=[[:space:]]*"
         f"{EXPECTED_UART_PROTOCOL_VERSION}' {package}/uart_protocol.py && "
+        f"grep -Eq 'UART_BAUD_RATE[[:space:]]*=[[:space:]]*"
+        f"{EXPECTED_UART_BAUD_RATE}' {package}/uart_protocol.py && "
         f"grep -q 'encode_hello(self.session_id)' "
         f"{package}/stm32_bridge_node.py")
 

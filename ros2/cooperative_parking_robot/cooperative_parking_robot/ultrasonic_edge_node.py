@@ -17,7 +17,6 @@ import rclpy
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Range
 from std_msgs.msg import Bool, Float64, Int32, String
 
@@ -31,6 +30,10 @@ from cooperative_parking_robot.vehicle_entry import (
     world_to_vehicle,
 )
 from cooperative_parking_robot.freshness import StampGate, stamp_to_ns
+from cooperative_parking_robot.latest_qos import (
+    SENSOR_LATEST_QOS,
+    STATE_LATEST_QOS,
+)
 from cooperative_parking_robot.wheel_edge_detector import AxleSequenceDetector
 
 
@@ -162,12 +165,13 @@ class UltrasonicEdgeNode(Node):
 
         self.create_subscription(
             Odometry, f"/{self.role}/odom", self.odom_cb,
-            qos_profile_sensor_data)
+            SENSOR_LATEST_QOS)
         self.create_subscription(
             PoseStamped, f"/{self.role}/active_target_pose",
             self.active_target_cb, 10)
         self.create_subscription(
-            String, f"/{self.role}/robot_state", self.state_cb, 10)
+            String, f"/{self.role}/robot_state", self.state_cb,
+            STATE_LATEST_QOS)
         self.create_subscription(
             Bool, f"/{self.role}/wheel_scan_reset", self.scan_reset_cb, 10)
         self.create_subscription(
@@ -177,7 +181,7 @@ class UltrasonicEdgeNode(Node):
                 Range,
                 f"/{self.role}/ultrasonic_{side}",
                 lambda msg, s=side: self.range_cb(s, msg),
-                qos_profile_sensor_data,
+                SENSOR_LATEST_QOS,
             )
 
         self.pub_detected = self.create_publisher(

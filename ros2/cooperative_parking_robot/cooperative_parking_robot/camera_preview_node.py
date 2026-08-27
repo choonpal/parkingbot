@@ -91,11 +91,14 @@ import os
 import rclpy
 from geometry_msgs.msg import PoseStamped
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, String
 
 from cooperative_parking_robot.aruco_utils import ArucoDetectorCompat
+from cooperative_parking_robot.latest_qos import (
+    SENSOR_LATEST_QOS,
+    STATE_LATEST_QOS,
+)
 # 런타임(cctv_merge)이 쓰는 것과 **같은** 점유 판정 로직을 그대로 쓴다.
 # 프리뷰가 자체 규칙으로 판정하면 화면과 실제 발행값이 어긋난다.
 from cooperative_parking_robot.bev_fusion_core import (
@@ -1347,11 +1350,11 @@ class CameraPreviewNode(Node):
         if self.relative_pose_topic:
             self._pose_subscription = self.create_subscription(
                 PoseStamped, self.relative_pose_topic,
-                self.relative_pose_cb, qos_profile_sensor_data)
+                self.relative_pose_cb, SENSOR_LATEST_QOS)
         if self.marker_visible_topic:
             self._visible_subscription = self.create_subscription(
                 Bool, self.marker_visible_topic,
-                self.marker_visible_cb, qos_profile_sensor_data)
+                self.marker_visible_cb, SENSOR_LATEST_QOS)
         self.cameras = []
         for label, topic in zip(labels, topics):
             state = {
@@ -1368,12 +1371,13 @@ class CameraPreviewNode(Node):
             self.create_subscription(
                 Image, topic,
                 lambda msg, s=state: self.image_cb(s, msg),
-                qos_profile_sensor_data)
+                SENSOR_LATEST_QOS)
 
         # fleet_manager 가 지금 입차 중인지 출차 중인지 알려준다.
         if self.fleet_state_topic:
             self.create_subscription(
-                String, self.fleet_state_topic, self.fleet_state_cb, 10)
+                String, self.fleet_state_topic, self.fleet_state_cb,
+                STATE_LATEST_QOS)
 
         self._bev_mode = 'anaglyph'
         self._setup_bev(labels)

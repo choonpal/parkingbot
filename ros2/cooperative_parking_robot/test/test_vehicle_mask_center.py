@@ -68,3 +68,37 @@ def test_invalid_mask_keeps_bbox_fallback():
     box, used = recentered_xyxy(None, original, 100, 80)
     assert not used
     assert box == original
+
+
+def test_inference_tensor_is_never_mutated_in_place():
+    torch = __import__('pytest').importorskip('torch')
+
+    class Boxes:
+        def __init__(self, data):
+            self.data = data
+
+        @property
+        def cls(self):
+            return self.data[:, 5]
+
+        def __len__(self):
+            return len(self.data)
+
+    with torch.inference_mode():
+        inference_data = torch.tensor(
+            [[0.0, 0.0, 80.0, 60.0, 0.91, 0.0]],
+            dtype=torch.float32)
+    original = inference_data.cpu().numpy().copy()
+    masks = SimpleNamespace(xy=[np.asarray(
+        [[20, 10], [40, 10], [40, 30], [20, 30]], dtype=np.float32)])
+    result = SimpleNamespace(boxes=Boxes(inference_data), masks=masks)
+
+    assert recenter_vehicle_result_boxes(
+        [result], 100, 80, vehicle_class_id=0) == 1
+    assert np.array_equal(inference_data.cpu().numpy(), original)
+    assert result.boxes.data is not inference_data
+    if hasattr(torch, 'is_inference'):
+        assert not torch.is_inference(result.boxes.data)
+    vehicle = result.boxes.data[0].cpu().numpy()
+    assert math.isclose(float((vehicle[0] + vehicle[2]) * 0.5), 30.0)
+    assert math.isclose(float(vehicle[4]), 0.91, rel_tol=1e-6)

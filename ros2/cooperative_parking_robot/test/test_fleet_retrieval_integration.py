@@ -102,6 +102,7 @@ def park_request_harness(registry=None):
     fleet.front_motion_fault = ''
     fleet.rear_motion_fault = ''
     fleet.ui_park_approved = False
+    fleet.require_valid_vehicle_spec = False
     fleet.ui_approved_time = 0.0
     fleet.ui_request_id = ''
     fleet.request_status = None

@@ -41,17 +41,12 @@ import json
 import rclpy
 from rclpy.node import Node
 from rclpy.time import Time
-from rclpy.qos import (
-    DurabilityPolicy,
-    QoSProfile,
-    ReliabilityPolicy,
-    qos_profile_sensor_data,
-)
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import Bool, String
 
 from cooperative_parking_robot.kalman_filter import PoseEKF
+from cooperative_parking_robot.latest_qos import SENSOR_LATEST_QOS
 
 
 def yaw_from_quat(q):
@@ -133,22 +128,18 @@ class PoseFusionNode(Node):
         # ===== 구독 =====
         self.create_subscription(
             Odometry, f'/{self.role}/wheel_odom', self.wheel_odom_cb,
-            qos_profile_sensor_data)
+            SENSOR_LATEST_QOS)
         self.create_subscription(
             PoseStamped, f'/{self.role}/cctv_pose', self.cctv_pose_cb,
-            qos_profile_sensor_data)
+            SENSOR_LATEST_QOS)
         self.create_subscription(
             Bool, f'/{self.role}/cctv_marker_visible', self.cctv_visible_cb,
-            qos_profile_sensor_data)
+            SENSOR_LATEST_QOS)
 
-        # Mission/control consumers request reliable odometry. Sensor-data
-        # QoS here silently disconnected fleet_manager and motion nodes.
-        odom_qos = QoSProfile(
-            depth=20,
-            reliability=ReliabilityPolicy.RELIABLE,
-            durability=DurabilityPolicy.VOLATILE)
+        # A superseded 50 Hz pose must never queue behind as much as 0.4 s of
+        # reliable history. Every control consumer uses this depth-1 contract.
         self.pub_odom = self.create_publisher(
-            Odometry, f'/{self.role}/odom', odom_qos)
+            Odometry, f'/{self.role}/odom', SENSOR_LATEST_QOS)
         self.pub_status = self.create_publisher(
             String, f'/{self.role}/localization_status', 10)
 
@@ -177,7 +168,6 @@ class PoseFusionNode(Node):
             raw_dt = (stamp - self._last_wheel_stamp).nanoseconds * 1e-9
             if raw_dt <= 0.0:
                 self.get_logger().warn('역행/중복 wheel_odom timestamp — 측정 폐기')
-                self.publish_odom(msg.header.stamp)
                 return
             dt = min(raw_dt, self.max_dt)
 

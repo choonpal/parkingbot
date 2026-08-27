@@ -1,5 +1,12 @@
 # Production startup heartbeat·freshness·operations 복구
 
+> **Repository 재감사 정정:** 초판 문서는 설계안 전체가 적용된 것으로 기록했지만,
+> `c6bafbb`의 실제 source에는 firmware의 기본 HELLO/servo parser와 일부 ops 변경만
+> 남고 ROS bridge, protocol API, QoS, safety test가 빠진 mixed release였다. 당시
+> `git status`/reflog에는 유실된 working-tree patch가 없었으므로 원인은 reset이 아니라
+> 서로 다른 범위가 함께 commit된 source/document consistency 결함이다. 아래 내용은
+> 현재 working tree를 다시 감사하고 누락 구현과 회귀 검증을 완료한 결과다.
+
 ## 목적
 
 2026-08-28 production restart에서 Front/Rear가 공통으로
@@ -19,11 +26,12 @@ Watchdog, ESTOP latch, command freshness threshold는 완화하지 않았다.
   `HEARTBEAT_TIMEOUT`을 queue한다.
 - 기존 bridge는 serial open 직후 `SERVO_ATTACH`를 먼저 보내고, heartbeat ACK가
   아닌 attach ACK도 `last_ack_time`으로 인정해 `hardware_ready=true`를 만들었다.
-- state machine은 모든 `ERR,*`를 영구 hardware fault로 바꾸고 `/emergency_stop`을
-  발행한다. 따라서 이전 세션 timeout 한 건이 실제 STM32 ESTOP latch까지 확대됐다.
-- production UART 로그에는 `ACK,SERVO_ATTACH`가 있었지만 main branch firmware에는
-  `S,attach` parser가 없었다. 배포 binary와 authoritative source가 달랐으며, 검증된
-  attach parser를 main firmware로 회수했다.
+- 당시 state machine에는 IDLE에서 발생한 communication fault를 3초 뒤 자동으로
+  `FAULT → IDLE` 복구하는 예외가 있었다. active timeout 중에도 안전 상태를 해제할
+  수 있어 제거했고, 실제 runtime fault는 IDLE 여부와 관계없이 ESTOP으로 처리한다.
+- firmware에는 구형 `@HELLO,<session>`과 servo attach parser가 있었지만 bridge와
+  `uart_protocol.py`에는 HELLO/session 구현이 없었다. 문서가 runtime보다 앞서 있던
+  이 protocol 반쪽 적용이 mixed release의 직접 원인이었다.
 
 ### 2. stale stamp는 NTP/기본 RTT가 아니라 backlog와 진단 부하였다
 
@@ -57,6 +65,28 @@ dead status, child return code는 저장하지 않아 사후 구분도 불가능
 timeout 자체는 stack을 정리하지 않았고, launch command 실패 때만 이미 시작한
 session을 정리했다.
 
+### 5. UART frame corruption
+
+- firmware TX 호출은 main loop에만 있었으므로 ISR/main 동시 producer가 직접 원인은
+  아니었다. 그러나 여러 call site가 10 ms 고정 timeout으로 긴 line을 직접 전송하고
+  `HAL_UART_Transmit` 실패/부분 전송을 무시했다. 다음 frame이 이어지면 관측된
+  `EACK`, `U,L,TIMEU` 형태의 절단·결합 line이 만들어질 수 있었다.
+- TX를 complete-line serializer 한 곳으로 모으고 baud/길이 기반 timeout과 HAL 결과를
+  검사한다. 실패하면 모터 정지와 UART transport fault를 latch한다. RX ISR은 frame을
+  queue에 넣기만 하고 parser/ACK는 main loop에서 처리한다.
+- bridge는 serial port를 exclusive open하고, partial/overflow/write error와 1초 내
+  malformed frame 3개를 transport fault로 처리하여 `hardware_ready=false`로 만든다.
+
+### 6. dual-camera YOLO crash
+
+- mask center 보정이 PyTorch inference tensor의 `boxes.data`를 inplace 변경해
+  InferenceMode 예외를 발생시켰다. normal clone을 만들어 같은 confidence/class 및
+  mask semantics로 좌표만 보정하도록 변경했다.
+- 두 camera process의 model load/inference가 동시에 CUDA/CUBLAS workspace를 잡았다.
+  host/thread lock과 cross-process file lock으로 load와 inference 구간을 직렬화하고,
+  결과는 lock 안에서 CPU로 bounded 복사한 뒤 미사용 CUDA cache만 반환한다. CPU 강제
+  전환이나 입력 해상도 축소는 하지 않았다.
+
 ## 변경 내용
 
 ### STM32/bridge handshake
@@ -65,10 +95,10 @@ session을 정리했다.
 
 ```text
 SERIAL_CONNECTED
-→ HELLO(session_id)
-→ matching HELLO ACK
-→ heartbeat 전송 및 matching ACK
-→ zero V로 command watchdog 시작
+→ HELLO(protocol_version=2, session_id)
+→ matching ACK,HELLO:2:<session_id>
+→ tokenized heartbeat 전송 및 matching ACK
+→ tokenized zero V 및 matching ACK로 command watchdog 시작
 → SERVO_ATTACH 및 ACK
 → 양쪽 ultrasonic fresh
 → hardware_ready=true / IDLE 유지
@@ -80,8 +110,10 @@ SERIAL_CONNECTED
 - HELLO 전에 UART로 이미 전송된 위 두 comm timeout만 bridge가 startup 정보로
   격리한다. `ESTOP_LATCHED`와 다른 error, HELLO ACK 이후의 timeout은 기존처럼
   state machine에 `ERR`로 전달된다.
-- `hardware_ready`는 matching HELLO/HB ACK, command channel, servo attach,
-  heartbeat freshness, ultrasonic freshness, no active fault를 모두 요구한다.
+- `hardware_ready`는 serial connected, current-session HELLO ACK, 300 ms 이내 matching
+  heartbeat ACK, acknowledged zero command, servo attach ACK, 양쪽 ultrasonic freshness,
+  no ESTOP latch, no active communication fault, no UART transport fault를 한 곳에서
+  모두 계산한다.
 - UART read/write/overflow는 command·servo channel을 fail-closed하고 port를 닫는다.
   운용 중 transport fault는 자동 reconnect로 숨기지 않고 bridge 재시작의 새 HELLO를
   요구한다.
@@ -108,11 +140,16 @@ SERIAL_CONNECTED
   robot state, motion fault, timestamp, launch command를 기록한다.
 - startup은 조건별 `[WAIT]/[OK]/[FAIL]`을 출력하고 3초 discovery grace 뒤 이미
   명확한 hardware fault가 있으면 전체 timeout 전에 fail-fast한다.
+- `robot_doctor`와 start preflight는 firmware/ROS protocol v2, HELLO encoder와 bridge
+  requirement, 115200 baud consistency를 확인한다. 구 firmware와 새 bridge 조합은
+  HELLO ACK를 만들 수 없으므로 READY가 되지 않는다.
 
 ## Safety 영향
 
 - heartbeat/command watchdog과 모든 기존 threshold 유지
 - 실제 heartbeat loss는 여전히 `ERR,HEARTBEAT_TIMEOUT → FAULT → ESTOP`
+- 실제 command loss도 `ERR,COMMAND_TIMEOUT → FAULT → ESTOP`이며 시간 경과만으로
+  IDLE에 자동 복귀하지 않는다.
 - 실제 ESTOP latch는 HELLO/restart로 복구 불가; 수동 MCU reset/power-cycle 필요
 - unknown firmware protocol, bad attach pulse, UART error는 ready가 되지 않음
 - planned restart만 ESTOP을 새로 latch하지 않으며 bridge zero command와 STM32
@@ -134,10 +171,14 @@ SERIAL_CONNECTED
 - clean/non-interactive ROS 환경에서 실제 `ros2 node list`, `ros2 topic list -t`,
   `ros2 topic echo --once`와 단일 snapshot helper를 실행해 모두 exit code 0을
   확인했다.
-- 전체 package/operations pytest는 `603 passed, 2 skipped`, ROS package colcon
-  build는 `1 package finished`로 통과했다. skip 2건은 optional dependency와
-  기본 sandbox에서 허용되지 않는 tmux socket 통합 시험이며, 후자는 권한을 갖춘
-  별도 실행에서 통과했다.
+- 전체 package/operations pytest는 구현 완료 시점에
+  `630 passed, 2 skipped, 1 warning`이었다. 이후 CUDA host probe 격리와 최신 QoS
+  적용 영향 범위는 `49 passed, 1 skipped`, 최종 GPU result lifetime 보강 범위는
+  `7 passed`, firmware harness 단독은 `2 passed`였다.
+  ROS package colcon build는 깨끗한 `/tmp` overlay에서 `1 package finished`로
+  통과했다. skip은 optional dependency 또는 기본 sandbox에서 허용되지 않는 tmux
+  socket 통합 시험이며, full-suite warning은 CPU host에서 CUDA availability를 probe한
+  PyTorch warning으로 실제 CUDA inference 실패가 아니다.
 
 ## 배포 및 실차 확인
 

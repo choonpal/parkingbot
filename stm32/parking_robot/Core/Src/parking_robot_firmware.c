@@ -13,10 +13,11 @@
  *
  * UART 프로토콜:
  *   수신: "@V,vx,vy,omega\n"  (속도 명령, m/s)
- *         "@HELLO,session_id\n" (새 Linux bridge 세션 경계)
+ *         "@HELLO,2,session_id\n" (새 Linux bridge 세션 경계)
+ *         "@V,0,0,0,session_id\n" (command channel startup probe)
  *         "@S,attach,pulse1_us,pulse2_us\n" (서보 기준 동기화)
  *         "@S,grip\n" / "@S,release\n"  (arm 제어)
- *         "@HB,timestamp\n" / "@ESTOP\n"
+ *         "@HB,session_id:sequence\n" / "@ESTOP\n"
  *         "@M,FL|FR|RL|RR,pwm\n" (정비용 단일 바퀴, |pwm|<=120)
  *   기존 실차 시험기의 W/S/A/D/Q/E, U/J/I/K/T/G/O/X 단일문자 명령도
  *   그대로 지원한다. '@' prefix가 두 프로토콜의 S/E 충돌을 막는다.
@@ -99,6 +100,10 @@ extern TIM_HandleTypeDef htim11;      // 우 서보 PWM CH1
 #define DT              (1.0f / CONTROL_HZ)
 #define HEARTBEAT_TIMEOUT_MS 300U
 #define COMMAND_TIMEOUT_MS   250U
+#define UART_PROTOCOL_VERSION   2U
+#define UART_SESSION_ID_MAX    16U
+#define UART_BAUD_RATE      115200U
+#define UART_TX_MARGIN_MS        5U
 #define SERVO_TIMEOUT_MS    5000U
 #define MAX_LINEAR_MPS       0.25f
 #define MAX_ANGULAR_RAD_S    1.00f
@@ -214,6 +219,10 @@ typedef struct {
     int16_t target_rpm_x10[MOTOR_NUM];
     int32_t speed_integral[MOTOR_NUM];
     uint8_t wrong_direction_cycles[MOTOR_NUM];
+    uint8_t protocol_session_active;
+    char session_id[UART_SESSION_ID_MAX + 1U];
+    uint8_t safety_fault_latched;
+    char safety_fault_code[32];
 } RobotState_t;
 
 RobotState_t g_robot;
@@ -240,14 +249,24 @@ char uart_rx_buf[64];
 uint8_t uart_rx_idx = 0;
 static uint8_t uart_frame_active = 0U;
 
+/* RX ISR only assembles bytes. Parsing and every hardware action happen in
+ * the main loop, so UART RX cannot race a TX formatter or motor/servo state. */
+#define RX_COMMAND_QUEUE_DEPTH 8U
+static char g_rx_commands[RX_COMMAND_QUEUE_DEPTH][sizeof(uart_rx_buf)];
+static volatile uint8_t g_rx_command_head = 0U;
+static volatile uint8_t g_rx_command_tail = 0U;
+static volatile uint8_t g_rx_command_count = 0U;
+static volatile uint8_t g_rx_queue_overflow = 0U;
+
 /* ISR에서는 blocking UART 송신을 하지 않고 main loop가 응답을 보낸다. */
 #define TX_ACK          (1U << 0)
 #define TX_ERR          (1U << 1)
 #define TX_GRIP_DONE    (1U << 2)
 #define TX_RELEASE_DONE (1U << 3)
 static volatile uint8_t g_tx_flags = 0;
-static char g_ack_value[32];
+static char g_ack_value[48];
 static char g_error_code[32];
+static uint8_t g_uart_tx_fault = 0U;
 
 /* main.h에 프로젝트별 prototype가 없더라도 C99에서 안전하게 컴파일되도록 선언. */
 void UART_ParseCommand(char *cmd);
@@ -259,6 +278,12 @@ static void Robot_HoldServosImmediate(void);
 static bool Robot_IsStopped(void);
 static void QueueAck(const char *value);
 static void QueueError(const char *code);
+static bool ErrorIsCommunicationTimeout(const char *code);
+static bool ErrorIsRecoverableRejection(const char *code);
+static bool SessionIdIsValid(const char *session_id);
+static void UART_ProcessPendingCommands(void);
+static void UART_QueueRxCommand(const char *command);
+static bool UART_TransmitFrame(const char *line);
 static void UART_SendPending(void);
 static void UART_SendUltrasonicPending(void);
 static void QueueUltrasonic(uint8_t side, int32_t distance_mm);
@@ -322,8 +347,13 @@ void Robot_Init(void)
     memset(&g_robot, 0, sizeof(g_robot));
     memset(&g_ultrasonic, 0, sizeof(g_ultrasonic));
     g_tx_flags = 0U;
+    g_uart_tx_fault = 0U;
     g_ack_value[0] = '\0';
     g_error_code[0] = '\0';
+    g_rx_command_head = 0U;
+    g_rx_command_tail = 0U;
+    g_rx_command_count = 0U;
+    g_rx_queue_overflow = 0U;
     g_ultrasonic.next_side = ULTRA_LEFT;
 
     // 서보 초기값 (열림)
@@ -377,35 +407,111 @@ static void QueueAck(const char *value)
     g_tx_flags |= TX_ACK;
 }
 
+static bool ErrorIsCommunicationTimeout(const char *code)
+{
+    return strcmp(code, "HEARTBEAT_TIMEOUT") == 0 ||
+           strcmp(code, "COMMAND_TIMEOUT") == 0;
+}
+
+static bool ErrorIsRecoverableRejection(const char *code)
+{
+    return strcmp(code, "LIFT_WHILE_MOVING") == 0 ||
+           strcmp(code, "SERVO_NOT_ATTACHED") == 0 ||
+           strcmp(code, "HELLO_REQUIRED") == 0 ||
+           strcmp(code, "HEARTBEAT_REQUIRED") == 0 ||
+           strcmp(code, "COMMAND_REQUIRED") == 0 ||
+           strcmp(code, "STARTUP_SEQUENCE") == 0;
+}
+
+static bool SessionIdIsValid(const char *session_id)
+{
+    size_t length = strlen(session_id);
+    if (length < 8U || length > UART_SESSION_ID_MAX) return false;
+    for (size_t i = 0U; i < length; i++) {
+        char value = session_id[i];
+        if (!((value >= 'A' && value <= 'Z') ||
+              (value >= 'a' && value <= 'z') ||
+              (value >= '0' && value <= '9') ||
+              value == '_' || value == '-')) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static void QueueError(const char *code)
 {
+    /* Communication timeouts belong to a Linux session. Other malformed
+     * protocol, motor, sensor and servo safety errors survive HELLO. */
+    if (!ErrorIsCommunicationTimeout(code) &&
+        !ErrorIsRecoverableRejection(code) &&
+        strcmp(code, "ESTOP_LATCHED") != 0) {
+        if (!g_robot.safety_fault_latched) {
+            strncpy(g_robot.safety_fault_code, code,
+                    sizeof(g_robot.safety_fault_code) - 1U);
+            g_robot.safety_fault_code[
+                sizeof(g_robot.safety_fault_code) - 1U] = '\0';
+        }
+        g_robot.safety_fault_latched = 1U;
+    }
     strncpy(g_error_code, code, sizeof(g_error_code) - 1);
     g_error_code[sizeof(g_error_code) - 1] = '\0';
     g_tx_flags |= TX_ERR;
 }
 
+static bool UART_TransmitFrame(const char *line)
+{
+    if (line == NULL || g_uart_tx_fault) return false;
+    size_t length = strlen(line);
+    if (length == 0U || length > UINT16_MAX || line[length - 1U] != '\n') {
+        QueueError("TX_FRAME_INVALID");
+        Robot_StopMotorsImmediate();
+        return false;
+    }
+    /* 8N1 consumes ten serial bits per byte. The old hard-coded 10 ms
+     * deadline could expire mid telemetry line; the next line then appeared
+     * glued into the truncated frame. Every producer now uses this one
+     * complete-line path with a length-derived deadline and checked result. */
+    uint32_t wire_ms = (uint32_t)(
+        (length * 10U * 1000U + UART_BAUD_RATE - 1U) / UART_BAUD_RATE);
+    HAL_StatusTypeDef status = HAL_UART_Transmit(
+        &huart2, (uint8_t *)line, (uint16_t)length,
+        wire_ms + UART_TX_MARGIN_MS);
+    if (status != HAL_OK) {
+        g_uart_tx_fault = 1U;
+        Robot_StopMotorsImmediate();
+        return false;
+    }
+    return true;
+}
+
 static void UART_SendLine(const char *line)
 {
-    HAL_UART_Transmit(&huart2, (uint8_t *)line, strlen(line), 10);
+    (void)UART_TransmitFrame(line);
 }
 
 static void UART_SendPending(void)
 {
     char buf[64];
+    if (g_uart_tx_fault) return;
     if (g_tx_flags & TX_ERR) {
         snprintf(buf, sizeof(buf), "ERR,%s\n", g_error_code);
-        g_tx_flags &= (uint8_t)~TX_ERR;
-        UART_SendLine(buf);
+        if (UART_TransmitFrame(buf)) {
+            g_tx_flags &= (uint8_t)~TX_ERR;
+        }
     } else if (g_tx_flags & TX_GRIP_DONE) {
-        g_tx_flags &= (uint8_t)~TX_GRIP_DONE;
-        UART_SendLine("LIFT,GRIP_DONE\n");
+        if (UART_TransmitFrame("LIFT,GRIP_DONE\n")) {
+            g_tx_flags &= (uint8_t)~TX_GRIP_DONE;
+        }
     } else if (g_tx_flags & TX_RELEASE_DONE) {
-        g_tx_flags &= (uint8_t)~TX_RELEASE_DONE;
-        UART_SendLine("LIFT,RELEASE_DONE\n");
+        if (UART_TransmitFrame("LIFT,RELEASE_DONE\n")) {
+            g_tx_flags &= (uint8_t)~TX_RELEASE_DONE;
+        }
     } else if (g_tx_flags & TX_ACK) {
         snprintf(buf, sizeof(buf), "ACK,%s\n", g_ack_value);
-        g_tx_flags &= (uint8_t)~TX_ACK;
-        UART_SendLine(buf);
+        if (UART_TransmitFrame(buf)) {
+            g_tx_flags &= (uint8_t)~TX_ACK;
+        }
     }
 }
 
@@ -413,7 +519,60 @@ static void UART_SendPending(void)
  * [3-1] uart_comm_task — 라즈베리파이 통신
  * ================================================== */
 
-/* UART 수신 인터럽트 콜백 (한 바이트씩) */
+static void UART_QueueRxCommand(const char *command)
+{
+    if (g_rx_command_count >= RX_COMMAND_QUEUE_DEPTH) {
+        g_rx_queue_overflow = 1U;
+        return;
+    }
+    strncpy(g_rx_commands[g_rx_command_head], command,
+            sizeof(g_rx_commands[g_rx_command_head]) - 1U);
+    g_rx_commands[g_rx_command_head][
+        sizeof(g_rx_commands[g_rx_command_head]) - 1U] = '\0';
+    g_rx_command_head = (uint8_t)(
+        (g_rx_command_head + 1U) % RX_COMMAND_QUEUE_DEPTH);
+    g_rx_command_count++;
+}
+
+static void UART_ProcessPendingCommands(void)
+{
+    if (g_rx_queue_overflow) {
+        __disable_irq();
+        g_rx_queue_overflow = 0U;
+        g_rx_command_head = 0U;
+        g_rx_command_tail = 0U;
+        g_rx_command_count = 0U;
+        __enable_irq();
+        Robot_StopMotorsImmediate();
+        QueueError("RX_QUEUE_OVERFLOW");
+        return;
+    }
+
+    while (g_rx_command_count > 0U) {
+        char command[sizeof(uart_rx_buf)];
+        __disable_irq();
+        strncpy(command, g_rx_commands[g_rx_command_tail],
+                sizeof(command) - 1U);
+        command[sizeof(command) - 1U] = '\0';
+        g_rx_command_tail = (uint8_t)(
+            (g_rx_command_tail + 1U) % RX_COMMAND_QUEUE_DEPTH);
+        g_rx_command_count--;
+        __enable_irq();
+
+        if (command[0] != '\0' && command[1] == '\0') {
+            Legacy_ApplyCommand((uint8_t)command[0]);
+        } else {
+            UART_ParseCommand(command);
+        }
+        /* Each parsed command gets its own complete response before the next
+         * command can overwrite the small ACK/ERR mailbox. TX remains solely
+         * in main-loop context and therefore cannot interleave frames. */
+        UART_SendPending();
+    }
+}
+
+/* UART 수신 인터럽트 콜백 (한 바이트씩). ISR은 완성 frame을
+ * queue에 넣기만 하고 parser/모터/서보/TX는 호출하지 않는다. */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     if (huart->Instance == USART2) {
@@ -422,11 +581,12 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
                 uart_frame_active = 1U;
                 uart_rx_idx = 0U;
             } else if (uart_rx_byte != '\r' && uart_rx_byte != '\n') {
-                Legacy_ApplyCommand(uart_rx_byte);
+                char legacy[2] = {(char)uart_rx_byte, '\0'};
+                UART_QueueRxCommand(legacy);
             }
         } else if (uart_rx_byte == '\n') {
             uart_rx_buf[uart_rx_idx] = '\0';
-            UART_ParseCommand(uart_rx_buf);
+            UART_QueueRxCommand(uart_rx_buf);
             uart_rx_idx = 0U;
             uart_frame_active = 0U;
         } else if (uart_rx_byte != '\r' &&
@@ -435,7 +595,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
         } else if (uart_rx_byte != '\r') {
             uart_rx_idx = 0U;
             uart_frame_active = 0U;
-            QueueError("FRAME_TOO_LONG");
+            g_rx_queue_overflow = 1U;
         }
         HAL_UART_Receive_IT(&huart2, &uart_rx_byte, 1);
     }
@@ -452,10 +612,10 @@ void UART_ParseCommand(char *cmd)
         Robot_HoldServosImmediate();
         QueueAck("ESTOP");
     } else if (strncmp(cmd, "HELLO,", 6) == 0) {
-        const char *session_id = &cmd[6];
-        size_t session_len = strlen(session_id);
-        if (session_len == 0U || session_len > 16U ||
-            strchr(session_id, ',') != NULL) {
+        const char expected_prefix[] = "HELLO,2,";
+        const char *session_id = &cmd[sizeof(expected_prefix) - 1U];
+        if (strncmp(cmd, expected_prefix, sizeof(expected_prefix) - 1U) != 0 ||
+            !SessionIdIsValid(session_id)) {
             QueueError("BAD_HELLO");
             return;
         }
@@ -469,6 +629,32 @@ void UART_ParseCommand(char *cmd)
             QueueError("ESTOP_LATCHED");
             return;
         }
+        if (g_uart_tx_fault) {
+            return;
+        }
+        if (g_robot.safety_fault_latched) {
+            QueueError(g_robot.safety_fault_code);
+            return;
+        }
+        if (g_robot.protocol_session_active &&
+            strcmp(g_robot.session_id, session_id) == 0) {
+            uint32_t now = HAL_GetTick();
+            if (g_robot.heartbeat_seen &&
+                now - g_robot.last_heartbeat_time > HEARTBEAT_TIMEOUT_MS) {
+                g_robot.heartbeat_timed_out = 1U;
+            }
+            if (g_robot.command_seen &&
+                now - g_robot.last_cmd_time > COMMAND_TIMEOUT_MS) {
+                g_robot.command_timed_out = 1U;
+            }
+        }
+        if (g_robot.protocol_session_active &&
+            strcmp(g_robot.session_id, session_id) == 0 &&
+            (g_robot.heartbeat_timed_out || g_robot.command_timed_out)) {
+            QueueError(g_robot.heartbeat_timed_out
+                ? "HEARTBEAT_TIMEOUT" : "COMMAND_TIMEOUT");
+            return;
+        }
         g_robot.manual_mode = 0U;
         g_robot.manual_open_loop = 0U;
         g_robot.heartbeat_seen = 0U;
@@ -478,6 +664,10 @@ void UART_ParseCommand(char *cmd)
         g_robot.last_heartbeat_time = HAL_GetTick();
         g_robot.last_cmd_time = HAL_GetTick();
         g_robot.servo_attached = 0U;
+        g_robot.protocol_session_active = 1U;
+        strncpy(g_robot.session_id, session_id,
+                sizeof(g_robot.session_id) - 1U);
+        g_robot.session_id[sizeof(g_robot.session_id) - 1U] = '\0';
 
         /* 아직 UART로 전송되지 않은 이전 세션의 통신 timeout만 폐기한다.
          * 센서/모터/서보 오류는 보존되어 새 bridge에 그대로 전달된다. */
@@ -487,24 +677,73 @@ void UART_ParseCommand(char *cmd)
             g_tx_flags &= (uint8_t)~TX_ERR;
         }
         g_tx_flags &= (uint8_t)~TX_ACK;
-        char ack[32];
-        snprintf(ack, sizeof(ack), "HELLO:%s", session_id);
+        char ack[48];
+        snprintf(ack, sizeof(ack), "HELLO:%u:%s",
+                 (unsigned)UART_PROTOCOL_VERSION, session_id);
         QueueAck(ack);
     } else if (strncmp(cmd, "HB,", 3) == 0 && cmd[3] != '\0') {
+        const char *token = &cmd[3];
+        size_t session_length = strlen(g_robot.session_id);
+        if (!g_robot.protocol_session_active) {
+            QueueError("HELLO_REQUIRED");
+            return;
+        }
+        if (strncmp(token, g_robot.session_id, session_length) != 0 ||
+            token[session_length] != ':' ||
+            token[session_length + 1U] == '\0') {
+            QueueError("BAD_HEARTBEAT_TOKEN");
+            return;
+        }
+        if (g_robot.heartbeat_seen &&
+            HAL_GetTick() - g_robot.last_heartbeat_time >
+            HEARTBEAT_TIMEOUT_MS) {
+            g_robot.heartbeat_timed_out = 1U;
+        }
+        if (g_robot.heartbeat_timed_out) {
+            QueueError("HEARTBEAT_TIMEOUT");
+            return;
+        }
         g_robot.last_heartbeat_time = HAL_GetTick();
-        g_robot.heartbeat_seen = 1;
-        g_robot.heartbeat_timed_out = 0;
-        QueueAck(&cmd[3]);
+        g_robot.heartbeat_seen = 1U;
+        QueueAck(token);
     } else if (cmd[0] == 'V') {
         // 속도 명령
         float vx, vy, omega;
         const char *cursor = cmd + 2;
+        const char *session_id = NULL;
+        const char *session_separator = strchr(cursor, ',');
+        if (session_separator != NULL) {
+            session_separator = strchr(session_separator + 1, ',');
+        }
+        if (session_separator != NULL) {
+            session_separator = strchr(session_separator + 1, ',');
+        }
+        char omega_terminator = session_separator != NULL ? ',' : '\0';
         if (cmd[1] == ',' &&
             ParseDecimalToken(&cursor, ',', &vx) &&
             ParseDecimalToken(&cursor, ',', &vy) &&
-            ParseDecimalToken(&cursor, '\0', &omega)) {
+            ParseDecimalToken(&cursor, omega_terminator, &omega)) {
+            if (omega_terminator == ',') session_id = cursor;
             if (g_robot.estop_latched) {
                 QueueError("ESTOP_LATCHED");
+                return;
+            }
+            if (!g_robot.protocol_session_active) {
+                QueueError("HELLO_REQUIRED");
+                return;
+            }
+            if (!g_robot.heartbeat_seen || g_robot.heartbeat_timed_out) {
+                QueueError(g_robot.heartbeat_timed_out
+                    ? "HEARTBEAT_TIMEOUT" : "HEARTBEAT_REQUIRED");
+                return;
+            }
+            if (g_robot.command_seen &&
+                HAL_GetTick() - g_robot.last_cmd_time >
+                COMMAND_TIMEOUT_MS) {
+                g_robot.command_timed_out = 1U;
+            }
+            if (g_robot.command_timed_out) {
+                QueueError("COMMAND_TIMEOUT");
                 return;
             }
             if (!isfinite(vx) || !isfinite(vy) || !isfinite(omega) ||
@@ -512,6 +751,12 @@ void UART_ParseCommand(char *cmd)
                 fabsf(vy) > MAX_LINEAR_MPS ||
                 fabsf(omega) > MAX_ANGULAR_RAD_S) {
                 QueueError("BAD_VELOCITY");
+                return;
+            }
+            if (session_id != NULL &&
+                (strcmp(session_id, g_robot.session_id) != 0 ||
+                 vx != 0.0f || vy != 0.0f || omega != 0.0f)) {
+                QueueError("BAD_ZERO_PROBE");
                 return;
             }
             g_robot.target_vx = vx;
@@ -523,6 +768,11 @@ void UART_ParseCommand(char *cmd)
             g_robot.manual_open_loop = 0U;
             g_robot.last_command = 'V';
             Mecanum_InverseKinematics(vx, vy, omega);
+            if (session_id != NULL) {
+                char ack[32];
+                snprintf(ack, sizeof(ack), "V:%s", g_robot.session_id);
+                QueueAck(ack);
+            }
         } else {
             QueueError("BAD_V_FRAME");
         }
@@ -583,6 +833,12 @@ void UART_ParseCommand(char *cmd)
         }
         if (!Robot_IsStopped()) {
             QueueError("LIFT_WHILE_MOVING");
+            return;
+        }
+        if (!g_robot.protocol_session_active || !g_robot.heartbeat_seen ||
+            !g_robot.command_seen || g_robot.heartbeat_timed_out ||
+            g_robot.command_timed_out) {
+            QueueError("STARTUP_SEQUENCE");
             return;
         }
 
@@ -803,7 +1059,12 @@ void UART_SendEncoders(void)
                        (long)g_robot.encoder_count[FR],
                        (long)g_robot.encoder_count[RL],
                        (long)g_robot.encoder_count[RR]);
-    HAL_UART_Transmit(&huart2, (uint8_t*)buf, len, 10);
+    if (len <= 0 || (size_t)len >= sizeof(buf)) {
+        QueueError("TX_FRAME_INVALID");
+        Robot_StopMotorsImmediate();
+        return;
+    }
+    (void)UART_TransmitFrame(buf);
 }
 
 /* 기존 실차 모니터와 호환되는 14-field telemetry. */
@@ -824,7 +1085,12 @@ static void UART_SendTelemetry(void)
         (unsigned)g_robot.servo_current[1],
         (long)g_ultrasonic_tx_mm[ULTRA_LEFT],
         (long)g_ultrasonic_tx_mm[ULTRA_RIGHT]);
-    HAL_UART_Transmit(&huart2, (uint8_t *)buf, (uint16_t)len, 10U);
+    if (len <= 0 || (size_t)len >= sizeof(buf)) {
+        QueueError("TX_FRAME_INVALID");
+        Robot_StopMotorsImmediate();
+        return;
+    }
+    (void)UART_TransmitFrame(buf);
 }
 
 /* ==================================================
@@ -1106,7 +1372,8 @@ void Motor_PID_Task(void)
 
     Update_WheelSpeeds();
 
-    if (g_robot.estop_latched) {
+    if (g_robot.estop_latched || g_robot.safety_fault_latched ||
+        g_uart_tx_fault) {
         Robot_StopMotorsImmediate();
         return;
     }
@@ -1138,8 +1405,6 @@ void Motor_PID_Task(void)
         Robot_StopMotorsImmediate();
         return;
     }
-    g_robot.command_timed_out = 0;
-
     /* 실차에서 먼저 검증되지 않은 stall latch는 안전한 정지를 오인해
      * 전원 재인가가 필요해질 수 있어 이번 통합에서는 사용하지 않는다. */
     if (g_robot.manual_open_loop) {
@@ -1260,6 +1525,9 @@ void Robot_MainLoop(void)
     static uint32_t last_encoder_tx = 0;
     static uint32_t last_telemetry_tx = 0;
     uint32_t now = HAL_GetTick();
+
+    /* RX ISR이 만든 완전한 command frame을 main-loop에서만 처리한다. */
+    UART_ProcessPendingCommands();
 
     // 실차에서 검증된 모터 제어 주기: 20Hz (50ms)
     if (now - last_control >= 50) {

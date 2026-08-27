@@ -39,6 +39,19 @@ rigid_body_sync_node:
     cctv_pair_timeout_s: 0.50
     cctv_pair_sync_slop_s: 0.12
 
+    # Lift 직후 calibration 적용된 ID0 x/y/yaw를 여러 frame 수집해 mission
+    # reference를 한 번 lock한다. nominal geometry는 sanity check에만 쓰고,
+    # DRIVE PID target은 lock된 reference를 mission 종료까지 유지한다.
+    sync_reference_capture_samples: 20
+    sync_reference_capture_timeout_s: 5.0
+    sync_reference_settle_time_s: 0.5
+    sync_reference_max_x_error_m: 0.06
+    sync_reference_max_lateral_error_m: 0.04
+    sync_reference_max_yaw_error_deg: 5.0
+    sync_reference_max_sample_std_x_m: 0.01
+    sync_reference_max_sample_std_y_m: 0.01
+    sync_reference_max_sample_std_yaw_deg: 2.0
+
     # Q/R은 제어주기 횟수가 아니라 실제 새 odom의 시간·변화량으로 누적된다.
     # 아래 값은 보수적 초기값이며 정지 ArUco 로그와 wheel-slip 실측으로 확정한다.
     sync_dist_process_sigma_m_sqrt_s: 0.003
@@ -74,6 +87,7 @@ rigid_body_sync_node:
     sync_yaw_deadband_deg: 0.50
     sync_lateral_deadband_m: 0.003
     sync_target_lateral_m: 0.0
+    sync_target_yaw_deg: 0.0
     sync_lateral_kp: 1.2
     sync_lateral_ki: 0.1
     sync_lateral_kd: 0.05

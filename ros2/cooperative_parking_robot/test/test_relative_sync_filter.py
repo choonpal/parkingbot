@@ -7,12 +7,17 @@ from pathlib import Path
 import pytest
 
 from cooperative_parking_robot.relative_sync_filter import (
+    CctvPairStampGate,
     DeltaKalman1D,
+    MissionReferenceCapture,
     OncePerStamp,
     RelativeObservationGate,
     ScalarObservationGate,
     anchored_pose,
+    cctv_fallback_allowed,
     normalize_angle,
+    reference_blocks_drive,
+    stream_is_healthy,
     visual_safety_state,
 )
 
@@ -114,6 +119,95 @@ def test_actual_visual_loss_still_progresses_slowdown_then_hold():
         slowdown_s=1.0, stop_s=2.0)
     assert slow[0] == 'MARKER_SLOW'
     assert hold[0] == 'MARKER_HOLD'
+
+
+def _reference_capture(sample_count=5, **overrides):
+    values = dict(
+        sample_count=sample_count, timeout_s=3.0,
+        nominal_x=0.785, nominal_y=0.0, nominal_yaw=0.0,
+        max_x_error=0.06, max_y_error=0.04,
+        max_yaw_error=math.radians(5.0),
+        max_std_x=0.01, max_std_y=0.01,
+        max_std_yaw=math.radians(2.0))
+    values.update(overrides)
+    capture = MissionReferenceCapture(**values)
+    capture.reset(start_time=10.0)
+    return capture
+
+
+def test_reference_capture_locks_medians_from_stable_id0_samples():
+    capture = _reference_capture()
+    samples = [
+        (0.791, -0.005, math.radians(0.7)),
+        (0.792, -0.006, math.radians(0.8)),
+        (0.793, -0.007, math.radians(0.9)),
+        (0.792, -0.006, math.radians(0.8)),
+        (0.794, -0.004, math.radians(0.6)),
+    ]
+    for sample in samples:
+        capture.add(*sample)
+    assert capture.ready
+    assert capture.reference.relative_x == pytest.approx(0.792)
+    assert capture.reference.relative_y == pytest.approx(-0.006)
+    assert capture.reference.relative_yaw == pytest.approx(math.radians(0.8))
+
+
+def test_reference_is_frozen_until_mission_reset():
+    capture = _reference_capture(sample_count=3)
+    for x in (0.791, 0.792, 0.793):
+        capture.add(x, -0.006, math.radians(0.8))
+    locked = capture.reference
+    for x in (0.800, 0.810):
+        assert not capture.add(x, -0.006, math.radians(0.8))
+    assert capture.reference == locked
+    capture.reset()
+    assert not capture.ready
+    assert capture.reference is None
+    assert capture.state == 'WAIT_LIFT'
+
+
+@pytest.mark.parametrize('samples,reason', [
+    ([(0.850, 0.0, 0.0)] * 5, 'nominal_sanity_envelope'),
+    ([(0.785 + offset, 0.0, 0.0)
+      for offset in (-0.02, 0.02, -0.02, 0.02, 0.0)],
+     'sample_dispersion'),
+])
+def test_bad_reference_capture_is_rejected(samples, reason):
+    capture = _reference_capture()
+    for sample in samples:
+        capture.add(*sample)
+    assert not capture.ready
+    assert capture.state == 'REFERENCE_INVALID'
+    assert capture.reason == reason
+
+
+def test_reference_capture_timeout_does_not_nominally_fallback():
+    capture = _reference_capture()
+    capture.add(0.792, -0.006, 0.0)
+    assert capture.timed_out(13.1)
+    assert capture.state == 'REFERENCE_TIMEOUT'
+    assert capture.reference is None
+
+
+def test_drive_is_blocked_after_lift_until_reference_is_ready():
+    assert reference_blocks_drive(True, 'DRIVE', 'DRIVE', False)
+    assert not reference_blocks_drive(True, 'DRIVE', 'DRIVE', True)
+
+
+def test_id0_health_uses_age_not_new_frame_in_current_control_cycle():
+    assert stream_is_healthy(0.20, 0.30)
+    assert not stream_is_healthy(0.31, 0.30)
+    assert not stream_is_healthy(None, 0.30)
+    assert not cctv_fallback_allowed(0.20, 0.30)
+    assert cctv_fallback_allowed(0.31, 0.30)
+
+
+def test_cctv_fallback_pair_requires_sync_and_is_consumed_once():
+    gate = CctvPairStampGate(sync_slop_s=0.12)
+    assert not gate.accept(1_000_000_000, 1_200_000_001)
+    assert gate.accept(2_000_000_000, 2_100_000_000)
+    assert not gate.accept(2_000_000_000, 2_100_000_000)
+    assert not gate.accept(3_000_000_000, 2_100_000_000)
 
 
 def test_cached_predict_does_not_grow_covariance():
@@ -218,7 +312,10 @@ def test_production_entrypoint_and_parameters_are_wired():
             'aruco_reacquire_count',
             'sync_dist_deadband_m',
             'sync_lateral_deadband_m',
-            'sync_target_lateral_m'):
+            'sync_target_lateral_m',
+            'sync_target_yaw_deg',
+            'sync_reference_capture_samples',
+            'sync_reference_capture_timeout_s'):
         assert name in config_text
 
 

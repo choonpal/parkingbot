@@ -9,12 +9,55 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+import statistics
 from typing import Optional, Tuple
 
 
 def normalize_angle(angle: float) -> float:
     """Return ``angle`` wrapped to [-pi, pi]."""
     return math.atan2(math.sin(float(angle)), math.cos(float(angle)))
+
+
+def stream_is_healthy(age_s: Optional[float], timeout_s: float) -> bool:
+    """Return whether a locally timed sensor stream is currently healthy."""
+    return (age_s is not None and math.isfinite(age_s) and
+            0.0 <= age_s < float(timeout_s))
+
+
+def cctv_fallback_allowed(id0_age_s: Optional[float],
+                          id0_timeout_s: float) -> bool:
+    """CCTV may correct internal relative pose only after actual ID0 staleness."""
+    return not stream_is_healthy(id0_age_s, id0_timeout_s)
+
+
+def reference_blocks_drive(lifted: bool, front_state: str, rear_state: str,
+                           reference_ready: bool) -> bool:
+    """Return whether production DRIVE must output stop pending reference."""
+    return (bool(lifted) and front_state == 'DRIVE' and
+            rear_state == 'DRIVE' and not bool(reference_ready))
+
+
+class CctvPairStampGate:
+    """Accept each tightly synchronized CCTV marker pair exactly once."""
+
+    def __init__(self, sync_slop_s: float):
+        self.sync_slop_s = float(sync_slop_s)
+        if self.sync_slop_s <= 0.0:
+            raise ValueError('CCTV pair sync slop must be positive')
+        self.reset()
+
+    def reset(self) -> None:
+        self.last_used = {'front': 0, 'rear': 0}
+
+    def accept(self, front_stamp_ns: int, rear_stamp_ns: int) -> bool:
+        front = int(front_stamp_ns)
+        rear = int(rear_stamp_ns)
+        if front <= self.last_used['front'] or rear <= self.last_used['rear']:
+            return False
+        if abs(front - rear) * 1.0e-9 > self.sync_slop_s:
+            return False
+        self.last_used = {'front': front, 'rear': rear}
+        return True
 
 
 def visual_safety_state(*, now: float, marker_lost_since: Optional[float],
@@ -37,6 +80,112 @@ def visual_safety_state(*, now: float, marker_lost_since: Optional[float],
     age = max(ages)
     return ('CORRECTION_HOLD' if age > stop_s else 'CORRECTION_STALE',
             age, stale)
+
+
+@dataclass(frozen=True)
+class MissionReference:
+    """One mission's locked relative x/y/yaw target and sample dispersion."""
+
+    relative_x: float
+    relative_y: float
+    relative_yaw: float
+    std_x: float
+    std_y: float
+    std_yaw: float
+    sample_count: int
+
+
+class MissionReferenceCapture:
+    """Collect stable ID0 samples and lock one bounded mission reference."""
+
+    def __init__(self, *, sample_count: int, timeout_s: float,
+                 nominal_x: float, nominal_y: float, nominal_yaw: float,
+                 max_x_error: float, max_y_error: float,
+                 max_yaw_error: float, max_std_x: float,
+                 max_std_y: float, max_std_yaw: float):
+        self.sample_limit = int(sample_count)
+        self.timeout_s = float(timeout_s)
+        self.nominal = (float(nominal_x), float(nominal_y),
+                        normalize_angle(nominal_yaw))
+        self.max_error = (float(max_x_error), float(max_y_error),
+                          float(max_yaw_error))
+        self.max_std = (float(max_std_x), float(max_std_y),
+                        float(max_std_yaw))
+        if self.sample_limit < 3:
+            raise ValueError('reference sample_count must be at least 3')
+        if self.timeout_s <= 0.0 or any(
+                value <= 0.0 for value in (*self.max_error, *self.max_std)):
+            raise ValueError('reference capture limits must be positive')
+        self.reset()
+
+    def reset(self, start_time: Optional[float] = None) -> None:
+        self.state = 'WAIT_LIFT' if start_time is None else 'REFERENCE_CAPTURE'
+        self.started_at = start_time
+        self.samples = []
+        self.reference: Optional[MissionReference] = None
+        self.reason = 'waiting_for_lift' if start_time is None else 'collecting'
+
+    @property
+    def ready(self) -> bool:
+        return self.state == 'REFERENCE_READY' and self.reference is not None
+
+    def timed_out(self, now: float) -> bool:
+        if self.state != 'REFERENCE_CAPTURE' or self.started_at is None:
+            return False
+        if now - self.started_at <= self.timeout_s:
+            return False
+        self.state = 'REFERENCE_TIMEOUT'
+        self.reason = 'insufficient_valid_id0_samples'
+        return True
+
+    @staticmethod
+    def _yaw_median_and_std(values):
+        base = values[0]
+        unwrapped = [base + normalize_angle(value - base) for value in values]
+        median = normalize_angle(statistics.median(unwrapped))
+        variance = sum(
+            normalize_angle(value - median) ** 2 for value in values
+        ) / len(values)
+        return median, math.sqrt(variance)
+
+    def add(self, relative_x: float, relative_y: float,
+            relative_yaw: float) -> bool:
+        """Add one valid unique ID0 observation; return True when locked."""
+        if self.state != 'REFERENCE_CAPTURE':
+            return False
+        values = (float(relative_x), float(relative_y),
+                  normalize_angle(relative_yaw))
+        if not all(math.isfinite(value) for value in values):
+            return False
+        self.samples.append(values)
+        if len(self.samples) < self.sample_limit:
+            return False
+
+        xs, ys, yaws = zip(*self.samples[-self.sample_limit:])
+        median_x = statistics.median(xs)
+        median_y = statistics.median(ys)
+        median_yaw, std_yaw = self._yaw_median_and_std(yaws)
+        std_x = statistics.pstdev(xs)
+        std_y = statistics.pstdev(ys)
+        errors = (
+            abs(median_x - self.nominal[0]),
+            abs(median_y - self.nominal[1]),
+            abs(normalize_angle(median_yaw - self.nominal[2])))
+        stds = (std_x, std_y, std_yaw)
+        if any(value > limit for value, limit in zip(errors, self.max_error)):
+            self.state = 'REFERENCE_INVALID'
+            self.reason = 'nominal_sanity_envelope'
+            return False
+        if any(value > limit for value, limit in zip(stds, self.max_std)):
+            self.state = 'REFERENCE_INVALID'
+            self.reason = 'sample_dispersion'
+            return False
+        self.reference = MissionReference(
+            median_x, median_y, median_yaw,
+            std_x, std_y, std_yaw, self.sample_limit)
+        self.state = 'REFERENCE_READY'
+        self.reason = 'locked'
+        return True
 
 
 class DeltaKalman1D:

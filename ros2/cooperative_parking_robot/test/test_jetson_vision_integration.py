@@ -240,20 +240,27 @@ def test_web_worker_waits_for_first_real_frame():
 
 def test_operator_ui_submits_authenticated_vehicle_requests_and_waits_for_fleet():
     source = (PKG / 'jetson_vision_web_node.py').read_text()
+    kiosk_js = (PKG / 'web/kiosk.js').read_text()
     assert "@app.route('/api/retrieve', methods=['POST'])" in source
     assert "'type': 'retrieve'" in source
     assert "'vehicle_number': vehicle_number" in source
     assert "'password': password" in source
-    assert "'destination_slot_id': destination_slot_id" in source
+    assert "payload_fields['destination_slot_id']" in source
     assert "body.get('password', '')" in source
     assert "'source_slot_id': selected['slot_id']" not in source
     assert "'client_id': self._ui_client_id" in source
     assert "'submitted': submitted" in source
     assert "fleet.get('request_status')" in source
     assert "fleet.get('last_completed')" in source
-    assert 'completion_sequence' in source
-    assert 'lastCompletion=null' in source
-    assert 'lastCompletion===null' in source
+    assert 'completion_sequence' in kiosk_js
+    assert 'let lastCompletion = null' in kiosk_js
+    assert 'lastCompletion === null' in kiosk_js
+
+
+def test_customer_kiosk_has_no_software_estop_endpoint():
+    source = (PKG / 'jetson_vision_web_node.py').read_text()
+    active_source = source.split('_WEB_ASSET_DIR =', 1)[1]
+    assert "@app.route('/api/estop'" not in active_source
 
 
 def test_web_uses_only_safe_registry_summary_for_slot_buttons():

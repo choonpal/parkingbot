@@ -8,6 +8,7 @@ setup(
     name=package_name,
     version='1.11.2',
     packages=[package_name],
+    package_data={package_name: ['web/*.html', 'web/*.css', 'web/*.js']},
     install_requires=['setuptools'],
     zip_safe=True,
     entry_points={

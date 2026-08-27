@@ -96,6 +96,14 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, String
 
 from cooperative_parking_robot.aruco_utils import ArucoDetectorCompat
+# 런타임(cctv_merge)이 쓰는 것과 **같은** 점유 판정 로직을 그대로 쓴다.
+# 프리뷰가 자체 규칙으로 판정하면 화면과 실제 발행값이 어긋난다.
+from cooperative_parking_robot.bev_fusion_core import (
+    SlotOccupancyTracker,
+    image_corner_coverage,
+    polygon_centroid,
+    slot_observability,
+)
 
 try:
     import cv2
@@ -165,6 +173,13 @@ _HTML = r'''<!doctype html>
     <button onclick="resetTrack()">이동 기준점 재설정</button>
     <span id="moved" class="badge">이동 추적 대기…</span>
     <span id="overlap" class="badge">겹침 확인 중…</span>
+    <span id="slots" class="badge">슬롯 확인 중…</span>
+    <span id="guide" class="badge">안내 대기…</span>
+    <span class="meta">안내 미션
+      <button onclick="setGuide('auto')">자동</button>
+      <button onclick="setGuide('park')">입차</button>
+      <button onclick="setGuide('retrieve')">출차</button>
+    </span>
     <span id="relpose" class="badge">상대 거리 확인 중…</span>
     <span id="yolo" class="badge">YOLO 확인 중…</span>
     <span id="hint" class="meta">영상 클릭 = 픽셀 좌표. ArUco 한 변 <b id="msize">0.18</b> m 기준.</span>
@@ -321,6 +336,48 @@ async function tick(){
   }
 
   if((++BEVTICK % 3) === 0) refreshBev();
+
+  const sl = info.slots, sb = document.getElementById('slots');
+  if(sb){
+    if(!sl || !sl.ready){
+      sb.className = 'badge';
+      sb.textContent = '슬롯: layout 또는 homography 없음';
+    } else {
+      const free = sl.items.filter(x => x.observed && !x.occupied);
+      const busy = sl.items.filter(x => x.observed && x.occupied);
+      const unk  = sl.items.filter(x => !x.observed);
+      // 미관측이 있으면 '빈자리 N개'만 보여주는 것은 위험하다. 못 본 칸이
+      // 몇 개인지 같이 띄운다.
+      sb.className = unk.length ? 'badge warn' : 'badge good';
+      sb.innerHTML = '빈자리 <b>' + free.length + '</b>'
+        + (free.length ? ' (' + free.map(x => x.id).join(', ') + ')' : '')
+        + ' · 점유 ' + busy.length
+        + (unk.length ? ' · <span class="warn">미관측 ' + unk.length
+                        + ' (' + unk.map(x => x.id).join(', ') + ')</span>' : '');
+    }
+  }
+
+  const g = info.guidance, gb = document.getElementById('guide');
+  if(gb){
+    if(!g || !g.mission){
+      gb.className = 'badge';
+      gb.textContent = '안내: ' + ((g && g.reason) || '미션 없음');
+    } else {
+      const ko = {park:'입차', retrieve:'출차'}[g.mission] || g.mission;
+      const roles = Object.keys(g.robots || {});
+      if(g.distance_m === null){
+        gb.className = 'badge warn';
+        gb.textContent = ko + ': ' + (g.reason || '목적지 미정');
+      } else {
+        gb.className = 'badge good';
+        gb.innerHTML = ko + ' → <b>' + esc(g.goal) + '</b> '
+          + g.distance_m.toFixed(2) + ' m · ' + g.heading_deg.toFixed(0) + '°'
+          + ' · 로봇 ' + roles.length + '대'
+          + (g.forced ? ' <span class="warn">(수동 고정)</span>' : '')
+          + (g.reason ? ' <span class="warn">· ' + esc(g.reason) + '</span>' : '');
+      }
+    }
+  }
 
   const modeBtn = document.getElementById('rgmode');
   if(modeBtn && info.yolo){
@@ -480,6 +537,13 @@ async function toggleSwitchMode(){
   const data = await res.json();
   setMsg(res.ok ? '구역 전환: ' + data.switch_mode : data.error, res.ok);
   if(res.ok) refreshBev();
+}
+
+async function setGuide(mission){
+  const res = await fetch('/api/guidance_mission/' + mission, {method:'POST'});
+  const data = await res.json();
+  setMsg(res.ok ? ('안내 미션: ' + (data.forced || '자동')) : data.error, res.ok);
+  refreshBev();
 }
 
 async function resetTrack(){
@@ -758,6 +822,61 @@ def marker_metrics(corners, marker_size_m):
 # 구역 사각형 색 (BGR). 카메라 순서대로 돌려 쓴다.
 REGION_COLOURS = [(255, 220, 90), (90, 120, 255), (120, 255, 120)]
 
+# 로봇 안내 화살표 색 (BGR)
+GUIDANCE_COLOUR = (0, 215, 255)      # 주황 — 이동해야 할 방향
+ROBOT_AXIS_COLOUR = (255, 160, 60)   # 하늘 — 두 로봇을 잇는 축
+
+ROBOT_ROLES = ('front', 'rear')
+
+
+def parse_robot_markers(text):
+    """``'front:2, rear:1'`` 을 ``{역할: 마커ID}`` 로 바꾼다."""
+    mapping = {}
+    for chunk in str(text).replace('\n', ',').replace(';', ',').split(','):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if ':' not in chunk:
+            raise ValueError(
+                "robot_marker_ids_csv 는 'front:2, rear:1' 형식입니다: "
+                f'{chunk!r}')
+        role, _, number = chunk.partition(':')
+        role = role.strip().lower()
+        if role not in ROBOT_ROLES:
+            raise ValueError(f"역할은 'front' 또는 'rear' 여야 합니다: {role!r}")
+        try:
+            marker_id = int(number.strip())
+        except ValueError as exc:
+            raise ValueError(
+                f'마커 ID 가 정수가 아닙니다: {chunk!r}') from exc
+        if marker_id < 0:
+            raise ValueError(f'마커 ID 는 0 이상이어야 합니다: {marker_id}')
+        mapping[role] = marker_id
+    if len(set(mapping.values())) != len(mapping):
+        raise ValueError(
+            f'front 와 rear 에 같은 마커 ID 를 줄 수 없습니다: {mapping}')
+    return mapping
+
+
+# 슬롯 상태별 색 (BGR)
+SLOT_FREE_COLOUR = (80, 230, 100)       # 초록 — 빈자리 확정
+SLOT_BUSY_COLOUR = (60, 60, 235)        # 빨강 — 점유
+SLOT_UNKNOWN_COLOUR = (140, 140, 140)   # 회색 — 보는 카메라 없음
+
+
+class SlotDetection:
+    """``SlotOccupancyTracker`` 가 기대하는 최소 형태의 관측.
+
+    프리뷰의 검출 dict 를 그대로 넘기면 tracker 가 ``.center`` / ``.polygon``
+    을 못 읽는다. 런타임의 ``MergedDetection`` 과 같은 두 속성만 맞춰준다.
+    """
+
+    __slots__ = ('center', 'polygon')
+
+    def __init__(self, center, polygon=None):
+        self.center = (float(center[0]), float(center[1]))
+        self.polygon = polygon
+
 
 def format_yolo_regions(regions):
     """구역 표를 ``parse_yolo_regions`` 가 다시 읽을 수 있는 글로 되돌린다."""
@@ -936,6 +1055,24 @@ class CameraPreviewNode(Node):
         self.declare_parameter('fleet_state_topic', '/fleet/state')
         # 이보다 오래 소식이 없으면 미션을 모르는 것으로 보고 스캔한다.
         self.declare_parameter('fleet_state_timeout_s', 5.0)
+        # --- 슬롯 점유/빈자리 ---
+        # 런타임(cctv_merge)의 기본값과 같게 둔다. 다르게 두면 화면에서 빈칸인데
+        # 실제로는 안 비었다고 나오는 상황이 생긴다.
+        self.declare_parameter('slot_overlap_threshold', 0.10)
+        self.declare_parameter('slot_empty_confirm_frames', 5)
+        self.declare_parameter('slot_occupied_hold_s', 0.75)
+        # 이보다 오래된 검출은 '그 카메라는 지금 못 보고 있다'로 친다.
+        self.declare_parameter('slot_detection_stale_s', 1.5)
+        # 슬롯 사각형을 카메라 원본 화면에도 되짚어 그릴지.
+        self.declare_parameter('draw_slots_on_camera', True)
+        # --- 로봇 안내 화살표 ---
+        # 천장에서 보이는 ArUco 두 개가 Front/Rear 주차로봇이다.
+        # 기본값은 cctv_robot_marker_node 와 같게 둔다.
+        self.declare_parameter('robot_marker_ids_csv', 'front:2, rear:1')
+        # fleet_manager 없이 확인할 때 미션을 손으로 고정한다. '' 면 자동.
+        self.declare_parameter('guidance_default_mission', '')
+        # 마커가 이보다 오래됐으면 로봇을 못 보고 있는 것으로 친다.
+        self.declare_parameter('robot_marker_stale_s', 2.0)
         # --- 차량 중심점 이동 추적 ---
         # 직전 위치에서 이 거리를 넘으면 다른 차량으로 본다.
         self.declare_parameter('track_gate_m', 1.0)
@@ -1058,6 +1195,33 @@ class CameraPreviewNode(Node):
         self._world_to_pixel_H = {}
         self.fleet_state_topic = str(
             self.get_parameter('fleet_state_topic').value).strip()
+        self.slot_overlap_threshold = float(
+            self.get_parameter('slot_overlap_threshold').value)
+        self.slot_empty_confirm_frames = int(
+            self.get_parameter('slot_empty_confirm_frames').value)
+        self.slot_occupied_hold_s = float(
+            self.get_parameter('slot_occupied_hold_s').value)
+        self.slot_detection_stale_s = float(
+            self.get_parameter('slot_detection_stale_s').value)
+        self.draw_slots_on_camera = bool(
+            self.get_parameter('draw_slots_on_camera').value)
+        # _setup_bev 에서 layout 을 읽은 뒤에 채운다.
+        self.slot_tracker = None
+        self.slot_state = {}
+        self.camera_coverage = {}
+        self.robot_marker_ids = parse_robot_markers(
+            self.get_parameter('robot_marker_ids_csv').value)
+        self.robot_marker_stale_s = float(
+            self.get_parameter('robot_marker_stale_s').value)
+        forced = str(
+            self.get_parameter('guidance_default_mission').value).strip().lower()
+        if forced and forced not in (MISSION_PARK, MISSION_RETRIEVE):
+            raise ValueError(
+                "guidance_default_mission 은 '' | 'park' | 'retrieve' 여야 "
+                f'합니다: {forced!r}')
+        self.guidance_forced_mission = forced
+        self._destination_slot_id = ''
+        self._source_slot_id = ''
         self.track_gate_m = float(self.get_parameter('track_gate_m').value)
         self.track_min_step_m = float(
             self.get_parameter('track_min_step_m').value)
@@ -1205,6 +1369,11 @@ class CameraPreviewNode(Node):
                 state['fps'] = state['fps_count'] / elapsed
                 state['fps_count'] = 0
                 state['fps_wall'] = now
+        if detections is not None:
+            # 검출이 새로 나온 주기에만 부른다. 매 프레임 부르면
+            # empty_confirm_frames 가 실제로는 훨씬 짧은 시간이 되어
+            # 런타임(cctv_merge)과 판정 타이밍이 어긋난다.
+            self._update_slots(now)
 
     def _detect_markers(self, frame, state):
         """프레임에서 ArUco를 찾아 찌그러짐 지표까지 계산해 돌려준다."""
@@ -1473,6 +1642,10 @@ class CameraPreviewNode(Node):
                    else '없음(대기)'))
         self._mission_type = mission
         self._mission_state = state
+        # 어느 슬롯으로 가는지/어느 슬롯에서 빼는지도 여기 실려 온다.
+        self._destination_slot_id = str(
+            payload.get('active_destination_slot_id') or '')
+        self._source_slot_id = str(payload.get('active_source_slot_id') or '')
         # 미션이 비어 있어도 '지금 대기 중'이라는 정보라서 시각은 갱신한다.
         self._mission_wall = time.monotonic()
 
@@ -1646,6 +1819,213 @@ class CameraPreviewNode(Node):
         if w <= 1e-9:
             return None
         return (float(vector[0]) / w, float(vector[1]) / w)
+
+    # ------------------------------------------------------------------
+    # 슬롯 점유 / 빈자리
+    # ------------------------------------------------------------------
+    def _detection_world_polygon(self, label, detection):
+        """검출의 회전사각형 네 꼭짓점을 map 좌표로 옮긴다."""
+        geometry = detection.get('geometry')
+        if not geometry:
+            return None
+        corners = geometry.get('corners')
+        if not corners:
+            return None
+        points = [self._pixel_to_world(label, x, y) for x, y in corners]
+        if any(point is None for point in points):
+            return None
+        return [tuple(point) for point in points]
+
+    def _update_slots(self, now):
+        """모든 카메라의 최근 검출로 슬롯 점유를 갱신한다.
+
+        관측 가능 여부를 **"지금 실제로 추론이 도는 카메라"** 기준으로 낸다.
+        homography 가 있다고 관측 가능으로 치면, 구역/미션 전환으로 YOLO 가
+        꺼져 있는 카메라 쪽 슬롯이 검출 없음 -> 빈자리로 뒤집힌다. 차 있는
+        칸을 비었다고 말하는 것이 이 시스템에서 제일 위험한 오류다.
+        """
+        if self.slot_tracker is None:
+            return
+        detections = []
+        live_coverage = {}
+        with self._lock:
+            snapshot = [(state['label'],
+                         state.get('detections') or [],
+                         state.get('detection_wall', 0.0))
+                        for state in self.cameras]
+        for label, found, wall in snapshot:
+            if wall <= 0.0 or (now - wall) > self.slot_detection_stale_s:
+                continue
+            coverage = self.camera_coverage.get(label)
+            if coverage is None:
+                continue
+            live_coverage[label] = coverage
+            for detection in found:
+                center = detection.get('world')
+                if center is None:
+                    continue
+                detections.append(SlotDetection(
+                    center, self._detection_world_polygon(label, detection)))
+
+        slot_polygons = {slot_id: polygon for slot_id, polygon in self.slots}
+        observable = slot_observability(slot_polygons, live_coverage)
+        state = self.slot_tracker.update(
+            slot_polygons, detections, observable, now)
+        # 그리기/웹은 다른 스레드가 읽는다. 통째로 갈아끼운다.
+        self.slot_state = {
+            slot_id: {'occupied': bool(item['occupied']),
+                      'observed': bool(item['observed'])}
+            for slot_id, item in state.items()
+        }
+
+    # ------------------------------------------------------------------
+    # 로봇 안내: ArUco 두 개 -> 목적지 방향
+    #
+    # 천장에서 보이는 두 마커가 Front/Rear 주차로봇이다. 두 로봇은 차량을
+    # 앞뒤에서 들어 올리므로, **두 마커의 중점**이 곧 실을 차량의 중심에
+    # 가깝다. 그 점에서 목적지까지가 지금 가야 할 방향이다.
+    #
+    #   입차(park)     : 배정된 빈 슬롯으로
+    #   출차(retrieve) : 대기영역(차를 내려놓는 곳)으로
+    # ------------------------------------------------------------------
+    def _robot_marker_world(self, now):
+        """역할별 로봇 마커의 map 좌표. 최근에 본 것만 쓴다."""
+        wanted = {marker_id: role
+                  for role, marker_id in self.robot_marker_ids.items()}
+        with self._lock:
+            snapshot = [(state.get('markers') or [],
+                         state.get('marker_wall', 0.0))
+                        for state in self.cameras]
+        found = {}
+        for markers, wall in snapshot:
+            if wall <= 0.0 or (now - wall) > self.robot_marker_stale_s:
+                continue
+            for marker in markers:
+                role = wanted.get(marker.get('id'))
+                world = marker.get('world')
+                if role is None or world is None:
+                    continue
+                # 같은 마커가 두 카메라에 보이면 먼저 잡힌 쪽을 쓴다.
+                # 평균을 내면 두 호모그래피 오차가 섞여 오히려 나빠진다.
+                found.setdefault(role, (float(world[0]), float(world[1])))
+        return found
+
+    def _slot_centroid(self, slot_id):
+        for candidate, polygon in self.slots:
+            if candidate == slot_id:
+                return polygon_centroid(polygon)
+        return None
+
+    def _guidance_goal(self, mission):
+        """미션별 목적지 (좌표, 이름). 못 정하면 (None, 사유)."""
+        if mission == MISSION_PARK:
+            if self._destination_slot_id:
+                centroid = self._slot_centroid(self._destination_slot_id)
+                if centroid is not None:
+                    return centroid, self._destination_slot_id
+            # fleet 이 아직 슬롯을 안 정했다 -> 확정된 빈자리 중 첫 칸을 쓴다.
+            for slot_id in self.empty_slot_ids():
+                centroid = self._slot_centroid(slot_id)
+                if centroid is not None:
+                    return centroid, slot_id
+            return None, '빈자리 없음'
+        if mission == MISSION_RETRIEVE:
+            if self.waiting:
+                return polygon_centroid(self.waiting), 'WAIT'
+            return None, '대기영역 미등록'
+        return None, '미션 없음'
+
+    def _guidance(self, now):
+        """지금 화면에 그릴 안내. 조건이 안 되면 사유를 담아 돌려준다."""
+        mission = self.guidance_forced_mission or self._mission_type
+        robots = self._robot_marker_world(now)
+        info = {
+            'mission': mission,
+            'forced': bool(self.guidance_forced_mission),
+            'robots': {role: list(point) for role, point in robots.items()},
+            'from': None, 'to': None, 'goal': '',
+            'distance_m': None, 'heading_deg': None, 'reason': '',
+        }
+        if not mission:
+            info['reason'] = '미션 없음 (fleet 대기 중)'
+            return info
+        if not robots:
+            info['reason'] = f'로봇 마커 미검출 (ID {sorted(self.robot_marker_ids.values())})'
+            return info
+        if len(robots) == 2:
+            (ax, ay), (bx, by) = robots['front'], robots['rear']
+            origin = ((ax + bx) / 2.0, (ay + by) / 2.0)
+        else:
+            # 한 대만 보일 때도 방향은 보여준다. 다만 중점이 아니라는 것을
+            # 사유에 남겨 화면만 보고 오해하지 않게 한다.
+            role, origin = next(iter(robots.items()))
+            info['reason'] = f'{role} 마커만 보임 (중점 아님)'
+        goal, name = self._guidance_goal(mission)
+        if goal is None:
+            info['reason'] = name
+            return info
+        dx, dy = goal[0] - origin[0], goal[1] - origin[1]
+        info.update({
+            'from': [round(origin[0], 3), round(origin[1], 3)],
+            'to': [round(goal[0], 3), round(goal[1], 3)],
+            'goal': name,
+            'distance_m': round(math.hypot(dx, dy), 3),
+            'heading_deg': round(math.degrees(math.atan2(dy, dx)), 1),
+        })
+        return info
+
+    def _draw_guidance(self, canvas, to_px, scale=1.0):
+        """안내 화살표를 그린다. ``to_px`` 는 map(m) -> 픽셀 변환."""
+        guidance = self._guidance(time.monotonic())
+        robots = guidance['robots']
+        points = {}
+        for role, world in robots.items():
+            pixel = to_px(world[0], world[1])
+            if pixel is None:
+                continue
+            points[role] = pixel
+            cv2.circle(canvas, pixel, max(3, int(6 * scale)),
+                       ROBOT_AXIS_COLOUR, -1)
+            cv2.putText(canvas, role.upper(),
+                        (pixel[0] + 8, pixel[1] - 8),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45 * scale,
+                        ROBOT_AXIS_COLOUR, 1, cv2.LINE_AA)
+        if len(points) == 2:
+            # 두 로봇을 잇는 축 = 차량을 드는 방향
+            cv2.line(canvas, points['front'], points['rear'],
+                     ROBOT_AXIS_COLOUR, max(1, int(2 * scale)), cv2.LINE_AA)
+        if guidance['from'] is None or guidance['to'] is None:
+            return guidance
+        start = to_px(guidance['from'][0], guidance['from'][1])
+        end = to_px(guidance['to'][0], guidance['to'][1])
+        if start is None or end is None:
+            return guidance
+        cv2.arrowedLine(canvas, start, end, GUIDANCE_COLOUR,
+                        max(2, int(3 * scale)), cv2.LINE_AA, tipLength=0.12)
+        tag = 'PARK' if guidance['mission'] == MISSION_PARK else 'EXIT'
+        text = (f"{tag} -> {guidance['goal']}  "
+                f"{guidance['distance_m']:.2f}m")
+        origin = (start[0] + 10, start[1] - 12)
+        cv2.putText(canvas, text, origin, cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5 * scale, (0, 0, 0), 3, cv2.LINE_AA)
+        cv2.putText(canvas, text, origin, cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5 * scale, GUIDANCE_COLOUR, 1, cv2.LINE_AA)
+        return guidance
+
+    def _slot_appearance(self, slot_id):
+        """슬롯 상태 -> (색, 꼬리표, 두께). 표시 규칙을 한 곳에 모은다."""
+        item = self.slot_state.get(slot_id)
+        if item is None or not item['observed']:
+            # 안 보이는 칸은 초록도 빨강도 아니다. 모른다고 표시해야 한다.
+            return SLOT_UNKNOWN_COLOUR, '?', 1
+        if item['occupied']:
+            return SLOT_BUSY_COLOUR, 'BUSY', 2
+        return SLOT_FREE_COLOUR, 'FREE', 3
+
+    def empty_slot_ids(self):
+        return sorted(
+            slot_id for slot_id, item in self.slot_state.items()
+            if item['observed'] and not item['occupied'])
 
     def _pixel_to_world(self, label, px, py):
         """영상 픽셀을 map 좌표(m)로. H가 없으면 None."""
@@ -1853,6 +2233,32 @@ class CameraPreviewNode(Node):
             self.get_logger().info(
                 f'BEV 준비 완료 {self.bev_w}x{self.bev_h}px '
                 f'({map_w:.2f}x{map_h:.2f} m @ {ppm} px/m)')
+        self._setup_slots()
+
+    def _setup_slots(self):
+        """슬롯 점유 판정 준비. layout 과 homography 가 둘 다 있어야 한다."""
+        if not self.slots or not self.pixel_to_world_H:
+            if self.slots and not self.pixel_to_world_H:
+                self.get_logger().warn(
+                    'homography 가 없어 빈자리 판정을 못 합니다')
+            return
+        # 각 카메라가 바닥에서 덮는 사각형. 영상 네 귀퉁이를 H 로 투영한다.
+        for label, matrix in self.pixel_to_world_H.items():
+            try:
+                self.camera_coverage[label] = image_corner_coverage(
+                    matrix, self.calib_w, self.calib_h)
+            except (ValueError, TypeError) as exc:
+                self.get_logger().warn(f'[{label}] 커버리지 계산 실패: {exc}')
+        self.slot_tracker = SlotOccupancyTracker(
+            [slot_id for slot_id, _ in self.slots],
+            overlap_threshold=self.slot_overlap_threshold,
+            empty_confirm_frames=self.slot_empty_confirm_frames,
+            occupied_hold_s=self.slot_occupied_hold_s,
+            now=time.monotonic())
+        self.get_logger().info(
+            f'빈자리 판정 준비: 슬롯 {len(self.slots)}개 · '
+            f'겹침 {self.slot_overlap_threshold:.0%} 이상이면 점유 · '
+            f'{self.slot_empty_confirm_frames}프레임 연속이면 빈자리 확정')
 
     def _bev_mask(self, label, shape):
         """그 카메라가 BEV에서 실제로 덮는 영역. 한 번만 계산해 캐시한다."""
@@ -1918,12 +2324,15 @@ class CameraPreviewNode(Node):
 
         for slot_id, polygon in self.slots:
             pts = np.asarray([to_px(x, y) for x, y in polygon], dtype=np.int32)
-            cv2.polylines(canvas, [pts], True, (80, 230, 100), 2)
+            colour, tag, thickness = self._slot_appearance(slot_id)
+            cv2.polylines(canvas, [pts], True, colour, thickness)
             cx = int(sum(p[0] for p in pts) / len(pts))
             cy = int(sum(p[1] for p in pts) / len(pts))
-            cv2.putText(canvas, slot_id, (cx - 12, cy),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (80, 230, 100), 1,
+            cv2.putText(canvas, f'{slot_id} {tag}', (cx - 26, cy),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 1,
                         cv2.LINE_AA)
+        self._draw_guidance(canvas, lambda x, y: to_px(x, y), scale=1.0)
+
         if self.waiting:
             pts = np.asarray([to_px(x, y) for x, y in self.waiting],
                              dtype=np.int32)
@@ -2097,6 +2506,53 @@ class CameraPreviewNode(Node):
             'correlation': None if correlation is None else round(correlation, 4),
         }
 
+    def _draw_guidance_on_camera(self, canvas, label):
+        """안내 화살표를 카메라 원본 화면에도 되짚어 그린다."""
+        if self.pixel_to_world_H.get(label) is None:
+            return
+        height, width = canvas.shape[:2]
+
+        def to_px(x, y):
+            point = self._world_to_pixel(label, x, y)
+            if point is None:
+                return None
+            px, py = int(round(point[0])), int(round(point[1]))
+            # 화면에서 멀리 벗어난 점은 그리지 않는다. 화살표가 엉뚱한
+            # 방향으로 화면을 가로질러 오히려 오해를 준다.
+            if not (-width <= px <= 2 * width and -height <= py <= 2 * height):
+                return None
+            return (px, py)
+
+        self._draw_guidance(canvas, to_px, scale=1.0)
+
+    def _draw_slots_on_camera(self, canvas, label):
+        """슬롯 사각형을 카메라 원본 화면에 되짚어 그린다.
+
+        BEV 만 보면 "저 초록칸이 실제로 어디냐"가 안 잡힌다. 영상에서는
+        원근 때문에 사다리꼴로 보이는 것이 정상이다.
+        """
+        if not self.slots or self.pixel_to_world_H.get(label) is None:
+            return
+        height, width = canvas.shape[:2]
+        for slot_id, polygon in self.slots:
+            points = [self._world_to_pixel(label, x, y) for x, y in polygon]
+            if any(point is None for point in points):
+                continue
+            # 화면 밖으로 크게 벗어난 슬롯은 그리지 않는다. 투영값이 수천
+            # 픽셀이면 선이 화면을 가로질러 오히려 방해가 된다.
+            if all(not (-width <= x <= 2 * width and -height <= y <= 2 * height)
+                   for x, y in points):
+                continue
+            colour, tag, thickness = self._slot_appearance(slot_id)
+            pts = np.asarray(
+                [[int(round(x)), int(round(y))] for x, y in points],
+                dtype=np.int32)
+            cv2.polylines(canvas, [pts], True, colour, thickness, cv2.LINE_AA)
+            cx = int(sum(p[0] for p in pts) / len(pts))
+            cy = int(sum(p[1] for p in pts) / len(pts))
+            cv2.putText(canvas, f'{slot_id} {tag}', (cx - 26, cy),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 1, cv2.LINE_AA)
+
     def _draw_region_on_camera(self, canvas, label):
         """BEV 에서 정한 구역이 이 카메라 화면 어디인지 되짚어 그린다.
 
@@ -2133,6 +2589,9 @@ class CameraPreviewNode(Node):
         self._draw_markers(canvas, state.get('markers') or [])
         self._draw_detections(canvas, state.get('detections') or [])
         self._draw_region_on_camera(canvas, state['label'])
+        if self.draw_slots_on_camera:
+            self._draw_slots_on_camera(canvas, state['label'])
+        self._draw_guidance_on_camera(canvas, state['label'])
         if self.grid_step > 0:
             for x in range(self.grid_step, width, self.grid_step):
                 major = (x % (self.grid_step * 5) == 0)
@@ -2286,6 +2745,21 @@ class CameraPreviewNode(Node):
                     'labels': list(self._yolo_labels),
                     'target': self._yolo_target,
                 },
+                'slots': {
+                    'ready': self.slot_tracker is not None,
+                    'items': [
+                        {'id': slot_id,
+                         'observed': self.slot_state.get(
+                             slot_id, {}).get('observed', False),
+                         'occupied': self.slot_state.get(
+                             slot_id, {}).get('occupied', True)}
+                        for slot_id, _ in self.slots],
+                    'empty': self.empty_slot_ids(),
+                    'coverage_cameras': sorted(self.camera_coverage),
+                    'overlap_threshold': self.slot_overlap_threshold,
+                    'confirm_frames': self.slot_empty_confirm_frames,
+                },
+                'guidance': self._guidance(time.monotonic()),
                 'bev': {
                     'ready': self.bev_ready,
                     'error': self.bev_error,
@@ -2381,6 +2855,23 @@ class CameraPreviewNode(Node):
                 return jsonify({'switch_mode': self.set_yolo_switch_mode(mode)})
             except ValueError as exc:
                 return jsonify({'error': str(exc)}), 400
+
+        @app.post('/api/guidance_mission/<mission>')
+        def set_guidance_mission(mission):
+            value = str(mission).strip().lower()
+            if value in ('auto', ''):
+                self.guidance_forced_mission = ''
+            elif value in (MISSION_PARK, MISSION_RETRIEVE):
+                self.guidance_forced_mission = value
+            else:
+                return jsonify({
+                    'error': "mission 은 'park' | 'retrieve' | 'auto'"}), 400
+            self.get_logger().info(
+                '안내 미션 고정: '
+                + (self.guidance_forced_mission or '자동(fleet 따름)'))
+            return jsonify({'forced': self.guidance_forced_mission,
+                            'mission': (self.guidance_forced_mission
+                                        or self._mission_type)})
 
         @app.post('/api/bev_mode/<mode>')
         def set_bev_mode(mode):

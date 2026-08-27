@@ -59,6 +59,73 @@ PRESENCE_TOPICS = {
     "relative_pose": "/sync/relative_pose",
     "map_stream": "/parking/map",
 }
+EXPECTED_UART_PROTOCOL_VERSION = 2
+
+
+def protocol_consistency_errors(repository_root) -> list[str]:
+    """Verify that firmware, encoder API and bridge require one protocol."""
+    root = Path(repository_root)
+    sources = {
+        "firmware": root / (
+            "stm32/parking_robot/Core/Src/parking_robot_firmware.c"),
+        "uart_protocol": root / (
+            "ros2/cooperative_parking_robot/cooperative_parking_robot/"
+            "uart_protocol.py"),
+        "bridge": root / (
+            "ros2/cooperative_parking_robot/cooperative_parking_robot/"
+            "stm32_bridge_node.py"),
+    }
+    text = {}
+    errors = []
+    for name, path in sources.items():
+        try:
+            text[name] = path.read_text(encoding="utf-8")
+        except OSError:
+            errors.append(f"{name}: source missing: {path}")
+    if errors:
+        return errors
+    version = EXPECTED_UART_PROTOCOL_VERSION
+    required = {
+        "firmware": (
+            rf"#define\s+UART_PROTOCOL_VERSION\s+{version}U",
+            rf'"HELLO:%u:%s"',
+            "protocol_session_active",
+        ),
+        "uart_protocol": (
+            rf"PROTOCOL_VERSION\s*=\s*{version}",
+            "def encode_hello",
+            "def encode_zero_velocity",
+        ),
+        "bridge": (
+            "self.protocol.encode_hello(self.session_id)",
+            "hello_acknowledged",
+            "zero_command_acknowledged",
+        ),
+    }
+    for name, patterns in required.items():
+        for pattern in patterns:
+            found = (re.search(pattern, text[name]) is not None
+                     if "\\s" in pattern else pattern in text[name])
+            if not found:
+                errors.append(f"{name}: missing protocol capability {pattern}")
+    return errors
+
+
+def protocol_source_check_command(repository_root) -> str:
+    """Render the remote doctor equivalent of protocol_consistency_errors."""
+    root = shlex.quote(str(repository_root))
+    firmware = (
+        f"{root}/stm32/parking_robot/Core/Src/parking_robot_firmware.c")
+    package = (
+        f"{root}/ros2/cooperative_parking_robot/"
+        "cooperative_parking_robot")
+    return (
+        f"grep -Eq '#define[[:space:]]+UART_PROTOCOL_VERSION[[:space:]]+"
+        f"{EXPECTED_UART_PROTOCOL_VERSION}U' {firmware} && "
+        f"grep -Eq 'PROTOCOL_VERSION[[:space:]]*=[[:space:]]*"
+        f"{EXPECTED_UART_PROTOCOL_VERSION}' {package}/uart_protocol.py && "
+        f"grep -q 'encode_hello(self.session_id)' "
+        f"{package}/stm32_bridge_node.py")
 
 
 def load_env(path: Path) -> dict[str, str]:

@@ -86,7 +86,7 @@ def visual_safety_state(*, now: float, marker_lost_since: Optional[float],
 class MissionReference:
     """One mission's locked relative x/y/yaw target and sample dispersion."""
 
-    relative_x: float
+    relative_x: Optional[float]
     relative_y: float
     relative_yaw: float
     std_x: float
@@ -102,7 +102,8 @@ class MissionReferenceCapture:
                  nominal_x: float, nominal_y: float, nominal_yaw: float,
                  max_x_error: float, max_y_error: float,
                  max_yaw_error: float, max_std_x: float,
-                 max_std_y: float, max_std_yaw: float):
+                 max_std_y: float, max_std_yaw: float,
+                 max_retries: int = 2, retry_delay_s: float = 0.3):
         self.sample_limit = int(sample_count)
         self.timeout_s = float(timeout_s)
         self.nominal = (float(nominal_x), float(nominal_y),
@@ -111,9 +112,11 @@ class MissionReferenceCapture:
                           float(max_yaw_error))
         self.max_std = (float(max_std_x), float(max_std_y),
                         float(max_std_yaw))
+        self.max_retries = int(max_retries)
+        self.retry_delay_s = float(retry_delay_s)
         if self.sample_limit < 3:
             raise ValueError('reference sample_count must be at least 3')
-        if self.timeout_s <= 0.0 or any(
+        if self.timeout_s <= 0.0 or self.max_retries < 0 or self.retry_delay_s < 0.0 or any(
                 value <= 0.0 for value in (*self.max_error, *self.max_std)):
             raise ValueError('reference capture limits must be positive')
         self.reset()
@@ -124,19 +127,45 @@ class MissionReferenceCapture:
         self.samples = []
         self.reference: Optional[MissionReference] = None
         self.reason = 'waiting_for_lift' if start_time is None else 'collecting'
+        self.retry_count = 0
+        self.retry_at = None
 
     @property
     def ready(self) -> bool:
         return self.state == 'REFERENCE_READY' and self.reference is not None
 
+    def _schedule_retry(self, now: float, reason: str) -> None:
+        self.samples = []
+        self.retry_count += 1
+        self.reason = reason
+        if self.retry_count > self.max_retries:
+            self.state = 'REFERENCE_FAILED'
+            self.retry_at = None
+            return
+        self.state = 'REFERENCE_RETRY_WAIT'
+        self.retry_at = float(now) + self.retry_delay_s
+
+    def advance(self, now: float) -> str:
+        """Advance bounded timeout/retry state and return the current state."""
+        now = float(now)
+        if (self.state == 'REFERENCE_CAPTURE' and self.started_at is not None
+                and now - self.started_at > self.timeout_s):
+            self._schedule_retry(now, 'insufficient_valid_id0_samples')
+        elif (self.state == 'REFERENCE_RETRY_WAIT' and
+              self.retry_at is not None and now >= self.retry_at):
+            self.state = 'REFERENCE_CAPTURE'
+            self.started_at = now
+            self.retry_at = None
+            self.reason = 'collecting'
+        return self.state
+
     def timed_out(self, now: float) -> bool:
+        """Compatibility wrapper; True when this call leaves capture state."""
         if self.state != 'REFERENCE_CAPTURE' or self.started_at is None:
             return False
-        if now - self.started_at <= self.timeout_s:
-            return False
-        self.state = 'REFERENCE_TIMEOUT'
-        self.reason = 'insufficient_valid_id0_samples'
-        return True
+        previous = self.state
+        self.advance(now)
+        return self.state != previous
 
     @staticmethod
     def _yaw_median_and_std(values):
@@ -148,37 +177,40 @@ class MissionReferenceCapture:
         ) / len(values)
         return median, math.sqrt(variance)
 
-    def add(self, relative_x: float, relative_y: float,
-            relative_yaw: float) -> bool:
+    def add(self, relative_x: Optional[float], relative_y: float,
+            relative_yaw: float, now: Optional[float] = None) -> bool:
         """Add one valid unique ID0 observation; return True when locked."""
         if self.state != 'REFERENCE_CAPTURE':
             return False
-        values = (float(relative_x), float(relative_y),
-                  normalize_angle(relative_yaw))
-        if not all(math.isfinite(value) for value in values):
+        x = None if relative_x is None else float(relative_x)
+        values = (x, float(relative_y), normalize_angle(relative_yaw))
+        if ((x is not None and not math.isfinite(x)) or
+                not all(math.isfinite(value) for value in values[1:])):
             return False
         self.samples.append(values)
         if len(self.samples) < self.sample_limit:
             return False
 
         xs, ys, yaws = zip(*self.samples[-self.sample_limit:])
-        median_x = statistics.median(xs)
+        x_enabled = all(value is not None for value in xs)
+        median_x = statistics.median(xs) if x_enabled else None
         median_y = statistics.median(ys)
         median_yaw, std_yaw = self._yaw_median_and_std(yaws)
-        std_x = statistics.pstdev(xs)
+        std_x = statistics.pstdev(xs) if x_enabled else 0.0
         std_y = statistics.pstdev(ys)
         errors = (
-            abs(median_x - self.nominal[0]),
+            0.0 if median_x is None else abs(median_x - self.nominal[0]),
             abs(median_y - self.nominal[1]),
             abs(normalize_angle(median_yaw - self.nominal[2])))
         stds = (std_x, std_y, std_yaw)
         if any(value > limit for value, limit in zip(errors, self.max_error)):
-            self.state = 'REFERENCE_INVALID'
-            self.reason = 'nominal_sanity_envelope'
+            self._schedule_retry(
+                self.started_at if now is None else now,
+                'nominal_sanity_envelope')
             return False
         if any(value > limit for value, limit in zip(stds, self.max_std)):
-            self.state = 'REFERENCE_INVALID'
-            self.reason = 'sample_dispersion'
+            self._schedule_retry(
+                self.started_at if now is None else now, 'sample_dispersion')
             return False
         self.reference = MissionReference(
             median_x, median_y, median_yaw,

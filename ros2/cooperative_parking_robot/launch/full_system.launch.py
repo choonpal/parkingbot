@@ -9,7 +9,7 @@ rear_robot.launch.py를 각 장비에서 실행한다.
 import math
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, LogInfo
 from launch.conditions import IfCondition
 from launch.substitutions import (
     EnvironmentVariable, LaunchConfiguration, PathJoinSubstitution,
@@ -78,6 +78,10 @@ def generate_launch_description():
     ])
 
     return LaunchDescription([
+        LogInfo(msg=(
+            'WARNING: full_system.launch.py is a legacy single-host smoke launch; '
+            'production dual CCTV must use cctv_server_dual.launch.py plus '
+            'front_robot.launch.py and rear_robot.launch.py.')),
         DeclareLaunchArgument(
             'enable_opencv_camera', default_value='false',
             description='이 launch가 cv2.VideoCapture로 천장 카메라를 점유'),

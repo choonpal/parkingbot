@@ -546,10 +546,11 @@ def slot_observability(
 def coverage_grid_values(
         width: int, height: int, resolution: float,
         coverage_polygons: Mapping[
-            str, Optional[Sequence[Sequence[float]]]]) -> List[int]:
+            str, Optional[Sequence[Sequence[float]]]],
+        origin_x_m: float = 0.0, origin_y_m: float = 0.0) -> List[int]:
     """Return an OccupancyGrid base layer: observed=free, unseen=unknown.
 
-    The grid origin is ``(0, 0)`` and each cell is classified at its centre.
+    Each cell is classified at its centre in the configured map origin.
     Obstacles are intentionally not painted here; the merge node adds them
     after constructing this conservative observation mask.
     """
@@ -564,10 +565,10 @@ def coverage_grid_values(
     ]
     values = [-1] * (width * height)
     for gy in range(height):
-        y_m = (gy + 0.5) * resolution
+        y_m = float(origin_y_m) + (gy + 0.5) * resolution
         row = gy * width
         for gx in range(width):
-            x_m = (gx + 0.5) * resolution
+            x_m = float(origin_x_m) + (gx + 0.5) * resolution
             if any(point_in_polygon(x_m, y_m, polygon)
                    for polygon in polygons):
                 values[row + gx] = 0

@@ -62,6 +62,7 @@ from cooperative_parking_robot.parking_geometry import (
     parse_registered_slots,
     slot_polygon,
 )
+from cooperative_parking_robot.vision_utils import directed_axis_yaw
 
 try:
     import cv2
@@ -99,6 +100,12 @@ class CctvMergeNode(Node):
         self.declare_parameter('map_resolution', 0.05)
         self.declare_parameter('map_width_m', 4.40)
         self.declare_parameter('map_height_m', 3.83)
+        self.declare_parameter('map_origin_x_m', 0.0)
+        self.declare_parameter('map_origin_y_m', 0.0)
+        self.declare_parameter('robot_odom_freshness_s', 0.5)
+        # JSON keeps arbitrary polygon vertex counts representable as one ROS
+        # parameter. Example: '[[[1,1],[2,1],[2,2],[1,2]]]'.
+        self.declare_parameter('static_obstacle_polygons_json', '[]')
         self.declare_parameter('car_size_m', 0.90)
         self.declare_parameter('target_mask_radius_m', 0.30)
         self.declare_parameter('robot_mask_radius_m', 0.32)
@@ -140,6 +147,7 @@ class CctvMergeNode(Node):
         self.declare_parameter('vehicle_width_range_m', [0.20, 2.80])
         self.declare_parameter('vehicle_dimension_ema_alpha', 0.20)
         self.declare_parameter('yaw_ema_alpha', 0.15)
+        self.declare_parameter('waiting_yaw_deg', 0.0)
 
         if not DEPS_OK:
             raise RuntimeError(
@@ -200,8 +208,28 @@ class CctvMergeNode(Node):
         self.map_h_m = float(self.get_parameter('map_height_m').value)
         if self.resolution <= 0.0 or self.map_w_m <= 0.0 or self.map_h_m <= 0.0:
             raise ValueError('map resolution/width/height must be positive')
-        self.grid_w = int(self.map_w_m / self.resolution)
-        self.grid_h = int(self.map_h_m / self.resolution)
+        self.grid_w = int(math.ceil(self.map_w_m / self.resolution))
+        self.grid_h = int(math.ceil(self.map_h_m / self.resolution))
+        self.map_origin_x = float(
+            self.get_parameter('map_origin_x_m').value)
+        self.map_origin_y = float(
+            self.get_parameter('map_origin_y_m').value)
+        self.robot_odom_freshness = float(
+            self.get_parameter('robot_odom_freshness_s').value)
+        if self.robot_odom_freshness <= 0.0:
+            raise ValueError('robot_odom_freshness_s must be positive')
+        try:
+            self.static_obstacle_polygons = json.loads(str(
+                self.get_parameter('static_obstacle_polygons_json').value))
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError('invalid static_obstacle_polygons_json') from exc
+        if not isinstance(self.static_obstacle_polygons, list):
+            raise ValueError('static_obstacle_polygons_json must be a list')
+        for polygon in self.static_obstacle_polygons:
+            if (not isinstance(polygon, list) or len(polygon) < 3 or
+                    any(not isinstance(point, list) or len(point) != 2
+                        for point in polygon)):
+                raise ValueError('each static obstacle needs at least 3 [x,y] points')
         self.car_size = float(self.get_parameter('car_size_m').value)
         self.target_mask_radius = float(
             self.get_parameter('target_mask_radius_m').value)
@@ -269,6 +297,8 @@ class CctvMergeNode(Node):
             self.get_parameter('target_presence_timeout_s').value)
         self.target_position_filter_window = int(
             self.get_parameter('target_position_filter_window').value)
+        self.waiting_yaw = math.radians(float(
+            self.get_parameter('waiting_yaw_deg').value))
         if self.target_presence_timeout_s <= 0.0:
             raise ValueError('target_presence_timeout_s must be positive')
         if self.target_position_filter_window <= 0:
@@ -318,6 +348,7 @@ class CctvMergeNode(Node):
         self._last_target_ready = None
         self._target_last_observed_wall = 0.0
         self.fleet_state = 'UNKNOWN'
+        self.vehicle_lifted = False
 
     def _setup_ros_interfaces(self):
         for camera_id, topic in zip(self.camera_ids, self.detection_topics):
@@ -334,6 +365,8 @@ class CctvMergeNode(Node):
             String, '/mission/complete', self.mission_complete_cb, 10)
         self.create_subscription(
             String, '/fleet/state', self.fleet_state_cb, 10)
+        self.create_subscription(
+            Bool, '/robot/lifted', self.lifted_cb, 10)
 
         mission_qos = QoSProfile(
             depth=1,
@@ -389,7 +422,7 @@ class CctvMergeNode(Node):
     def odom_cb(self, role, msg):
         self.robot_pose[role] = (
             float(msg.pose.pose.position.x),
-            float(msg.pose.pose.position.y))
+            float(msg.pose.pose.position.y), time.monotonic())
 
     def fleet_state_cb(self, msg):
         try:
@@ -398,6 +431,9 @@ class CctvMergeNode(Node):
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
             self.get_logger().warn(
                 'invalid fleet/state envelope', throttle_duration_sec=5.0)
+
+    def lifted_cb(self, msg):
+        self.vehicle_lifted = bool(msg.data)
 
     def mission_complete_cb(self, msg):
         """임무 종료 — 타겟 latch와 제원 캐시를 해제한다.
@@ -509,8 +545,9 @@ class CctvMergeNode(Node):
                     self.target_tracker.timeout_s):
                 self.dimension_tracker.reset()
 
-        mission_active = self.fleet_state in (
-            'WAIT_LIFT', 'PLAN_PATH', 'NAVIGATING')
+        mission_active = (
+            self.fleet_state in ('PLAN_PATH', 'NAVIGATING') or
+            (self.fleet_state == 'WAIT_LIFT' and self.vehicle_lifted))
         latched = self.target_tracker.update(
             None if target_detection is None else target_detection.center,
             now,
@@ -583,7 +620,8 @@ class CctvMergeNode(Node):
         msg.header.frame_id = 'map'
         msg.pose.position.x = float(center[0])
         msg.pose.position.y = float(center[1])
-        half_yaw = self.dimension_tracker.yaw / 2.0
+        half_yaw = directed_axis_yaw(
+            self.dimension_tracker.yaw, self.waiting_yaw) / 2.0
         msg.pose.orientation.z = math.sin(half_yaw)
         msg.pose.orientation.w = math.cos(half_yaw)
         self.pub_target.publish(msg)
@@ -628,6 +666,8 @@ class CctvMergeNode(Node):
             data=json.dumps(payload, ensure_ascii=False)))
 
     def _publish_vehicle_spec(self):
+        if not self.dimension_tracker.dimension_valid:
+            return False
         wheelbase = (
             self.fixed_wheelbase if self.use_fixed_wheelbase
             else self.latest_classified_wheelbase)
@@ -639,9 +679,8 @@ class CctvMergeNode(Node):
                 'fixed' if self.use_fixed_wheelbase else 'classified'),
             'vehicle_length_m': self.dimension_tracker.length_m,
             'vehicle_width_m': self.dimension_tracker.width_m,
-            'dimension_source': (
-                'segmentation_mask' if self.dimension_tracker.dimension_valid
-                else 'configured_default'),
+            'dimension_source': 'segmentation_mask',
+            'dimension_valid': True,
             'sequence': 1,
             'stamp_ns': self.get_clock().now().nanoseconds,
         })
@@ -651,6 +690,7 @@ class CctvMergeNode(Node):
             f'차종={self.latest_vehicle_class}, wheelbase={wheelbase:.3f}m, '
             f'size={self.dimension_tracker.length_m:.3f}x'
             f'{self.dimension_tracker.width_m:.3f}m (merge)')
+        return True
 
     def _publish_empty_slots(self, force_empty=False):
         pa = PoseArray()
@@ -703,8 +743,21 @@ class CctvMergeNode(Node):
     def _publish_map(self, merged, latched, coverage_polygons):
         grid = np.asarray(coverage_grid_values(
             self.grid_w, self.grid_h, self.resolution,
-            coverage_polygons), dtype=np.int8).reshape(
+            coverage_polygons, self.map_origin_x, self.map_origin_y),
+            dtype=np.int8).reshape(
                 (self.grid_h, self.grid_w))
+        static_mask_u8 = np.zeros(
+            (self.grid_h, self.grid_w), dtype=np.uint8)
+        for polygon in self.static_obstacle_polygons:
+            contour = np.asarray([[
+                int(math.floor((float(x) - self.map_origin_x) /
+                               self.resolution)),
+                int(math.floor((float(y) - self.map_origin_y) /
+                               self.resolution))]
+                for x, y in polygon], dtype=np.int32)
+            cv2.fillPoly(static_mask_u8, [contour], 1)
+        static_mask = static_mask_u8.astype(bool)
+        grid[static_mask] = 100
         car_px = max(1, int(math.ceil(self.car_size / self.resolution)))
         for detection in merged:
             # 운반 대상은 A* 장애물에서 제거해 시작점이 막히지 않게 한다.
@@ -715,34 +768,43 @@ class CctvMergeNode(Node):
                 continue
             if detection.polygon is not None and len(detection.polygon) >= 3:
                 contour = np.asarray([
-                    [int(round(x / self.resolution)),
-                     int(round(y / self.resolution))]
+                    [int(round((x - self.map_origin_x) / self.resolution)),
+                     int(round((y - self.map_origin_y) / self.resolution))]
                     for x, y in detection.polygon
                 ], dtype=np.int32)
                 cv2.fillPoly(grid, [contour], 100)
                 continue
-            gx = int(detection.center[0] / self.resolution)
-            gy = int(detection.center[1] / self.resolution)
+            gx = int(math.floor(
+                (detection.center[0] - self.map_origin_x) / self.resolution))
+            gy = int(math.floor(
+                (detection.center[1] - self.map_origin_y) / self.resolution))
             half = car_px // 2
             y1 = max(0, gy - half)
             y2 = min(self.grid_h, gy + half)
             x1 = max(0, gx - half)
             x2 = min(self.grid_w, gx + half)
-            grid[y1:y2, x1:x2] = 100
+            if x1 < x2 and y1 < y2:
+                grid[y1:y2, x1:x2] = 100
 
         # YOLO가 로봇을 차량으로 오검출해도 A* 시작점을 막지 않도록 self-mask.
         mask_cells = max(1, int(self.robot_mask_radius / self.resolution))
+        now = time.monotonic()
         for pose in self.robot_pose.values():
-            if pose is None:
+            if pose is None or now - pose[2] > self.robot_odom_freshness:
                 continue
-            gx = int(pose[0] / self.resolution)
-            gy = int(pose[1] / self.resolution)
+            gx = int(math.floor(
+                (pose[0] - self.map_origin_x) / self.resolution))
+            gy = int(math.floor(
+                (pose[1] - self.map_origin_y) / self.resolution))
             y1 = max(0, gy - mask_cells)
             y2 = min(self.grid_h, gy + mask_cells + 1)
             x1 = max(0, gx - mask_cells)
             x2 = min(self.grid_w, gx + mask_cells + 1)
+            if x1 >= x2 or y1 >= y2:
+                continue
             region = grid[y1:y2, x1:x2]
-            region[region >= 0] = 0
+            region_static = static_mask[y1:y2, x1:x2]
+            region[(region >= 0) & ~region_static] = 0
 
         msg = OccupancyGrid()
         msg.header.stamp = self.get_clock().now().to_msg()
@@ -750,6 +812,8 @@ class CctvMergeNode(Node):
         msg.info.resolution = self.resolution
         msg.info.width = self.grid_w
         msg.info.height = self.grid_h
+        msg.info.origin.position.x = self.map_origin_x
+        msg.info.origin.position.y = self.map_origin_y
         msg.info.origin.orientation.w = 1.0
         msg.data = grid.flatten().tolist()
         self.pub_map.publish(msg)

@@ -18,5 +18,7 @@
 
 | 날짜 | 변경 내용 | 주요 영역 |
 |---|---|---|
+| 2026-08-27 17:35 | [Mission Safety 및 Runtime 전수 보완](./2026-08-27_1735_mission-safety-and-runtime-fixes.md) | Safety / Perception / Runtime |
+| 2026-08-27 (시간 미기록) | [강체제어 P0 Production Guards](./2026-08-27_rigid-body-p0-production-guards.md) | Rigid-body / Safety / Lifecycle |
 | 2026-08-27 14:40 | [Production 강체 Mission Reference 및 센서 역할 분리](./2026-08-27_1440_rigid-body-mission-reference.md) | Rigid-body / Sensor Fusion / Safety |
 | 2026-08-27 13:58 | [Production 강체 lateral 폐루프 제어](./2026-08-27_1358_rigid-body-lateral-control.md) | Rigid-body / ArUco / Sensor Fusion |

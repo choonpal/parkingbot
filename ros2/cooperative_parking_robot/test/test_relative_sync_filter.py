@@ -177,7 +177,7 @@ def test_bad_reference_capture_is_rejected(samples, reason):
     for sample in samples:
         capture.add(*sample)
     assert not capture.ready
-    assert capture.state == 'REFERENCE_INVALID'
+    assert capture.state == 'REFERENCE_RETRY_WAIT'
     assert capture.reason == reason
 
 
@@ -185,8 +185,32 @@ def test_reference_capture_timeout_does_not_nominally_fallback():
     capture = _reference_capture()
     capture.add(0.792, -0.006, 0.0)
     assert capture.timed_out(13.1)
-    assert capture.state == 'REFERENCE_TIMEOUT'
+    assert capture.state == 'REFERENCE_RETRY_WAIT'
     assert capture.reference is None
+
+
+def test_reference_capture_retries_are_bounded_then_fatal():
+    capture = _reference_capture(
+        sample_count=3, max_retries=2, retry_delay_s=0.1)
+    now = 10.0
+    for attempt in range(3):
+        for _ in range(3):
+            capture.add(0.90, 0.0, 0.0, now=now)
+        if attempt < 2:
+            assert capture.state == 'REFERENCE_RETRY_WAIT'
+            now += 0.11
+            assert capture.advance(now) == 'REFERENCE_CAPTURE'
+    assert capture.state == 'REFERENCE_FAILED'
+    assert capture.retry_count == 3
+
+
+def test_reference_capture_can_disable_uncalibrated_x():
+    capture = _reference_capture(sample_count=3)
+    for _ in range(3):
+        capture.add(None, -0.006, math.radians(0.8))
+    assert capture.ready
+    assert capture.reference.relative_x is None
+    assert capture.reference.relative_y == pytest.approx(-0.006)
 
 
 def test_drive_is_blocked_after_lift_until_reference_is_ready():

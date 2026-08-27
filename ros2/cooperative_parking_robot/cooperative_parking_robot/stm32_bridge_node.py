@@ -239,6 +239,14 @@ class Stm32BridgeNode(Node):
         self.create_timer(0.1, self.send_servo_attach)  # bounded startup retry
         self.create_timer(0.2, self.publish_hardware_state)
 
+        # serial open 은 DTR 을 토글해 STM32 를 리셋시킨다. 펌웨어는 그
+        # 순간부터 heartbeat 감시(300 ms)를 시작하는데, heartbeat timer 의
+        # 첫 발화는 rclpy.spin() 이후 100 ms 다. 그 사이 노드 초기화와 servo
+        # attach 왕복이 끼면 300 ms 를 넘겨 HEARTBEAT_TIMEOUT 이 한 번 뜬다.
+        # 그 한 번이 state_machine 을 영구 FAULT 로 만들고 FAULT 가 ESTOP 을
+        # latch 시킨다. 타이머를 기다리지 말고 여기서 먼저 한 번 보낸다.
+        self.send_heartbeat()
+
         # serial open 직후 먼저 attach를 요청한다. 이후 timer는
         # ACK 유실 때만 제한된 주기로 재시도하고 ACK 후 멈춘다.
         self.send_servo_attach()
@@ -382,6 +390,16 @@ class Stm32BridgeNode(Node):
                 f'pulses=({pulse1},{pulse2})')
             self.publish_status(
                 f'INFO,SERVO_ATTACH_REQUEST:{pulse1}:{pulse2}')
+
+    def shutdown_stop(self):
+        """종료 직전 0 속도를 보낸다. 실패해도 종료를 막지 않는다."""
+        if self.ser is None:
+            return
+        try:
+            self._write(self.protocol.encode_velocity(0.0, 0.0, 0.0))
+            self.get_logger().info(f'[{self.role}] 종료 — 0 속도 전송')
+        except Exception as exc:
+            self.get_logger().warn(f'[{self.role}] 종료 정지 전송 실패: {exc}')
 
     def estop_cb(self, msg):
         if msg.data and not self.estop_latched:
@@ -610,8 +628,13 @@ def main(args=None):
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
-    node.destroy_node()
-    rclpy.shutdown()
+    finally:
+        # 브리지가 사라지면 STM32 는 명령/heartbeat 를 못 받아 watchdog 으로
+        # 멈춘다. 그 전에 0 속도를 명시적으로 보내 관성 주행을 없앤다.
+        # ESTOP 은 보내지 않는다. latch 되면 전원 재인가 전까지 못 푼다.
+        node.shutdown_stop()
+        node.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == '__main__':

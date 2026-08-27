@@ -49,7 +49,6 @@ def generate_launch_description():
     require_hardware_ready = _bool("require_hardware_ready")
     require_ultrasonic = _bool("require_ultrasonic_for_ready")
     ultrasonic_timeout = _float("ultrasonic_frame_timeout_s")
-    command_timeout = _float("command_source_timeout_s")
     ultrasonic_threshold = _float("ultrasonic_threshold_m")
     ultrasonic_hysteresis = _float("ultrasonic_exit_hysteresis_m")
     ultrasonic_yaw_limit = _float("max_sensor_yaw_error_deg")
@@ -113,9 +112,6 @@ def generate_launch_description():
             "require_ultrasonic_for_ready", default_value="true"),
         DeclareLaunchArgument(
             "ultrasonic_frame_timeout_s", default_value="0.50"),
-        # 벤치(잭업) 시험용으로만 올린다. 실제 주행에서는 0.25 로 되돌릴 것.
-        DeclareLaunchArgument(
-            "command_source_timeout_s", default_value="0.25"),
         DeclareLaunchArgument(
             "ultrasonic_threshold_m", default_value="0.10"),
         DeclareLaunchArgument(
@@ -159,7 +155,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "vehicle_half_width_m", default_value="0.175"),
         DeclareLaunchArgument("robot_length_m", default_value="0.565"),
-        DeclareLaunchArgument("robot_width_m", default_value="0.275"),
+        DeclareLaunchArgument("robot_width_m", default_value="0.420"),
         DeclareLaunchArgument(
             "minimum_inter_robot_gap_m", default_value="0.22"),
         DeclareLaunchArgument(
@@ -306,7 +302,6 @@ def generate_launch_description():
                 "ly": ly,
                 "ultrasonic_frame_timeout_s": ultrasonic_timeout,
                 "require_ultrasonic_for_ready": require_ultrasonic,
-                "command_source_timeout_s": command_timeout,
             }],
             output="screen"),
 

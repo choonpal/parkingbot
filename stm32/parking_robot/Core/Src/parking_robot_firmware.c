@@ -13,6 +13,8 @@
  *
  * UART 프로토콜:
  *   수신: "@V,vx,vy,omega\n"  (속도 명령, m/s)
+ *         "@HELLO,session_id\n" (새 Linux bridge 세션 경계)
+ *         "@S,attach,pulse1_us,pulse2_us\n" (서보 기준 동기화)
  *         "@S,grip\n" / "@S,release\n"  (arm 제어)
  *         "@HB,timestamp\n" / "@ESTOP\n"
  *         "@M,FL|FR|RL|RR,pwm\n" (정비용 단일 바퀴, |pwm|<=120)
@@ -195,6 +197,7 @@ typedef struct {
     float servo_current[SERVO_NUM];             // 현재 서보 각도 (soft-start)
     float servo_target[SERVO_NUM];              // 목표 서보 각도
     uint8_t servo_motion_active;
+    uint8_t servo_attached;                     // bridge와 pulse 기준 동기화 완료
     uint32_t servo_motion_start;
     uint32_t last_cmd_time;                     // 워치독용
     uint32_t last_heartbeat_time;
@@ -318,6 +321,9 @@ void Robot_Init(void)
 {
     memset(&g_robot, 0, sizeof(g_robot));
     memset(&g_ultrasonic, 0, sizeof(g_ultrasonic));
+    g_tx_flags = 0U;
+    g_ack_value[0] = '\0';
+    g_error_code[0] = '\0';
     g_ultrasonic.next_side = ULTRA_LEFT;
 
     // 서보 초기값 (열림)
@@ -435,7 +441,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
     }
 }
 
-/* 명령 파싱: V / S / HB / ESTOP. ESTOP은 전원 재인가 전까지 latch된다. */
+/* 명령 파싱: HELLO / V / S / HB / ESTOP.
+ * ESTOP은 HELLO로 절대 해제하지 않으며 전원 재인가/수동 reset까지 latch된다. */
 void UART_ParseCommand(char *cmd)
 {
     if (strcmp(cmd, "ESTOP") == 0) {
@@ -444,6 +451,45 @@ void UART_ParseCommand(char *cmd)
         /* 하중을 갑자기 놓지 않고 현재 각도에서 servo motion을 동결한다. */
         Robot_HoldServosImmediate();
         QueueAck("ESTOP");
+    } else if (strncmp(cmd, "HELLO,", 6) == 0) {
+        const char *session_id = &cmd[6];
+        size_t session_len = strlen(session_id);
+        if (session_len == 0U || session_len > 16U ||
+            strchr(session_id, ',') != NULL) {
+            QueueError("BAD_HELLO");
+            return;
+        }
+
+        /* Linux bridge가 재시작되는 동안 이전 세션에서 이미 활성화된
+         * heartbeat/command watchdog이 timeout될 수 있다. 새 세션 경계에서
+         * 모터를 먼저 정지하고 통신 watchdog 상태만 초기화한다. 물리 ESTOP과
+         * 기타 hardware fault는 여기서 절대 지우지 않는다. */
+        Robot_StopMotorsImmediate();
+        if (g_robot.estop_latched) {
+            QueueError("ESTOP_LATCHED");
+            return;
+        }
+        g_robot.manual_mode = 0U;
+        g_robot.manual_open_loop = 0U;
+        g_robot.heartbeat_seen = 0U;
+        g_robot.command_seen = 0U;
+        g_robot.heartbeat_timed_out = 0U;
+        g_robot.command_timed_out = 0U;
+        g_robot.last_heartbeat_time = HAL_GetTick();
+        g_robot.last_cmd_time = HAL_GetTick();
+        g_robot.servo_attached = 0U;
+
+        /* 아직 UART로 전송되지 않은 이전 세션의 통신 timeout만 폐기한다.
+         * 센서/모터/서보 오류는 보존되어 새 bridge에 그대로 전달된다. */
+        if ((g_tx_flags & TX_ERR) != 0U &&
+            (strcmp(g_error_code, "HEARTBEAT_TIMEOUT") == 0 ||
+             strcmp(g_error_code, "COMMAND_TIMEOUT") == 0)) {
+            g_tx_flags &= (uint8_t)~TX_ERR;
+        }
+        g_tx_flags &= (uint8_t)~TX_ACK;
+        char ack[32];
+        snprintf(ack, sizeof(ack), "HELLO:%s", session_id);
+        QueueAck(ack);
     } else if (strncmp(cmd, "HB,", 3) == 0 && cmd[3] != '\0') {
         g_robot.last_heartbeat_time = HAL_GetTick();
         g_robot.heartbeat_seen = 1;
@@ -530,6 +576,50 @@ void UART_ParseCommand(char *cmd)
         g_robot.last_cmd_time = HAL_GetTick();
         g_robot.last_command = 'M';
         QueueAck("MOTOR_TEST");
+    } else if (strncmp(cmd, "S,attach,", 9) == 0) {
+        if (g_robot.estop_latched) {
+            QueueError("ESTOP_LATCHED");
+            return;
+        }
+        if (!Robot_IsStopped()) {
+            QueueError("LIFT_WHILE_MOVING");
+            return;
+        }
+
+        char *end = NULL;
+        long pulse_1 = strtol(&cmd[9], &end, 10);
+        if (end == &cmd[9] || *end != ',') {
+            QueueError("BAD_SERVO_ATTACH");
+            return;
+        }
+        const char *pulse_2_text = end + 1;
+        long pulse_2 = strtol(pulse_2_text, &end, 10);
+        if (end == pulse_2_text || *end != '\0' ||
+            pulse_1 < (long)kServoMinPulseUs[0] ||
+            pulse_1 > (long)kServoMaxPulseUs[0] ||
+            pulse_2 < (long)kServoMinPulseUs[1] ||
+            pulse_2 > (long)kServoMaxPulseUs[1]) {
+            QueueError("BAD_SERVO_ATTACH");
+            return;
+        }
+
+        /* 3선식 hobby servo는 재부팅 후 실제 각도를 읽을 수 없다. bridge가
+         * 보존한 pulse를 compare/current/target에 먼저 복원한 뒤 PWM을 붙여
+         * 부팅 기본값으로 한 프레임 튀는 동작을 막는다. */
+        Robot_StopMotorsImmediate();
+        g_robot.servo_current[0] = (float)pulse_1;
+        g_robot.servo_current[1] = (float)pulse_2;
+        g_robot.servo_target[0] = (float)pulse_1;
+        g_robot.servo_target[1] = (float)pulse_2;
+        g_robot.servo_motion_active = 0U;
+        g_robot.servo_state = 2U;
+        Set_ServoPWM(0, g_robot.servo_current[0]);
+        Set_ServoPWM(1, g_robot.servo_current[1]);
+        HAL_TIM_PWM_Start(&htim10, TIM_CHANNEL_1);
+        HAL_TIM_PWM_Start(&htim11, TIM_CHANNEL_1);
+        g_robot.servo_attached = 1U;
+        g_robot.last_command = 'P';
+        QueueAck("SERVO_ATTACH");
     } else if (strncmp(cmd, "S,", 2) == 0) {
         if (g_robot.estop_latched) {
             QueueError("ESTOP_LATCHED");
@@ -537,6 +627,10 @@ void UART_ParseCommand(char *cmd)
         }
         if (!Robot_IsStopped()) {
             QueueError("LIFT_WHILE_MOVING");
+            return;
+        }
+        if (!g_robot.servo_attached) {
+            QueueError("SERVO_NOT_ATTACHED");
             return;
         }
         HAL_TIM_PWM_Start(&htim10, TIM_CHANNEL_1);
@@ -623,6 +717,12 @@ static void Legacy_SetOpenLoop(float forward, float right, float clockwise)
 static void Legacy_ApplyCommand(uint8_t command)
 {
     float *target;
+    if (strchr("UuJjIiKkTtGg", (int)command) != NULL &&
+        !g_robot.servo_attached) {
+        Robot_StopMotorsImmediate();
+        QueueError("SERVO_NOT_ATTACHED");
+        return;
+    }
     switch (command) {
     case 'W': Legacy_SetVector(1, 0, 0); break;
     case 'S': Legacy_SetVector(-1, 0, 0); break;
@@ -678,6 +778,7 @@ static void Legacy_ApplyCommand(uint8_t command)
         Robot_StopMotorsImmediate();
         HAL_TIM_PWM_Stop(&htim10, TIM_CHANNEL_1);
         HAL_TIM_PWM_Stop(&htim11, TIM_CHANNEL_1);
+        g_robot.servo_attached = 0U;
         break;
     case '1': case '2':
         /* 자동 초음파 상태머신이 계속 측정하므로 최신값은 U frame으로 확인한다. */

@@ -21,7 +21,7 @@ ROLES = ("front", "rear")
 # leave a 0.220 m longitudinal body-to-body gap at axle alignment.
 DEFAULT_WHEELBASE_M = 0.785
 ROBOT_LENGTH_M = 0.565
-ROBOT_WIDTH_M = 0.275
+ROBOT_WIDTH_M = 0.420
 MIN_INTER_ROBOT_GAP_M = 0.22
 
 

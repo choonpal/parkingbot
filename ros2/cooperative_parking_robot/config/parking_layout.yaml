@@ -64,7 +64,7 @@ fleet_manager_node:
 
     # 실측: 0.785m - 0.565m = 로봇 차체 사이 0.220m
     robot_length_m: 0.565000
-    robot_width_m: 0.275000
+    robot_width_m: 0.420000
     minimum_inter_robot_gap_m: 0.220000
     default_wheelbase_m: 0.785000
     default_vehicle_length_m: 0.900000

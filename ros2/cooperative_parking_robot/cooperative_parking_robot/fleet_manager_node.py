@@ -99,7 +99,7 @@ class FleetManagerNode(Node):
         self.declare_parameter('future_tolerance_s', 0.10)
         # 실측된 로봇 외곽. 길이(+x)는 차량 앞뒤, 폭(+y)은 차량 좌우.
         self.declare_parameter('robot_length_m', 0.565)
-        self.declare_parameter('robot_width_m', 0.275)
+        self.declare_parameter('robot_width_m', 0.420)
         self.declare_parameter(
             'minimum_inter_robot_gap_m', MIN_INTER_ROBOT_GAP_M)
         self.declare_parameter('default_wheelbase_m', 0.785)

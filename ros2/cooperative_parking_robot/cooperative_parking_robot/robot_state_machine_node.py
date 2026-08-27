@@ -25,6 +25,9 @@ class RobotStateMachineNode(Node):
         self.declare_parameter("coordination_timeout_s", 1.5)
         self.declare_parameter("fleet_timeout_s", 2.5)
         self.declare_parameter("future_tolerance_s", 0.25)
+        # IDLE 에서 빠진 FAULT 만 이 시간 동안 새 오류가 없으면 스스로
+        # 복구한다. 0 이면 자동 복구를 끈다. 동작 중 FAULT 는 대상이 아니다.
+        self.declare_parameter("idle_fault_recovery_s", 3.0)
 
         gp = self.get_parameter
         self.role = str(gp("role").value)
@@ -42,11 +45,15 @@ class RobotStateMachineNode(Node):
             gp("coordination_timeout_s").value)
         self.fleet_timeout = float(gp("fleet_timeout_s").value)
         self.future_tolerance = float(gp("future_tolerance_s").value)
+        self.idle_fault_recovery_s = float(
+            gp("idle_fault_recovery_s").value)
         if any(value <= 0.0 for value in (
                 self.approach_timeout, self.align_timeout,
                 self.drive_timeout, self.return_timeout,
                 self.coordination_timeout, self.fleet_timeout)):
             raise ValueError("state timeouts must be positive")
+        if self.idle_fault_recovery_s < 0.0:
+            raise ValueError("idle_fault_recovery_s must be non-negative")
         if self.future_tolerance < 0.0:
             raise ValueError("future_tolerance_s must be non-negative")
 
@@ -65,6 +72,9 @@ class RobotStateMachineNode(Node):
         self.return_done = False
         self.hardware_ready = False
         self.hardware_fault = None
+        # FAULT 로 들어올 때의 직전 상태. 멈출 동작이 있었는지를 가른다.
+        self.fault_origin_state = ""
+        self.last_fault_time = 0.0
         self.local_lifted = False
         self.aggregate_lifted = False
         self.last_action_time = 0.0
@@ -282,6 +292,7 @@ class RobotStateMachineNode(Node):
                 f"[{self.role}] {msg.data}; retry after stop")
             return
         self.hardware_fault = msg.data
+        self.last_fault_time = time.monotonic()
         self.get_logger().error(
             f"[{self.role}] hardware fault: {msg.data}")
 
@@ -396,7 +407,14 @@ class RobotStateMachineNode(Node):
                 self.fleet_timeout):
             self.hardware_fault = "FLEET_STATE_TIMEOUT"
         if self.hardware_fault and self.state != "FAULT":
-            self.pub_estop.publish(Bool(data=True))
+            self.fault_origin_state = self.state
+            self.last_fault_time = time.monotonic()
+            # 동작 중이었다면 모터를 확실히 세워야 하므로 ESTOP 을 건다.
+            # IDLE 이었다면 멈출 동작이 없다. 거기서도 ESTOP 을 쏘면 STM32 가
+            # latch 되어 전원 재인가 전까지 복구가 불가능해진다. 기동 과도현상
+            # 한 번이 시스템 전체를 잠그던 원인이 이것이었다.
+            if self.state != "IDLE":
+                self.pub_estop.publish(Bool(data=True))
             self.transition("FAULT")
 
         if self.state == "IDLE":
@@ -483,7 +501,35 @@ class RobotStateMachineNode(Node):
                 self.fail("RETURN_TIMEOUT")
 
         elif self.state == "FAULT":
-            self.pub_estop.publish(Bool(data=True))
+            if self.fault_origin_state != "IDLE":
+                self.pub_estop.publish(Bool(data=True))
+            elif self._idle_fault_recovered():
+                self.get_logger().warn(
+                    f"[{self.role}] IDLE 과도 FAULT 복구 "
+                    f"({self.hardware_fault}) -> IDLE")
+                self.hardware_fault = None
+                self.fault_origin_state = ""
+                self.transition("IDLE")
+
+    def _idle_fault_recovered(self):
+        """IDLE 과도 FAULT 에서 빠져나와도 되는지 판단한다.
+
+        보수적으로 셋을 모두 요구한다.
+
+        * 자동 복구가 켜져 있을 것 (``idle_fault_recovery_s`` > 0)
+        * ESTOP latch 가 아닐 것 — 그건 전원 재인가/리셋이 필요하고,
+          소프트웨어가 임의로 풀었다고 믿게 하면 안 된다
+        * 마지막 오류 이후 충분히 조용했고 하드웨어가 준비 상태일 것
+        """
+        if self.idle_fault_recovery_s <= 0.0:
+            return False
+        fault = str(self.hardware_fault or "")
+        if "ESTOP" in fault.upper():
+            return False
+        if self.require_hardware_ready and not self.hardware_ready:
+            return False
+        return (time.monotonic() - self.last_fault_time
+                >= self.idle_fault_recovery_s)
 
     def send_action_with_retry(self, action):
         now = time.monotonic()
@@ -493,7 +539,11 @@ class RobotStateMachineNode(Node):
         self.pub_grip.publish(String(data=action))
 
     def fail(self, reason):
+        # fail() 은 미션 진행 중 타임아웃 등에서만 불린다. 여기서는 항상
+        # ESTOP 을 건다.
         self.hardware_fault = reason
+        self.fault_origin_state = self.state
+        self.last_fault_time = time.monotonic()
         self.pub_estop.publish(Bool(data=True))
         self.transition("FAULT")
 

@@ -282,6 +282,7 @@ def generate_launch_description():
             condition=IfCondition(enable_vision),
             parameters=[layout_config, {
                 'require_registered_layout': True,
+                'require_valid_vehicle_spec': True,
                 'simultaneous_entry': _bool('simultaneous_entry'),
                 'planning_validation_mode': LaunchConfiguration(
                     'planning_validation_mode'),

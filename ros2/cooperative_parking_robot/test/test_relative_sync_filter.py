@@ -152,6 +152,19 @@ def test_reference_capture_locks_medians_from_stable_id0_samples():
     assert capture.reference.relative_yaw == pytest.approx(math.radians(0.8))
 
 
+def test_reference_capture_without_x_locks_y_and_yaw_without_fake_x_stats():
+    capture = _reference_capture()
+    for lateral, yaw_deg in [
+            (-0.005, 0.7), (-0.006, 0.8), (-0.007, 0.9),
+            (-0.006, 0.8), (-0.004, 0.6)]:
+        capture.add(None, lateral, math.radians(yaw_deg))
+    assert capture.ready
+    assert capture.reference.relative_x is None
+    assert capture.reference.std_x is None
+    assert capture.reference.relative_y == pytest.approx(-0.006)
+    assert capture.reference.relative_yaw == pytest.approx(math.radians(0.8))
+
+
 def test_reference_is_frozen_until_mission_reset():
     capture = _reference_capture(sample_count=3)
     for x in (0.791, 0.792, 0.793):

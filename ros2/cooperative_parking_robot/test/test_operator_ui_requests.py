@@ -253,6 +253,8 @@ def test_retrieve_ready_banner_does_not_require_waiting_target_freshness():
 
 def fleet_status_harness(fleet_payload):
     node = JetsonVisionWebNode.__new__(JetsonVisionWebNode)
+    fleet_payload = dict(fleet_payload)
+    fleet_payload.setdefault('vehicle_spec_ready', True)
     now = time.monotonic()
     node._status_lock = threading.Lock()
     node.status_stale_s = 3.0
@@ -329,3 +331,17 @@ def test_operator_ui_distinguishes_detecting_vehicle_from_ready_gate():
     assert not status['target_ready']
     assert not status['park_enabled']
     assert status['banner'] == '차량 감지 중 — 정차 확인까지 잠시 기다려 주세요'
+
+
+def test_operator_ui_requires_fresh_valid_vehicle_dimensions():
+    node = fleet_status_harness({
+        'state': 'WAIT_TARGET', 'mission_id': '', 'empty_count': 1,
+        'parking_slots': [], 'vehicle_spec_ready': False,
+    })
+    now = time.monotonic()
+    node._status['target_ready'] = (True, now)
+    status = node.build_status()
+
+    assert not status['park_enabled']
+    assert status['park_block_reason'] == 'WAITING_VEHICLE_DIMENSION'
+    assert status['banner'] == '차량 크기 측정 중 — 잠시 기다려 주세요'

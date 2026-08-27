@@ -94,6 +94,7 @@ class FleetManagerNode(Node):
         self.declare_parameter('target_timeout_s', 2.0)
         self.declare_parameter('target_candidate_timeout_s', 2.0)
         self.declare_parameter('vehicle_spec_timeout_s', 10.0)
+        self.declare_parameter('require_valid_vehicle_spec', False)
         self.declare_parameter('odom_timeout_s', 0.5)
         self.declare_parameter('future_tolerance_s', 0.10)
         # 실측된 로봇 외곽. 길이(+x)는 차량 앞뒤, 폭(+y)은 차량 좌우.
@@ -340,6 +341,8 @@ class FleetManagerNode(Node):
         self.spec_gate = StampGate(
             self.get_parameter('vehicle_spec_timeout_s').value,
             self.future_tolerance)
+        self.require_valid_vehicle_spec = bool(
+            self.get_parameter('require_valid_vehicle_spec').value)
         self.odom_gates = {
             'front': StampGate(self.odom_timeout, self.future_tolerance),
             'rear': StampGate(self.odom_timeout, self.future_tolerance),
@@ -528,6 +531,11 @@ class FleetManagerNode(Node):
         if not self._robots_accepting_mission():
             self._set_request_status(
                 payload, 'REJECTED', 'ROBOT_NOT_IDLE')
+            return
+        if (self.require_valid_vehicle_spec and
+                not self._vehicle_spec_ready()):
+            self._set_request_status(
+                payload, 'REJECTED', 'WAITING_VEHICLE_DIMENSION')
             return
         identity_keys = ('vehicle_number', 'password')
         has_identity = any(key in payload for key in identity_keys)
@@ -934,9 +942,23 @@ class FleetManagerNode(Node):
                 return float(payload[key])
         return default
 
+    def _vehicle_spec_ready(self):
+        """True only for a current, explicitly dimension-valid observation."""
+        spec = self.active_vehicle_spec
+        if spec is None or not bool(spec.get('dimension_valid', False)):
+            return False
+        stamp_ns = self.spec_gate.last_stamp_ns
+        now_ns = self.get_clock().now().nanoseconds
+        age_ns = now_ns - stamp_ns
+        return (-self.spec_gate.future_tolerance_ns <= age_ns <=
+                self.spec_gate.max_age_ns)
+
     def vehicle_spec_cb(self, msg):
         try:
             payload = json.loads(msg.data)
+            if self.require_valid_vehicle_spec and not bool(
+                    payload.get('dimension_valid', False)):
+                raise ValueError('vehicle_spec dimension invalid')
             accepted, reason = self.spec_gate.accept(
                 int(payload['stamp_ns']),
                 self.get_clock().now().nanoseconds)
@@ -987,6 +1009,7 @@ class FleetManagerNode(Node):
             'wheelbase': wheelbase,
             'vehicle_length_m': vehicle_length,
             'vehicle_width_m': vehicle_width,
+            'dimension_valid': bool(payload.get('dimension_valid', False)),
         }
         self.loaded_footprint = footprint
         self.planner.set_footprint(
@@ -1275,6 +1298,9 @@ class FleetManagerNode(Node):
                     self.publish_state()
                 self.get_logger().warn('UI 입차 승인 만료 — 다시 눌러야 합니다')
             if self.target_pose is not None:
+                if (self.require_valid_vehicle_spec and
+                        not self._vehicle_spec_ready()):
+                    return
                 if not self.require_ui_confirmation:
                     self.mission_id = (
                         f'mission-{self.get_clock().now().nanoseconds}')
@@ -1745,6 +1771,7 @@ class FleetManagerNode(Node):
             'lifted': self.car_lifted,
             'has_map': self.grid is not None,
             'has_target': self.target_pose is not None,
+            'vehicle_spec_ready': self._vehicle_spec_ready(),
             'require_ui_confirmation': self.require_ui_confirmation,
             'ui_approved': self.ui_park_approved,
             'ui_request_id': self.ui_request_id,

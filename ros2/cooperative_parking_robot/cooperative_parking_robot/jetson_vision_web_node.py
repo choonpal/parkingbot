@@ -765,9 +765,15 @@ class JetsonVisionWebNode(Node):
             all(robots[role]['fresh'] for role in ('front', 'rear')))
         all_fresh = common_fresh and target_fresh
 
+        # Fleet owns the production freshness policy and republishes its
+        # evaluated result in /fleet/state, avoiding a second UI-only timeout.
+        dimension_ready = bool(
+            fleet_fresh and fleet.get('vehicle_spec_ready', False))
+
         park_enabled = bool(
             target_ready and fleet_state == 'WAIT_TARGET' and
-            empty_count >= 1 and idle and fault is None and all_fresh)
+            empty_count >= 1 and idle and fault is None and all_fresh and
+            dimension_ready)
         parking_slots = []
         retrieve_gate = bool(
             fleet_state == 'WAIT_TARGET' and idle and fault is None and
@@ -817,6 +823,8 @@ class JetsonVisionWebNode(Node):
                 '차량 감지 중 — 정차 확인까지 잠시 기다려 주세요'
                 if target_state == 'DETECTING'
                 else '대기공간에 차량을 x축 방향으로 세워 주세요')
+        elif not dimension_ready:
+            banner = '차량 크기 측정 중 — 잠시 기다려 주세요'
         elif empty_count < 1:
             banner = '빈 주차면이 없습니다'
         else:
@@ -836,6 +844,10 @@ class JetsonVisionWebNode(Node):
             'target_ready': target_ready,
             'target_state': target_state,
             'target_status': target_status,
+            'vehicle_dimension_ready': dimension_ready,
+            'park_block_reason': (
+                '' if park_enabled else
+                ('WAITING_VEHICLE_DIMENSION' if not dimension_ready else '')),
             'park_enabled': park_enabled,
             'retrieve_enabled': retrieve_enabled,
             'parking_slots': parking_slots,

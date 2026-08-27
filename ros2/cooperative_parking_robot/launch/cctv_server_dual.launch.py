@@ -485,6 +485,7 @@ def generate_launch_description():
             name='fleet_manager_node',
             parameters=[LaunchConfiguration('layout_config'), {
                 'require_registered_layout': True,
+                'require_valid_vehicle_spec': True,
                 'require_ui_confirmation': _bool('require_ui_confirmation'),
                 'ui_request_timeout_s': _float('ui_request_timeout_s'),
                 'simultaneous_entry': _bool('simultaneous_entry'),

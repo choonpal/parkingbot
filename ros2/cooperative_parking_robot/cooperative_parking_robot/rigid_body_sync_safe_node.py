@@ -340,7 +340,9 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
         if len(samples) >= 2:
             xs, ys, yaws = zip(*samples)
             _, std_yaw = MissionReferenceCapture._yaw_median_and_std(yaws)
-            std_x = statistics.pstdev(xs)
+            available_xs = [value for value in xs if value is not None]
+            std_x = (statistics.pstdev(available_xs)
+                     if len(available_xs) >= 2 else None)
             std_y = statistics.pstdev(ys)
         return {
             'reference_state': self.reference_capture.state,
@@ -348,10 +350,13 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
             'reference_retry_count': self.reference_capture.retry_count,
             'reference_reason': self.reference_capture.reason,
             'reference_capture_x_std': std_x,
+            'reference_capture_x_available': (
+                self.use_aruco_distance and std_x is not None),
             'reference_capture_y_std': std_y,
             'reference_capture_yaw_std': std_yaw,
-            'relative_x_ref': (None if reference is None else
-                               reference.relative_x),
+            'relative_x_ref': (
+                None if reference is None or not self.use_aruco_distance else
+                reference.relative_x),
             'relative_y_ref': (None if reference is None else
                                reference.relative_y),
             'relative_yaw_ref': (None if reference is None else

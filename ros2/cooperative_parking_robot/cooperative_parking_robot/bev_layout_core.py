@@ -234,6 +234,9 @@ def render_parking_layout_yaml(
     map_origin_y_m: {map_origin_y:.6f}
     map_width_m: {map_width:.6f}
     map_height_m: {map_height:.6f}
+    # Vehicle PCA is an undirected axis; every perception/fleet node receives
+    # this single directed waiting orientation from the wildcard block.
+    waiting_yaw_deg: {waiting_yaw:.6f}
     car_size_m: {car_size:.6f}
     # 대기영역의 실제 4개 모서리. 차량 중심이 이 다각형 안에 들어오면 타겟이다.
     waiting_polygon: {_flat(waiting)}
@@ -264,7 +267,6 @@ fleet_manager_node:
     # retrieve의 실제 map-frame 최종 차량 pose.
     waiting_x: {waiting_x:.6f}
     waiting_y: {waiting_y:.6f}
-    waiting_yaw_deg: {waiting_yaw:.6f}
     # Perception의 polygon 없는 차량 fallback raster와 같은 source mask 크기.
     source_vehicle_fallback_mask_m: {car_size:.6f}
     slot_ids: {_string_array(slot_ids)}

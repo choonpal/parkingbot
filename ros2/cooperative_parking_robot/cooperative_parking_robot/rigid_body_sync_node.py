@@ -470,11 +470,14 @@ class RigidBodySyncNode(Node):
         qx, qy, qz, qw = (value / norm for value in quaternion)
         yaw = math.atan2(2.0 * (qw * qz + qx * qy),
                          1.0 - 2.0 * (qy * qy + qz * qz))
-        if not all(math.isfinite(v) for v in (raw_dist, corrected, yaw)):
+        required_values = ((raw_dist, corrected, yaw)
+                           if self.use_aruco_distance else (yaw,))
+        if not all(math.isfinite(v) for v in required_values):
             self.get_logger().warn(
                 '비정상 ArUco pose 폐기', throttle_duration_sec=2.0)
             return
-        if not self.aruco_min_distance <= corrected <= self.aruco_max_distance:
+        if (self.use_aruco_distance and not
+                self.aruco_min_distance <= corrected <= self.aruco_max_distance):
             self.get_logger().warn(
                 f'ArUco 중심거리 범위 밖: raw={raw_dist:.3f}m, '
                 f'corrected={corrected:.3f}m',
@@ -485,8 +488,8 @@ class RigidBodySyncNode(Node):
         if not self._accept_stamped('aruco', msg):
             return
 
-        self.aruco_raw_dist = raw_dist
-        self.aruco_dist = corrected
+        self.aruco_raw_dist = raw_dist if math.isfinite(raw_dist) else None
+        self.aruco_dist = corrected if math.isfinite(corrected) else None
         self.aruco_yaw = yaw
         # source timestamp 대신 local receive freshness를 사용해 Front/Rear 시스템
         # 시계 오차로 정상 ArUco가 stale 처리되는 문제를 막는다.

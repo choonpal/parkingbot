@@ -27,13 +27,15 @@ from cooperative_parking_robot.freshness import stamp_to_ns
 from cooperative_parking_robot.relative_sync_filter import (
     DeltaKalman1D,
     OncePerStamp,
-    RelativeObservationGate,
+    ScalarObservationGate,
     anchored_pose,
     normalize_angle,
+    visual_safety_state,
 )
 from cooperative_parking_robot.rigid_body_sync_node import (
     RigidBodySyncNode as LegacyRigidBodySyncNode,
 )
+from cooperative_parking_robot.pid_controller import PID
 
 
 class RigidBodySyncNode(LegacyRigidBodySyncNode):
@@ -46,10 +48,13 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
         # placeholders; replace them with static-camera and wheel-slip logs.
         self.declare_parameter('sync_dist_process_sigma_m_sqrt_s', 0.003)
         self.declare_parameter('sync_yaw_process_sigma_deg_sqrt_s', 0.50)
+        self.declare_parameter('sync_lateral_process_sigma_m_sqrt_s', 0.003)
         self.declare_parameter('sync_dist_process_gain', 0.03)
         self.declare_parameter('sync_yaw_process_gain', 0.03)
+        self.declare_parameter('sync_lateral_process_gain', 0.03)
         self.declare_parameter('sync_dist_measurement_sigma_m', 0.015)
         self.declare_parameter('sync_yaw_measurement_sigma_deg', 3.0)
+        self.declare_parameter('sync_lateral_measurement_sigma_m', 0.015)
         self.declare_parameter('sync_initial_covariance_scale', 4.0)
 
         self.declare_parameter('aruco_distance_innovation_gate_m', 0.04)
@@ -61,9 +66,18 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
         self.declare_parameter('aruco_consistency_distance_m', 0.015)
         self.declare_parameter('aruco_consistency_yaw_deg', 2.0)
         self.declare_parameter('aruco_lateral_envelope_m', 0.10)
+        self.declare_parameter('aruco_lateral_innovation_gate_m', 0.04)
+        self.declare_parameter('aruco_reacquire_lateral_m', 0.10)
+        self.declare_parameter('aruco_consistency_lateral_m', 0.015)
 
         self.declare_parameter('sync_dist_deadband_m', 0.003)
         self.declare_parameter('sync_yaw_deadband_deg', 0.50)
+        self.declare_parameter('sync_lateral_deadband_m', 0.003)
+        self.declare_parameter('sync_target_lateral_m', 0.0)
+        self.declare_parameter('sync_lateral_kp', 1.2)
+        self.declare_parameter('sync_lateral_ki', 0.1)
+        self.declare_parameter('sync_lateral_kd', 0.05)
+        self.declare_parameter('sync_lateral_max_correction_mps', 0.08)
         self.declare_parameter('use_raw_wheel_relative_predictor', True)
         self.declare_parameter('wheel_relative_timeout_s', 0.50)
         self.declare_parameter('cctv_pair_timeout_s', 0.50)
@@ -74,15 +88,22 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
             gp('sync_dist_process_sigma_m_sqrt_s').value)
         yaw_process_sigma = math.radians(float(
             gp('sync_yaw_process_sigma_deg_sqrt_s').value))
+        lateral_process_sigma = float(
+            gp('sync_lateral_process_sigma_m_sqrt_s').value)
         dist_measurement_sigma = float(
             gp('sync_dist_measurement_sigma_m').value)
         yaw_measurement_sigma = math.radians(float(
             gp('sync_yaw_measurement_sigma_deg').value))
+        lateral_measurement_sigma = float(
+            gp('sync_lateral_measurement_sigma_m').value)
         self.initial_covariance_scale = float(
             gp('sync_initial_covariance_scale').value)
         self.dist_deadband = float(gp('sync_dist_deadband_m').value)
         self.yaw_deadband = math.radians(float(
             gp('sync_yaw_deadband_deg').value))
+        self.lateral_deadband = float(
+            gp('sync_lateral_deadband_m').value)
+        self.target_lateral = float(gp('sync_target_lateral_m').value)
         self.use_raw_wheel_predictor = bool(
             gp('use_raw_wheel_relative_predictor').value)
         self.wheel_relative_timeout = float(
@@ -96,9 +117,11 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
 
         positive = (
             dist_process_sigma, yaw_process_sigma,
-            dist_measurement_sigma, yaw_measurement_sigma,
+            lateral_process_sigma, dist_measurement_sigma,
+            yaw_measurement_sigma, lateral_measurement_sigma,
             self.initial_covariance_scale, self.dist_deadband,
-            self.yaw_deadband, self.wheel_relative_timeout,
+            self.yaw_deadband, self.lateral_deadband,
+            self.wheel_relative_timeout,
             self.cctv_pair_timeout, self.cctv_pair_sync_slop,
             self.aruco_lateral_envelope)
         if any(value <= 0.0 for value in positive):
@@ -116,30 +139,62 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
             process_variance_rate=yaw_process_sigma ** 2,
             process_gain=float(gp('sync_yaw_process_gain').value),
             angle=True)
+        self.lateral_kalman = DeltaKalman1D(
+            init=self.target_lateral,
+            measurement_variance=lateral_measurement_sigma ** 2,
+            process_variance_rate=lateral_process_sigma ** 2,
+            process_gain=float(gp('sync_lateral_process_gain').value),
+            angle=False)
+        self.lateral_pid = PID(
+            float(gp('sync_lateral_kp').value),
+            float(gp('sync_lateral_ki').value),
+            float(gp('sync_lateral_kd').value),
+            out_limit=float(
+                gp('sync_lateral_max_correction_mps').value))
 
-        gate_kwargs = dict(
-            distance_limit=float(
-                gp('aruco_distance_innovation_gate_m').value),
-            yaw_limit=math.radians(float(
-                gp('aruco_yaw_innovation_gate_deg').value)),
+        common_gate = dict(
             sigma_limit=float(gp('aruco_innovation_sigma_gate').value),
             reacquire_count=int(gp('aruco_reacquire_count').value),
-            reacquire_distance_limit=float(
-                gp('aruco_reacquire_distance_m').value),
-            reacquire_yaw_limit=math.radians(float(
-                gp('aruco_reacquire_yaw_deg').value)),
-            consistency_distance=float(
-                gp('aruco_consistency_distance_m').value),
-            consistency_yaw=math.radians(float(
-                gp('aruco_consistency_yaw_deg').value)),
         )
-        self._aruco_gate = RelativeObservationGate(**gate_kwargs)
-        self._cctv_pair_gate = RelativeObservationGate(**gate_kwargs)
+
+        def make_gates():
+            return {
+                'distance': ScalarObservationGate(
+                    innovation_limit=float(
+                        gp('aruco_distance_innovation_gate_m').value),
+                    reacquire_limit=float(
+                        gp('aruco_reacquire_distance_m').value),
+                    consistency_limit=float(
+                        gp('aruco_consistency_distance_m').value),
+                    **common_gate),
+                'lateral': ScalarObservationGate(
+                    innovation_limit=float(
+                        gp('aruco_lateral_innovation_gate_m').value),
+                    reacquire_limit=float(
+                        gp('aruco_reacquire_lateral_m').value),
+                    consistency_limit=float(
+                        gp('aruco_consistency_lateral_m').value),
+                    **common_gate),
+                'yaw': ScalarObservationGate(
+                    innovation_limit=math.radians(float(
+                        gp('aruco_yaw_innovation_gate_deg').value)),
+                    reacquire_limit=math.radians(float(
+                        gp('aruco_reacquire_yaw_deg').value)),
+                    consistency_limit=math.radians(float(
+                        gp('aruco_consistency_yaw_deg').value)),
+                    angle=True, **common_gate),
+            }
+        self._aruco_gates = make_gates()
+        self._cctv_pair_gates = make_gates()
         self._aruco_consumer = OncePerStamp()
 
         self.aruco_stamp_ns = None
         self.aruco_lateral = None
-        self._last_accepted_visual_time = None
+        self._last_visual_seen_time = None
+        self._last_correction_time = {
+            'distance': None, 'lateral': None, 'yaw': None}
+        self._last_gate_decision = {
+            'distance': 'NONE', 'lateral': 'NONE', 'yaw': 'NONE'}
         self._last_visual_decision = 'NONE'
         self._last_visual_reason = 'no_measurement'
 
@@ -155,6 +210,7 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
         self._cctv_stamp_ns = {'front': 0, 'rear': 0}
         self._cctv_receipt_time = {'front': 0.0, 'rear': 0.0}
         self._last_cctv_pair_used = {'front': 0, 'rear': 0}
+        self.lateral_pid.reset()
 
         self.create_subscription(
             Odometry, '/front/wheel_odom',
@@ -178,6 +234,14 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
             f'raw_wheel_predict={self.use_raw_wheel_predictor} | '
             f'dist_R_sigma={dist_measurement_sigma * 1000.0:.1f}mm | '
             f'yaw_R_sigma={math.degrees(yaw_measurement_sigma):.1f}deg')
+
+    def path_cb(self, msg):
+        super().path_cb(msg)
+        self.lateral_pid.reset()
+
+    def send_stop(self):
+        super().send_stop()
+        self.lateral_pid.reset()
 
     @staticmethod
     def _yaw_from_quaternion(q):
@@ -207,6 +271,7 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
             return
         self.aruco_stamp_ns = after
         self.aruco_lateral = lateral
+        self._last_visual_seen_time = self.aruco_receipt_time
 
     def _wheel_odom_cb(self, role, msg):
         stamp_ns = stamp_to_ns(msg.header.stamp)
@@ -247,6 +312,9 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
                 self.yaw_kalman.reset(
                     self.yaw_kalman.x, raw_value=raw[1],
                     covariance=self.yaw_kalman.P, stamp_s=raw[2])
+                self.lateral_kalman.reset(
+                    self.lateral_kalman.x, raw_value=raw[4],
+                    covariance=self.lateral_kalman.P, stamp_s=raw[2])
                 self._last_predictor_source = raw[3]
                 self.get_logger().info(
                     'raw wheel relative predictor connected and anchored')
@@ -301,21 +369,26 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
                 self._wheel_local[role])
             for role in ('front', 'rear')
         }
-        dx = world['front'][0] - world['rear'][0]
-        dy = world['front'][1] - world['rear'][1]
-        distance = math.hypot(dx, dy)
-        yaw = normalize_angle(world['front'][2] - world['rear'][2])
+        front = dict(x=world['front'][0], y=world['front'][1],
+                     theta=world['front'][2])
+        rear = dict(x=world['rear'][0], y=world['rear'][1],
+                    theta=world['rear'][2])
+        longitudinal, lateral, yaw = (
+            self.kinematics.relative_pose_in_rear_frame(front, rear))
+        distance = math.hypot(longitudinal, lateral)
         stamp_s = max(self._wheel_receipt_time.values())
-        return distance, yaw, stamp_s, 'RAW_WHEEL_ODOM'
+        return distance, yaw, stamp_s, 'RAW_WHEEL_ODOM', lateral
 
     def _relative_predictor(self, now):
         raw = self._raw_wheel_relative(now)
         if raw is not None:
             return raw
-        distance = self.kinematics.encoder_distance(self.front, self.rear)
-        yaw = normalize_angle(self.front['theta'] - self.rear['theta'])
+        longitudinal, lateral, yaw = (
+            self.kinematics.relative_pose_in_rear_frame(
+                self.front, self.rear))
+        distance = math.hypot(longitudinal, lateral)
         stamp_s = max(self.front['t'], self.rear['t'])
-        return distance, yaw, stamp_s, 'FUSED_ODOM_FALLBACK'
+        return distance, yaw, stamp_s, 'FUSED_ODOM_FALLBACK', lateral
 
     def _initialize_sync_filters(self):
         if not (self.front_ready and self.rear_ready):
@@ -327,7 +400,7 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
             return False
 
         self._anchor_raw_wheel_predictor()
-        raw_dist, raw_yaw, stamp_s, source = self._relative_predictor(
+        raw_dist, raw_yaw, stamp_s, source, raw_lateral = self._relative_predictor(
             time.monotonic())
         self.dist_kalman.reset(
             fused_dist, raw_value=raw_dist,
@@ -337,11 +410,21 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
             fused_yaw, raw_value=raw_yaw,
             covariance=self.initial_covariance_scale * self.yaw_kalman.R,
             stamp_s=stamp_s)
+        fused_lateral = self.kinematics.relative_pose_in_rear_frame(
+            self.front, self.rear)[1]
+        self.lateral_kalman.reset(
+            fused_lateral, raw_value=raw_lateral,
+            covariance=self.initial_covariance_scale * self.lateral_kalman.R,
+            stamp_s=stamp_s)
         self._aruco_consumer.reset()
-        self._aruco_gate.reset()
-        self._cctv_pair_gate.reset()
+        for gate in (*self._aruco_gates.values(),
+                     *self._cctv_pair_gates.values()):
+            gate.reset()
         self._last_cctv_pair_used = {'front': 0, 'rear': 0}
-        self._last_accepted_visual_time = None
+        initialized_at = time.monotonic()
+        self._last_visual_seen_time = None
+        self._last_correction_time = {
+            axis: initialized_at for axis in ('distance', 'lateral', 'yaw')}
         self.marker_lost_since = None
         self._last_predictor_source = source
         self.sync_filters_initialized = True
@@ -368,61 +451,72 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
             'front': front_stamp, 'rear': rear_stamp}
         front = self._cctv_pose['front']
         rear = self._cctv_pose['rear']
-        distance = math.hypot(front[0] - rear[0], front[1] - rear[1])
-        yaw = normalize_angle(front[2] - rear[2])
-        return distance, yaw
+        front_pose = dict(x=front[0], y=front[1], theta=front[2])
+        rear_pose = dict(x=rear[0], y=rear[1], theta=rear[2])
+        longitudinal, lateral, yaw = (
+            self.kinematics.relative_pose_in_rear_frame(
+                front_pose, rear_pose))
+        self._last_visual_seen_time = now
+        return math.hypot(longitudinal, lateral), lateral, yaw
 
     def _apply_visual_measurement(
-            self, *, source, distance, yaw, gate, raw_dist, raw_yaw,
-            predictor_stamp_s, now):
-        decision = gate.evaluate(
-            distance_measurement=distance,
-            yaw_measurement=yaw,
-            distance_filter=(self.dist_kalman if distance is not None else None),
-            yaw_filter=self.yaw_kalman)
-        self._last_visual_decision = decision.action
-        self._last_visual_reason = f'{source}:{decision.reason}'
-        if decision.action == 'ACCEPT':
-            if distance is not None:
-                self.dist_kalman.update(distance)
-            self.yaw_kalman.update(yaw)
-        elif decision.action == 'REACQUIRE':
-            if distance is not None:
-                self.dist_kalman.reset(
-                    distance, raw_value=raw_dist,
-                    covariance=(self.initial_covariance_scale *
-                                self.dist_kalman.R),
+            self, *, source, distance, lateral, yaw, gates,
+            raw_dist, raw_lateral, raw_yaw, predictor_stamp_s, now):
+        measurements = {
+            'distance': distance, 'lateral': lateral, 'yaw': yaw}
+        filters = {
+            'distance': self.dist_kalman,
+            'lateral': self.lateral_kalman,
+            'yaw': self.yaw_kalman}
+        raw_values = {
+            'distance': raw_dist, 'lateral': raw_lateral, 'yaw': raw_yaw}
+        accepted = []
+        reasons = []
+        for axis in ('distance', 'lateral', 'yaw'):
+            measurement = measurements[axis]
+            if measurement is None:
+                self._last_gate_decision[axis] = 'NO_MEASUREMENT'
+                continue
+            decision = gates[axis].evaluate(measurement, filters[axis])
+            self._last_gate_decision[axis] = decision.action
+            reasons.append(f'{axis}={decision.action}:{decision.reason}')
+            if decision.action == 'ACCEPT':
+                filters[axis].update(measurement)
+            elif decision.action == 'REACQUIRE':
+                filters[axis].reset(
+                    measurement, raw_value=raw_values[axis],
+                    covariance=self.initial_covariance_scale * filters[axis].R,
                     stamp_s=predictor_stamp_s)
-            self.yaw_kalman.reset(
-                yaw, raw_value=raw_yaw,
-                covariance=self.initial_covariance_scale * self.yaw_kalman.R,
-                stamp_s=predictor_stamp_s)
-            self.get_logger().warn(
-                f'{source} relative filter re-acquired after consistent '
-                'bounded observations')
-        else:
-            dist_text = ('n/a' if decision.distance_residual is None else
-                         f'{decision.distance_residual * 1000.0:+.0f}mm')
-            yaw_text = ('n/a' if decision.yaw_residual is None else
-                        f'{math.degrees(decision.yaw_residual):+.1f}deg')
-            self.get_logger().warn(
-                f'{source} innovation rejected: dist={dist_text}, '
-                f'yaw={yaw_text}, {decision.reason}',
-                throttle_duration_sec=1.0)
-            return None
+                self.get_logger().warn(
+                    f'{source} {axis} filter re-acquired after consistent '
+                    'bounded observations')
+            else:
+                residual = decision.residual
+                suffix = ('deg' if axis == 'yaw' else 'm')
+                shown = (math.degrees(residual)
+                         if axis == 'yaw' else residual)
+                self.get_logger().warn(
+                    f'{source} {axis} innovation rejected: '
+                    f'{shown:+.3f}{suffix}, {decision.reason}',
+                    throttle_duration_sec=1.0)
+                continue
+            self._last_correction_time[axis] = now
+            accepted.append(f'{axis}:{decision.action}')
 
-        self._last_accepted_visual_time = now
-        self.marker_lost_since = None
-        return f'{source}_{decision.action}'
+        self._last_visual_decision = (
+            ','.join(accepted) if accepted else 'REJECT')
+        self._last_visual_reason = f'{source}:' + ','.join(reasons)
+        return (f'{source}_' + '_'.join(accepted)) if accepted else None
 
     def _consume_visual_measurement(
-            self, now, raw_dist, raw_yaw, predictor_stamp_s):
+            self, now, raw_dist, raw_lateral, raw_yaw, predictor_stamp_s):
         aruco_age = (None if self.aruco_receipt_time is None else
                      now - self.aruco_receipt_time)
         aruco_fresh = (
             aruco_age is not None and 0.0 <= aruco_age < self.aruco_timeout and
             self.aruco_yaw is not None and self.aruco_stamp_ns is not None)
         if aruco_fresh and self._aruco_consumer.consume(self.aruco_stamp_ns):
+            self._last_visual_seen_time = self.aruco_receipt_time
             if (self.aruco_lateral is None or
                     abs(self.aruco_lateral) > self.aruco_lateral_envelope):
                 self._last_visual_decision = 'REJECT'
@@ -437,9 +531,11 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
                             else 'ARUCO_YAW'),
                     distance=(self.aruco_dist
                               if self.use_aruco_distance else None),
+                    lateral=self.aruco_lateral,
                     yaw=self.aruco_yaw,
-                    gate=self._aruco_gate,
+                    gates=self._aruco_gates,
                     raw_dist=raw_dist,
+                    raw_lateral=raw_lateral,
                     raw_yaw=raw_yaw,
                     predictor_stamp_s=predictor_stamp_s,
                     now=now)
@@ -451,9 +547,11 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
             correction = self._apply_visual_measurement(
                 source='CCTV_TOP_PAIR',
                 distance=cctv_pair[0],
-                yaw=cctv_pair[1],
-                gate=self._cctv_pair_gate,
+                lateral=cctv_pair[1],
+                yaw=cctv_pair[2],
+                gates=self._cctv_pair_gates,
                 raw_dist=raw_dist,
+                raw_lateral=raw_lateral,
                 raw_yaw=raw_yaw,
                 predictor_stamp_s=predictor_stamp_s,
                 now=now)
@@ -477,7 +575,7 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
         front_vel, rear_vel = self.kinematics.split(
             centre_vx, centre_vy, centre_omega)
 
-        raw_dist, raw_yaw, predictor_stamp_s, predictor_source = (
+        raw_dist, raw_yaw, predictor_stamp_s, predictor_source, raw_lateral = (
             self._relative_predictor(now))
         if predictor_source != self._last_predictor_source:
             # Raw wheel and fused-odom fallback have different absolute raw
@@ -489,26 +587,34 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
             self.yaw_kalman.reset(
                 self.yaw_kalman.x, raw_value=raw_yaw,
                 covariance=self.yaw_kalman.P, stamp_s=predictor_stamp_s)
+            self.lateral_kalman.reset(
+                self.lateral_kalman.x, raw_value=raw_lateral,
+                covariance=self.lateral_kalman.P,
+                stamp_s=predictor_stamp_s)
             self._last_predictor_source = predictor_source
         else:
             self.dist_kalman.predict_from_raw(raw_dist, predictor_stamp_s)
             self.yaw_kalman.predict_from_raw(raw_yaw, predictor_stamp_s)
+            self.lateral_kalman.predict_from_raw(
+                raw_lateral, predictor_stamp_s)
 
         correction = self._consume_visual_measurement(
-            now, raw_dist, raw_yaw, predictor_stamp_s)
+            now, raw_dist, raw_lateral, raw_yaw, predictor_stamp_s)
         if correction is None:
             correction = predictor_source
 
         fused_dist = self.dist_kalman.x
         relative_yaw_error = normalize_angle(self.yaw_kalman.x)
         dist_error = fused_dist - self.wheelbase
+        fused_lateral = self.lateral_kalman.x
+        lateral_error = fused_lateral - self.target_lateral
 
         visual_grace = max(self.aruco_timeout, self.cctv_pair_timeout)
-        if self._last_accepted_visual_time is None:
+        if self._last_visual_seen_time is None:
             if self.marker_lost_since is None:
                 self.marker_lost_since = now
         else:
-            visual_expired_at = self._last_accepted_visual_time + visual_grace
+            visual_expired_at = self._last_visual_seen_time + visual_grace
             if now > visual_expired_at:
                 if self.marker_lost_since is None:
                     self.marker_lost_since = visual_expired_at
@@ -519,14 +625,29 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
 
         speed_scale = 1.0
         effective_yaw_limit = self.yaw_limit
-        if self.marker_lost_since is not None:
-            lost = now - self.marker_lost_since
-            if lost > self.marker_stop:
-                self.recoverable_hold(f'MARKER_HOLD {lost:.1f}s')
+        # Visibility and correction validity are separate safety signals. A
+        # visible marker with one rejected axis is degraded, not "lost", but
+        # it must not permit indefinite fast wheel-only operation.
+        safety, safety_age, stale_axes = visual_safety_state(
+            now=now, marker_lost_since=self.marker_lost_since,
+            correction_times=self._last_correction_time,
+            slowdown_s=self.marker_slowdown, stop_s=self.marker_stop,
+            correction_grace_s=visual_grace)
+        if safety == 'MARKER_HOLD':
+            self.recoverable_hold(f'MARKER_HOLD {safety_age:.1f}s')
+            return False
+        if safety == 'MARKER_SLOW':
+            speed_scale = 0.5
+            effective_yaw_limit = self.yaw_limit * 2.0
+        if safety in ('CORRECTION_STALE', 'CORRECTION_HOLD'):
+            label = '_'.join(axis.upper() for axis in stale_axes)
+            self._err = f'{label}_{safety} {safety_age:.1f}s'
+            if safety == 'CORRECTION_HOLD':
+                self.recoverable_hold(
+                    f'{label}_CORRECTION_HOLD {safety_age:.1f}s')
                 return False
-            if lost > self.marker_slowdown:
-                speed_scale = 0.5
-                effective_yaw_limit = self.yaw_limit * 2.0
+            if safety_age > self.marker_slowdown:
+                speed_scale = min(speed_scale, 0.5)
 
         if abs(relative_yaw_error) > effective_yaw_limit:
             self.fatal_stop(
@@ -552,17 +673,16 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
         pid_dist_error = self._deadband(dist_error, self.dist_deadband)
         pid_yaw_error = self._deadband(
             relative_yaw_error, self.yaw_deadband)
+        pid_lateral_error = self._deadband(
+            lateral_error, self.lateral_deadband)
         corr_x = self.dist_pid.compute(pid_dist_error, 0.02)
+        corr_y = self.lateral_pid.compute(pid_lateral_error, 0.02)
         corr_w = self.yaw_pid.compute(pid_yaw_error, 0.02)
 
-        front_cmd = (
-            (front_vel[0] - 0.5 * corr_x) * speed_scale,
-            front_vel[1] * speed_scale,
-            (front_vel[2] - 0.5 * corr_w) * speed_scale)
-        rear_cmd = (
-            (rear_vel[0] + 0.5 * corr_x) * speed_scale,
-            rear_vel[1] * speed_scale,
-            (rear_vel[2] + 0.5 * corr_w) * speed_scale)
+        front_cmd, rear_cmd = self.kinematics.apply_relative_correction(
+            front_vel, rear_vel, corr_x, corr_y, corr_w)
+        front_cmd = tuple(value * speed_scale for value in front_cmd)
+        rear_cmd = tuple(value * speed_scale for value in rear_cmd)
 
         front_cmd, rear_cmd = self.kinematics.limit_twist_pair(
             front_cmd, rear_cmd,
@@ -572,8 +692,11 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
         self.publish_twist(self.pub_rc, rear_cmd, 'rear_base')
 
         visual_age = (
-            None if self._last_accepted_visual_time is None else
-            max(0.0, now - self._last_accepted_visual_time))
+            None if self._last_visual_seen_time is None else
+            max(0.0, now - self._last_visual_seen_time))
+        correction_ages = {
+            axis: (None if stamp is None else max(0.0, now - stamp))
+            for axis, stamp in self._last_correction_time.items()}
         self._info = {
             'mode': mode,
             'enc_dist_cm': round(raw_dist * 100.0, 2),
@@ -584,6 +707,11 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
             'aruco_lateral_cm': (None if self.aruco_lateral is None else
                                  round(self.aruco_lateral * 100.0, 2)),
             'fused_dist_cm': round(fused_dist * 100.0, 2),
+            'raw_relative_lateral': round(raw_lateral, 4),
+            'fused_relative_lateral': round(fused_lateral, 4),
+            'lateral_error': round(lateral_error, 4),
+            'lateral_correction': round(corr_y, 4),
+            'lateral_std': round(math.sqrt(self.lateral_kalman.P), 4),
             'dist_err_mm': round(dist_error * 1000.0, 1),
             'relative_yaw_err_deg': round(
                 math.degrees(relative_yaw_error), 2),
@@ -592,6 +720,14 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
             'visual_reason': self._last_visual_reason,
             'visual_age_s': (None if visual_age is None else
                              round(visual_age, 3)),
+            'visual_seen_age': (None if visual_age is None else
+                                round(visual_age, 3)),
+            'distance_gate_decision': self._last_gate_decision['distance'],
+            'lateral_gate_decision': self._last_gate_decision['lateral'],
+            'yaw_gate_decision': self._last_gate_decision['yaw'],
+            'distance_correction_age': correction_ages['distance'],
+            'lateral_correction_age': correction_ages['lateral'],
+            'yaw_correction_age': correction_ages['yaw'],
             'dist_std_mm': round(math.sqrt(self.dist_kalman.P) * 1000.0, 2),
             'yaw_std_deg': round(
                 math.degrees(math.sqrt(self.yaw_kalman.P)), 2),

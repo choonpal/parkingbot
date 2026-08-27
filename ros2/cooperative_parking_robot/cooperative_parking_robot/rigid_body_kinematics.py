@@ -37,6 +37,36 @@ class RigidBodyKinematics:
         dy = front['y'] - rear['y']
         return math.hypot(dx, dy)
 
+    @classmethod
+    def relative_pose_in_rear_frame(cls, front, rear):
+        """Return Front centre displacement expressed in ``rear_base``.
+
+        The returned lateral component follows ROS body axes: positive is to
+        the Rear robot's left. This is the same convention as ID0
+        ``/sync/relative_pose.position.y``.
+        """
+        dx = front['x'] - rear['x']
+        dy = front['y'] - rear['y']
+        longitudinal, lateral = cls.world_offset_to_body(
+            dx, dy, rear['theta'])
+        relative_yaw = math.atan2(
+            math.sin(front['theta'] - rear['theta']),
+            math.cos(front['theta'] - rear['theta']))
+        return longitudinal, lateral, relative_yaw
+
+    @staticmethod
+    def apply_relative_correction(front_velocity, rear_velocity,
+                                  corr_x, corr_y, corr_yaw):
+        """Apply symmetric Front/Rear corrections in their common body axes."""
+        return (
+            (front_velocity[0] - 0.5 * corr_x,
+             front_velocity[1] - 0.5 * corr_y,
+             front_velocity[2] - 0.5 * corr_yaw),
+            (rear_velocity[0] + 0.5 * corr_x,
+             rear_velocity[1] + 0.5 * corr_y,
+             rear_velocity[2] + 0.5 * corr_yaw),
+        )
+
     def split(self, vx, vy, omega):
         """
         중심점 속도 → Front/Rear 속도 분배

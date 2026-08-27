@@ -66,6 +66,49 @@ def test_virtual_body_rotation_splits_opposite_lateral_velocities():
         front[1], -rear[1], rel_tol=0.0, abs_tol=1e-12)
 
 
+@pytest.mark.parametrize('error', [0.04, -0.04])
+def test_lateral_correction_reduces_relative_lateral_error(error):
+    """Relative y_dot = front_vy - rear_vy near aligned yaw."""
+    kinematics = RigidBodyKinematics(0.785)
+    front, rear = kinematics.apply_relative_correction(
+        (0.0, 0.0, 0.0), (0.0, 0.0, 0.0),
+        corr_x=0.0, corr_y=error, corr_yaw=0.0)
+    relative_lateral_rate = front[1] - rear[1]
+    assert error * relative_lateral_rate < 0.0
+
+
+def test_zero_lateral_correction_inside_deadband_changes_nothing():
+    kinematics = RigidBodyKinematics(0.785)
+    error = 0.002
+    deadbanded = 0.0 if abs(error) <= 0.003 else error
+    front, rear = kinematics.apply_relative_correction(
+        (0.02, 0.01, 0.0), (0.02, 0.01, 0.0),
+        corr_x=0.0, corr_y=deadbanded, corr_yaw=0.0)
+    assert front[1] == pytest.approx(0.01)
+    assert rear[1] == pytest.approx(0.01)
+
+
+def test_relative_pose_lateral_matches_rear_body_left_positive():
+    longitudinal, lateral, yaw = RigidBodyKinematics.relative_pose_in_rear_frame(
+        {'x': 1.0, 'y': 0.1, 'theta': 0.0},
+        {'x': 0.0, 'y': 0.0, 'theta': 0.0})
+    assert longitudinal == pytest.approx(1.0)
+    assert lateral == pytest.approx(0.1)
+    assert yaw == pytest.approx(0.0)
+
+
+def test_pair_saturation_preserves_added_lateral_correction_ratio():
+    kinematics = RigidBodyKinematics(0.785)
+    front, rear = kinematics.apply_relative_correction(
+        (0.08, 0.05, 0.2), (0.08, -0.05, 0.2),
+        corr_x=0.03, corr_y=0.04, corr_yaw=0.05)
+    limited_front, limited_rear = kinematics.limit_twist_pair(
+        front, rear, linear_limit=0.05, angular_limit=0.15)
+    scales = [limited / original for limited, original in zip(
+        (*limited_front, *limited_rear), (*front, *rear)) if original != 0.0]
+    assert max(scales) == pytest.approx(min(scales))
+
+
 def test_offset_vehicle_centre_stays_fixed_during_rotation_command():
     """로봇 중점과 차량 중심이 달라도 회전 제어점은 표류하지 않는다."""
     kinematics = RigidBodyKinematics(0.70)

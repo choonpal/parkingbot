@@ -97,6 +97,25 @@ def test_relative_pose_lateral_matches_rear_body_left_positive():
     assert yaw == pytest.approx(0.0)
 
 
+def test_relative_x_is_not_euclidean_distance_when_lateral_is_nonzero():
+    relative_x, relative_y, _ = RigidBodyKinematics.relative_pose_in_rear_frame(
+        {'x': 0.785, 'y': 0.030, 'theta': 0.0},
+        {'x': 0.0, 'y': 0.0, 'theta': 0.0})
+    assert relative_x == pytest.approx(0.785)
+    assert relative_y == pytest.approx(0.030)
+    assert relative_x != pytest.approx(math.hypot(0.785, 0.030))
+
+
+def test_relative_pose_rotates_world_displacement_into_rear_frame():
+    relative_x, relative_y, relative_yaw = (
+        RigidBodyKinematics.relative_pose_in_rear_frame(
+            {'x': 0.97, 'y': 1.785, 'theta': math.pi / 2.0},
+            {'x': 1.0, 'y': 1.0, 'theta': math.pi / 2.0}))
+    assert relative_x == pytest.approx(0.785)
+    assert relative_y == pytest.approx(0.030)
+    assert relative_yaw == pytest.approx(0.0)
+
+
 def test_pair_saturation_preserves_added_lateral_correction_ratio():
     kinematics = RigidBodyKinematics(0.785)
     front, rear = kinematics.apply_relative_correction(

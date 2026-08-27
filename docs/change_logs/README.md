@@ -18,4 +18,5 @@
 
 | 날짜 | 변경 내용 | 주요 영역 |
 |---|---|---|
+| 2026-08-27 14:40 | [Production 강체 Mission Reference 및 센서 역할 분리](./2026-08-27_1440_rigid-body-mission-reference.md) | Rigid-body / Sensor Fusion / Safety |
 | 2026-08-27 13:58 | [Production 강체 lateral 폐루프 제어](./2026-08-27_1358_rigid-body-lateral-control.md) | Rigid-body / ArUco / Sensor Fusion |

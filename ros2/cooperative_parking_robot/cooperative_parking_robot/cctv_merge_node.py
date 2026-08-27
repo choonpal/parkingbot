@@ -41,7 +41,6 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import (
     DurabilityPolicy, QoSProfile, ReliabilityPolicy,
-    qos_profile_sensor_data,
 )
 from geometry_msgs.msg import Pose, PoseArray, PoseStamped
 from nav_msgs.msg import OccupancyGrid, Odometry
@@ -61,6 +60,10 @@ from cooperative_parking_robot.bev_fusion_core import (
 from cooperative_parking_robot.parking_geometry import (
     parse_registered_slots,
     slot_polygon,
+)
+from cooperative_parking_robot.latest_qos import (
+    SENSOR_LATEST_QOS,
+    STATE_LATEST_QOS,
 )
 from cooperative_parking_robot.vision_utils import directed_axis_yaw
 
@@ -361,16 +364,16 @@ class CctvMergeNode(Node):
             self.create_subscription(
                 String, topic,
                 lambda msg, c=camera_id: self.detection_cb(c, msg),
-                qos_profile_sensor_data)
+                SENSOR_LATEST_QOS)
         for role in ('front', 'rear'):
             self.create_subscription(
                 Odometry, f'/{role}/odom',
                 lambda msg, r=role: self.odom_cb(r, msg),
-                qos_profile_sensor_data)
+                SENSOR_LATEST_QOS)
         self.create_subscription(
             String, '/mission/complete', self.mission_complete_cb, 10)
         self.create_subscription(
-            String, '/fleet/state', self.fleet_state_cb, 10)
+            String, '/fleet/state', self.fleet_state_cb, STATE_LATEST_QOS)
         self.create_subscription(
             Bool, '/robot/lifted', self.lifted_cb, 10)
 
@@ -388,7 +391,7 @@ class CctvMergeNode(Node):
             String, '/parking/vehicle_spec', mission_qos)
         self.pub_vehicle_fb = self.create_publisher(
             PoseStamped, '/parking/vehicle_pose_feedback',
-            qos_profile_sensor_data)
+            SENSOR_LATEST_QOS)
         self.pub_target_ready = self.create_publisher(
             Bool, '/parking/target_ready', 10)
         self.pub_target_status = self.create_publisher(

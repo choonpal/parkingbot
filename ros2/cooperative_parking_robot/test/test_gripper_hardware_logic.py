@@ -21,7 +21,8 @@ def test_uart_protocol_parses_hardware_frames_strictly():
     assert protocol.parse('E,1,2,3,4,5') is None
     assert protocol.parse('LIFT,GRIP_DONE')['status'] == 'GRIP_DONE'
     assert protocol.parse('ACK,123.0')['value'] == '123.0'
-    assert protocol.parse('ERR,STALL,FL')['code'] == 'STALL,FL'
+    assert protocol.parse('ERR,STALL')['code'] == 'STALL'
+    assert protocol.parse('ERR,STALL,FL') is None
     left = protocol.parse('U,L,83')
     assert left == {
         'type': 'ultrasonic', 'side': 'left', 'valid': True,
@@ -104,5 +105,7 @@ def test_nominal_100mm_wheel_radius_is_consistent_across_stack():
 def test_bridge_does_not_flood_velocity_frames_after_estop():
     source = (Path(__file__).resolve().parents[1] /
               'cooperative_parking_robot/stm32_bridge_node.py').read_text()
-    assert 'if self.estop_latched:\n            # STM32는 ESTOP' in source
+    assert 'self.estop_latched or self.active_fault or self.transport_fault' \
+        in source
+    assert 'not self.zero_command_acknowledged' in source
     assert 'if msg.data and not self.estop_latched:' in source

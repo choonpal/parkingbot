@@ -84,12 +84,13 @@ def recenter_vehicle_result_boxes(
         frame_height: int,
         vehicle_class_id: int,
 ) -> int:
-    """Move vehicle box centres onto corresponding Seg mask centres in-place.
+    """Move vehicle box centres using a mutable copy of box tensor data.
 
     Ultralytics keeps ``xyxy/conf/cls`` in ``result.boxes.data``. Only the
     first four coordinates are changed; confidence, class, masks and polygons
-    are untouched. No-mask detections and non-vehicle classes remain exactly
-    as produced by the model.
+    are untouched. PyTorch inference tensors may not be mutated after leaving
+    ``InferenceMode``, so the original is never written: a normal clone/copy
+    replaces ``boxes.data`` only when a vehicle was actually recentered.
     """
     changed = 0
     wanted = int(vehicle_class_id)
@@ -103,6 +104,18 @@ def recenter_vehicle_result_boxes(
         classes = getattr(boxes, 'cls', None)
         if data is None or classes is None:
             continue
+        if hasattr(data, 'clone'):
+            # clone() while InferenceMode remains enabled produces another
+            # inference tensor. Explicitly disable it for the adapter copy.
+            try:
+                import torch
+                with torch.inference_mode(False):
+                    mutable_data = data.clone()
+            except ImportError:  # pragma: no cover - tensor implies torch
+                mutable_data = data.clone()
+        else:
+            mutable_data = np.array(data, copy=True)
+        result_changed = 0
         count = min(len(boxes), len(masks_xy))
         for index in range(count):
             class_value = classes[index]
@@ -121,6 +134,9 @@ def recenter_vehicle_result_boxes(
             if not used_mask:
                 continue
             for coordinate_index, value in enumerate(replacement):
-                data[index, coordinate_index] = value
+                mutable_data[index, coordinate_index] = value
             changed += 1
+            result_changed += 1
+        if result_changed:
+            boxes.data = mutable_data
     return changed

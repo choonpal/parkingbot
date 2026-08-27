@@ -35,6 +35,10 @@ from cooperative_parking_robot.freshness import (
 from cooperative_parking_robot.loaded_footprint import (
     compute_loaded_footprint,
 )
+from cooperative_parking_robot.latest_qos import (
+    SENSOR_LATEST_QOS,
+    STATE_LATEST_QOS,
+)
 from cooperative_parking_robot.vehicle_entry import (
     MIN_INTER_ROBOT_GAP_M,
     approach_longitudinal,
@@ -370,13 +374,15 @@ class FleetManagerNode(Node):
         self.create_subscription(
             String, '/sync/error_state', self.sync_status_cb, 10)
         self.create_subscription(
-            Odometry, '/front/odom', self.front_odom_cb, 10)
+            Odometry, '/front/odom', self.front_odom_cb, SENSOR_LATEST_QOS)
         self.create_subscription(
-            Odometry, '/rear/odom', self.rear_odom_cb, 10)
+            Odometry, '/rear/odom', self.rear_odom_cb, SENSOR_LATEST_QOS)
         self.create_subscription(
-            String, '/front/robot_state', self.front_state_cb, 10)
+            String, '/front/robot_state', self.front_state_cb,
+            STATE_LATEST_QOS)
         self.create_subscription(
-            String, '/rear/robot_state', self.rear_state_cb, 10)
+            String, '/rear/robot_state', self.rear_state_cb,
+            STATE_LATEST_QOS)
         self.create_subscription(
             String, '/front/motion_fault', self.front_fault_cb, 10)
         self.create_subscription(
@@ -385,7 +391,8 @@ class FleetManagerNode(Node):
         # 발행
         self.pub_waypoints = self.create_publisher(
             Path, '/virtual_robot/waypoints', self.mission_qos)
-        self.pub_state = self.create_publisher(String, '/fleet/state', 10)
+        self.pub_state = self.create_publisher(
+            String, '/fleet/state', STATE_LATEST_QOS)
         self.pub_slot_pose = self.create_publisher(
             PoseStamped, '/parking/slot_pose', self.mission_qos)
         self.pub_target_pose = self.create_publisher(

@@ -26,11 +26,14 @@ from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import (
     DurabilityPolicy, QoSProfile, ReliabilityPolicy,
-    qos_profile_sensor_data,
 )
 from std_msgs.msg import Bool, Float64, String
 
 from cooperative_parking_robot.command_qos import CMD_VEL_QOS
+from cooperative_parking_robot.latest_qos import (
+    SENSOR_LATEST_QOS,
+    STATE_LATEST_QOS,
+)
 from cooperative_parking_robot.vehicle_entry import (
     DEFAULT_WHEELBASE_M,
     MIN_INTER_ROBOT_GAP_M,
@@ -288,16 +291,17 @@ class IndividualMoveNode(Node):
         )
 
         self.create_subscription(
-            String, f"/{self.role}/robot_state", self.state_cb, 10)
+            String, f"/{self.role}/robot_state", self.state_cb,
+            STATE_LATEST_QOS)
         self.create_subscription(
             String, f"/{self.other_role}/robot_state",
-            self.peer_state_cb, 10)
+            self.peer_state_cb, STATE_LATEST_QOS)
         self.create_subscription(
             String, f"/{self.other_role}/motion_phase",
             self.peer_phase_cb, 10)
         self.create_subscription(
             Odometry, f"/{self.role}/odom", self.odom_cb,
-            qos_profile_sensor_data)
+            SENSOR_LATEST_QOS)
         self.create_subscription(
             PoseStamped, "/parking/target_pose", self.target_cb, 10)
         self.create_subscription(
@@ -312,19 +316,19 @@ class IndividualMoveNode(Node):
             Float64, f"/{self.role}/wheel_center_s", self.center_cb, 10)
         self.create_subscription(
             Float64, f"/{self.role}/wheel_lateral_offset",
-            self.us_lateral_cb, qos_profile_sensor_data)
+            self.us_lateral_cb, SENSOR_LATEST_QOS)
         self.create_subscription(
             Bool, f"/{self.role}/wheel_lateral_valid",
-            self.us_lateral_valid_cb, qos_profile_sensor_data)
+            self.us_lateral_valid_cb, SENSOR_LATEST_QOS)
         self.create_subscription(
             PoseStamped, "/sync/relative_pose", self.relative_pose_cb,
-            qos_profile_sensor_data)
+            SENSOR_LATEST_QOS)
         self.create_subscription(
             Bool, "/sync/marker_visible", self.relative_marker_cb,
-            qos_profile_sensor_data)
+            SENSOR_LATEST_QOS)
         self.create_subscription(
             Bool, f"/{self.role}/cctv_marker_visible", self.top_marker_cb,
-            qos_profile_sensor_data)
+            SENSOR_LATEST_QOS)
         if self.is_front:
             self.create_subscription(
                 Bool, "/rear/approach_done", self.rear_approach_cb, 10)

@@ -2,10 +2,12 @@
 """RPi와 STM32 사이의 줄 단위 UART 프로토콜.
 
 RPi → STM32 (기존 단일문자 시험 명령과 충돌하지 않도록 @ prefix 사용)
+  @HELLO,2,session_id
   @V,vx,vy,w
+  @V,0.000,0.000,0.000,session_id  (startup command-channel probe)
   @S,attach,pulse1_us,pulse2_us
   @S,grip | @S,release
-  @HB,timestamp
+  @HB,session_id:sequence
   @ESTOP
 
 STM32 → RPi
@@ -21,11 +23,24 @@ RPi는 이 프레임을 sensor_msgs/Range로 변환하고, 바퀴 에지·중심
 ultrasonic_edge_node에서 수행한다.
 """
 
+import math
+import re
+
 
 # STM32 BAD_SERVO_ATTACH guard와 동일한 hobby-servo pulse 계약.
 # 실차 open pulse가 이 범위의 양끝을 사용한다.
 SERVO_PULSE_MIN_US = 400
 SERVO_PULSE_MAX_US = 2600
+
+# Version 2 means that HELLO is mandatory, HB ACKs are session-bound, and the
+# tokenized startup zero-velocity frame receives ACK,V:<session_id>.
+PROTOCOL_VERSION = 2
+UART_BAUD_RATE = 115200
+PROTOCOL_CAPABILITIES = frozenset({
+    'SESSION_HELLO', 'SESSION_HEARTBEAT_ACK', 'ZERO_V_ACK', 'SERVO_ATTACH',
+})
+SESSION_ID_PATTERN = re.compile(r'^[A-Za-z0-9_-]{8,16}$')
+ACK_TOKEN_PATTERN = re.compile(r'^[A-Za-z0-9_.:-]{1,48}$')
 
 
 class UartProtocol:
@@ -33,6 +48,31 @@ class UartProtocol:
 
     def encode_velocity(self, vx, vy, w):
         return f"@V,{vx:.3f},{vy:.3f},{w:.3f}\n"
+
+    @staticmethod
+    def validate_session_id(session_id):
+        if not isinstance(session_id, str) or not SESSION_ID_PATTERN.fullmatch(
+                session_id):
+            raise ValueError(
+                'session_id must be 8-16 ASCII letters, digits, _ or -')
+        return session_id
+
+    def encode_hello(self, session_id):
+        session_id = self.validate_session_id(session_id)
+        return f"@HELLO,{PROTOCOL_VERSION},{session_id}\n"
+
+    def hello_ack_value(self, session_id):
+        session_id = self.validate_session_id(session_id)
+        return f"HELLO:{PROTOCOL_VERSION}:{session_id}"
+
+    def encode_zero_velocity(self, session_id):
+        """Initialize the command watchdog and request a session-bound ACK."""
+        session_id = self.validate_session_id(session_id)
+        return f"@V,0.000,0.000,0.000,{session_id}\n"
+
+    def zero_velocity_ack_value(self, session_id):
+        session_id = self.validate_session_id(session_id)
+        return f"V:{session_id}"
 
     def encode_servo(self, action):
         if action not in ('grip', 'release'):
@@ -53,7 +93,16 @@ class UartProtocol:
         return f"@S,attach,{pulse1},{pulse2}\n"
 
     def encode_heartbeat(self, timestamp):
-        return f"@HB,{timestamp:.3f}\n"
+        if isinstance(timestamp, str):
+            if not ACK_TOKEN_PATTERN.fullmatch(timestamp):
+                raise ValueError('heartbeat token contains invalid characters')
+            token = timestamp
+        else:
+            value = float(timestamp)
+            if not math.isfinite(value):
+                raise ValueError('heartbeat timestamp must be finite')
+            token = f'{value:.3f}'
+        return f"@HB,{token}\n"
 
     def encode_estop(self):
         return "@ESTOP\n"
@@ -105,15 +154,15 @@ class UartProtocol:
             }
         if tag == 'LIFT' and len(parts) == 2 and parts[1]:
             return {'type': 'lift', 'status': parts[1]}
-        if tag == 'ACK':
+        if tag == 'ACK' and len(parts) == 2 and parts[1]:
             return {
                 'type': 'ack',
-                'value': parts[1] if len(parts) > 1 else '',
+                'value': parts[1],
             }
-        if tag == 'ERR':
+        if tag == 'ERR' and len(parts) == 2 and parts[1]:
             return {
                 'type': 'error',
-                'code': ','.join(parts[1:]) if len(parts) > 1 else '?',
+                'code': parts[1],
             }
         # 실차 수동 시험기와 공유하는 14-field 진단 telemetry.
         if tag == 'T' and len(parts) == 14 and len(parts[1]) == 1:

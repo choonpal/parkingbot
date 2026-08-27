@@ -87,7 +87,8 @@ def test_complete_merge_preserves_aruco_and_ekf_runtime_fixes():
     tracker = (ROOT / 'cooperative_parking_robot' /
                'aruco_tracker_node.py').read_text(encoding='utf-8')
     assert 'DetectorParameters_create' in aruco
-    assert 'ReliabilityPolicy.RELIABLE' in fusion
+    assert 'SENSOR_LATEST_QOS' in fusion
+    assert 'depth=20' not in fusion
     assert 'yaw_sign' in tracker
     assert 'gray_gain' in tracker
 

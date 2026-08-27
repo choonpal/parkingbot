@@ -27,18 +27,25 @@ WiFi 지연 대비 (Master→Rear cmd_vel이 WiFi 경유):
   /{role}/ultrasonic_left|right (Range) ← UART "U,L|R,<mm|TIMEOUT>"
 """
 
+from collections import deque
+import math
+import secrets
+import time
+
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
 from geometry_msgs.msg import TwistStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Range
 from std_msgs.msg import String, Bool
-import math
-import time
 
 from cooperative_parking_robot.command_qos import CMD_VEL_QOS
-from cooperative_parking_robot.uart_protocol import UartProtocol
+from cooperative_parking_robot.latest_qos import (
+    SAFETY_STATE_QOS,
+    SENSOR_LATEST_QOS,
+    STATE_LATEST_QOS,
+)
+from cooperative_parking_robot.uart_protocol import UART_BAUD_RATE, UartProtocol
 from cooperative_parking_robot.encoder_odometry import EncoderOdometry
 from cooperative_parking_robot.freshness import StampGate, stamp_to_ns
 from cooperative_parking_robot.hardware_profile import (
@@ -86,6 +93,11 @@ class Stm32BridgeNode(Node):
         self.declare_parameter('clock_reject_fault_count', 3)
         # ACK가 유실되어도 UART를 flood하지 않는 attach 재시도 주기.
         self.declare_parameter('servo_attach_retry_interval_s', 0.75)
+        self.declare_parameter('hello_retry_interval_s', 0.25)
+        self.declare_parameter('hello_handshake_timeout_s', 2.0)
+        self.declare_parameter('heartbeat_ack_timeout_s', 0.30)
+        self.declare_parameter('uart_frame_fault_count', 3)
+        self.declare_parameter('uart_frame_fault_window_s', 1.0)
 
         self.role = self.get_parameter('role').value
         if self.role not in ('front', 'rear'):
@@ -102,9 +114,32 @@ class Stm32BridgeNode(Node):
         if self.servo_attach_retry_interval < 0.5:
             raise ValueError(
                 'servo_attach_retry_interval_s must be at least 0.5')
+        self.hello_retry_interval = float(
+            self.get_parameter('hello_retry_interval_s').value)
+        self.hello_handshake_timeout = float(
+            self.get_parameter('hello_handshake_timeout_s').value)
+        self.heartbeat_ack_timeout = float(
+            self.get_parameter('heartbeat_ack_timeout_s').value)
+        self.uart_frame_fault_count = int(
+            self.get_parameter('uart_frame_fault_count').value)
+        self.uart_frame_fault_window = float(
+            self.get_parameter('uart_frame_fault_window_s').value)
+        if (self.hello_retry_interval <= 0.0 or
+                self.hello_handshake_timeout <= self.hello_retry_interval):
+            raise ValueError('invalid HELLO retry/timeout parameters')
+        if not 0.0 < self.heartbeat_ack_timeout <= 0.30:
+            raise ValueError(
+                'heartbeat_ack_timeout_s must be in (0, STM32 0.30s]')
+        if (self.uart_frame_fault_count <= 0 or
+                self.uart_frame_fault_window <= 0.0):
+            raise ValueError('invalid UART frame fault threshold')
         self.max_linear = float(self.get_parameter('max_linear_mps').value)
         self.max_angular = float(self.get_parameter('max_angular_rps').value)
         self.protocol = UartProtocol()
+        self.serial_baud = int(self.get_parameter('serial_baud').value)
+        if self.serial_baud != UART_BAUD_RATE:
+            raise ValueError(
+                f'serial_baud must match firmware ({UART_BAUD_RATE})')
         self.ultrasonic_min_range = float(
             self.get_parameter('ultrasonic_min_range_m').value)
         self.ultrasonic_max_range = float(
@@ -144,14 +179,28 @@ class Stm32BridgeNode(Node):
         # 되돌아가지 않고 0속도를 유지한다.
         self.command_arbiter = VelocityCommandArbiter(
             manual_timeout_s=self.command_source_timeout)
-        self.last_ack_time = 0.0
-        self.last_ultrasonic_frame = {'left': 0.0, 'right': 0.0}
+        self.session_id = secrets.token_hex(8)
+        self.hello_started_at = time.monotonic()
+        self.last_hello_request_time = None
+        self.hello_acknowledged = False
+        self.heartbeat_sequence = 0
+        self.outstanding_heartbeats = {}
+        self.last_heartbeat_ack_time = 0.0
+        self.last_zero_request_time = None
+        self.zero_command_sent = False
+        self.zero_command_acknowledged = False
+        self.previous_session_faults = []
+        self.active_fault = None
+        self.transport_fault = None
+        self.invalid_frame_times = deque()
+        self.last_ultrasonic_valid = {'left': 0.0, 'right': 0.0}
         self.ultrasonic_stale_reported = False
         self.estop_latched = False
         # 실제 배선 감지가 아니라 STM32 RAM과 RPi pulse 기준이
         # ACK,SERVO_ATTACH로 동기화됐는지를 나타내는 protocol 상태.
         self.servo_attached = False
         self.servo_attach_blocked = False
+        self.servo_attach_requested = False
         self.last_servo_attach_request_time = None
         self.hardware_ready = False
         # non-blocking serial.readline()은 newline 도착 전 부분 프레임을
@@ -175,9 +224,10 @@ class Stm32BridgeNode(Node):
             try:
                 self.ser = serial.Serial(
                     self.get_parameter('serial_port').value,
-                    self.get_parameter('serial_baud').value,
+                    self.serial_baud,
                     timeout=0.0,
-                    write_timeout=0.05)
+                    write_timeout=0.05,
+                    exclusive=True)
                 self.ser.reset_input_buffer()
                 self.get_logger().info(f'[{self.role}] STM32 연결')
             except Exception as e:
@@ -204,17 +254,17 @@ class Stm32BridgeNode(Node):
             Bool, f'/{self.role}/manual_enable',
             self.manual_enable_cb, 10)
         self.create_subscription(Bool, '/emergency_stop',
-                                 self.estop_cb, 10)
+                                 self.estop_cb, STATE_LATEST_QOS)
 
         # ===== 발행 =====
         self.pub_odom = self.create_publisher(
-            Odometry, f'/{self.role}/wheel_odom', qos_profile_sensor_data)
+            Odometry, f'/{self.role}/wheel_odom', SENSOR_LATEST_QOS)
         self.pub_lift = self.create_publisher(
             String, f'/{self.role}/lift_status', 10)
         self.pub_hw = self.create_publisher(
-            String, f'/{self.role}/hardware_status', 10)
+            String, f'/{self.role}/hardware_status', SAFETY_STATE_QOS)
         self.pub_ready = self.create_publisher(
-            Bool, f'/{self.role}/hardware_ready', 10)
+            Bool, f'/{self.role}/hardware_ready', SAFETY_STATE_QOS)
         # 수동 제어 요청이 실제로 이 bridge까지 도착했는지 시험 제어기가
         # 확인할 수 있는 명시적 ACK.  주기 발행하므로 늦게 연결된 peer도 받는다.
         self.pub_manual_active = self.create_publisher(
@@ -222,7 +272,7 @@ class Stm32BridgeNode(Node):
         self.pub_ultrasonic = {
             side: self.create_publisher(
                 Range, f'/{self.role}/ultrasonic_{side}',
-                qos_profile_sensor_data)
+                SENSOR_LATEST_QOS)
             for side in ('left', 'right')
         }
         self.pub_ultrasonic_status = self.create_publisher(
@@ -237,19 +287,12 @@ class Stm32BridgeNode(Node):
         self.create_timer(0.02, self.send_velocity_loop)  # 속도 송신 50Hz (감쇠 포함)
         self.create_timer(0.1, self.send_heartbeat)     # heartbeat 10Hz
         self.create_timer(0.1, self.send_servo_attach)  # bounded startup retry
+        self.create_timer(0.05, self.startup_handshake_tick)
         self.create_timer(0.2, self.publish_hardware_state)
 
-        # serial open 은 DTR 을 토글해 STM32 를 리셋시킨다. 펌웨어는 그
-        # 순간부터 heartbeat 감시(300 ms)를 시작하는데, heartbeat timer 의
-        # 첫 발화는 rclpy.spin() 이후 100 ms 다. 그 사이 노드 초기화와 servo
-        # attach 왕복이 끼면 300 ms 를 넘겨 HEARTBEAT_TIMEOUT 이 한 번 뜬다.
-        # 그 한 번이 state_machine 을 영구 FAULT 로 만들고 FAULT 가 ESTOP 을
-        # latch 시킨다. 타이머를 기다리지 말고 여기서 먼저 한 번 보낸다.
-        self.send_heartbeat()
-
-        # serial open 직후 먼저 attach를 요청한다. 이후 timer는
-        # ACK 유실 때만 제한된 주기로 재시도하고 ACK 후 멈춘다.
-        self.send_servo_attach()
+        # DTR reset 여부와 관계없이 HELLO가 Linux communication session의
+        # 유일한 경계다. HB/V/servo는 matching HELLO ACK 전에는 보내지 않는다.
+        self.send_hello()
 
         self.get_logger().info(
             f'stm32_bridge_node 시작 [{self.role}] '
@@ -334,7 +377,9 @@ class Stm32BridgeNode(Node):
 
     def send_velocity_loop(self):
         """50Hz로 STM32에 속도 송신. cmd가 오래되면 감쇠."""
-        if self.estop_latched:
+        if (self.estop_latched or self.active_fault or self.transport_fault or
+                not self.zero_command_acknowledged or
+                not self._heartbeat_fresh(time.monotonic())):
             # STM32는 ESTOP을 전원 재인가까지 latch한다. 이후 V 프레임을
             # 계속 보내면 ESTOP_LATCHED 오류만 반복되므로 송신을 멈춘다.
             return
@@ -354,7 +399,7 @@ class Stm32BridgeNode(Node):
         self._send_grip(msg.data)
 
     def _send_grip(self, action):
-        if self.estop_latched:
+        if self.estop_latched or self.active_fault or self.transport_fault:
             self.get_logger().warn('ESTOP latch 상태에서 그리퍼 명령 거부')
             return
         if not self.servo_attached:
@@ -373,7 +418,10 @@ class Stm32BridgeNode(Node):
     def send_servo_attach(self):
         """Request STM32/RPi servo pulse synchronization at a bounded rate."""
         if (not self.ser or self.servo_attached or self.estop_latched or
-                self.servo_attach_blocked):
+                self.servo_attach_blocked or self.active_fault or
+                self.transport_fault or not self.hello_acknowledged or
+                not self.zero_command_acknowledged or
+                not self._heartbeat_fresh(time.monotonic())):
             return
         now = time.monotonic()
         if (self.last_servo_attach_request_time is not None and
@@ -384,6 +432,7 @@ class Stm32BridgeNode(Node):
         pulse1, pulse2 = self.servo_attach_pulses
         cmd = self.protocol.encode_servo_attach(pulse1, pulse2)
         if self._write(cmd):
+            self.servo_attach_requested = True
             self.get_logger().info(
                 f'[{self.role}] servo attach 요청 '
                 f'hardware={self.hardware_profile} '
@@ -410,17 +459,116 @@ class Stm32BridgeNode(Node):
             self._write(self.protocol.encode_estop())
             self.publish_status('ESTOP')
 
+    def send_hello(self):
+        """Send the versioned session boundary; no other startup command leads."""
+        if (not self.ser or self.hello_acknowledged or self.estop_latched or
+                self.active_fault or self.transport_fault):
+            return
+        now = time.monotonic()
+        if (self.last_hello_request_time is not None and
+                now - self.last_hello_request_time < self.hello_retry_interval):
+            return
+        self.last_hello_request_time = now
+        if self._write(self.protocol.encode_hello(self.session_id)):
+            self.publish_status(
+                f'INFO,HELLO_SENT:{self.protocol.hello_ack_value(self.session_id)}')
+
+    def send_zero_velocity_probe(self):
+        """Initialize the MCU command watchdog with a session-bound zero ACK."""
+        now = time.monotonic()
+        if (not self.ser or not self.hello_acknowledged or
+                not self._heartbeat_fresh(now) or
+                self.zero_command_acknowledged or self.estop_latched or
+                self.active_fault or self.transport_fault):
+            return
+        if (self.last_zero_request_time is not None and
+                now - self.last_zero_request_time < 0.20):
+            return
+        self.last_zero_request_time = now
+        if self._write(self.protocol.encode_zero_velocity(self.session_id)):
+            self.zero_command_sent = True
+
+    def startup_handshake_tick(self):
+        """Advance only through matching, session-bound startup evidence."""
+        if (not self.ser or self.estop_latched or self.active_fault or
+                self.transport_fault):
+            return
+        now = time.monotonic()
+        if not self.hello_acknowledged:
+            if now - self.hello_started_at > self.hello_handshake_timeout:
+                self._latch_fault('ERR,PROTOCOL_HANDSHAKE_TIMEOUT')
+                return
+            self.send_hello()
+            return
+        if not self._heartbeat_fresh(now):
+            self.send_heartbeat()
+            return
+        if not self.zero_command_acknowledged:
+            self.send_zero_velocity_probe()
+            return
+        if not self.servo_attached:
+            self.send_servo_attach()
+
     def send_heartbeat(self):
-        self._write(self.protocol.encode_heartbeat(time.monotonic()))
+        if (not self.ser or not self.hello_acknowledged or
+                self.estop_latched or self.active_fault or
+                self.transport_fault):
+            return
+        self.heartbeat_sequence += 1
+        token = f'{self.session_id}:{self.heartbeat_sequence}'
+        sent_at = time.monotonic()
+        if self._write(self.protocol.encode_heartbeat(token)):
+            self.outstanding_heartbeats[token] = sent_at
+            if len(self.outstanding_heartbeats) > 8:
+                oldest = min(
+                    self.outstanding_heartbeats,
+                    key=self.outstanding_heartbeats.get)
+                del self.outstanding_heartbeats[oldest]
+
+    def _heartbeat_fresh(self, now=None):
+        now = time.monotonic() if now is None else now
+        return (self.hello_acknowledged and
+                self.last_heartbeat_ack_time > 0.0 and
+                now - self.last_heartbeat_ack_time <
+                self.heartbeat_ack_timeout)
+
+    def _latch_fault(self, status, *, transport=False):
+        if not status.startswith(('ERR,', 'ESTOP')):
+            raise ValueError('latched hardware status must be ERR or ESTOP')
+        if transport:
+            self.transport_fault = status
+        if self.active_fault is None:
+            self.active_fault = status
+        self.hardware_ready = False
+        self.servo_attached = False
+        self.servo_attach_blocked = True
+        self.command_arbiter.force_zero(time.monotonic())
+        self.publish_status(status)
+
+    def _latch_transport_fault(self, status, detail):
+        self.get_logger().error(f'{status}: {detail}')
+        self._latch_fault(status, transport=True)
+        serial_handle = self.ser
+        self.ser = None
+        if serial_handle is not None and hasattr(serial_handle, 'close'):
+            try:
+                serial_handle.close()
+            except Exception:
+                pass
 
     def _write(self, cmd):
         if self.ser:
             try:
-                self.ser.write(cmd.encode())
+                payload = cmd.encode('ascii')
+                written = self.ser.write(payload)
+                if written != len(payload):
+                    self._latch_transport_fault(
+                        'ERR,UART_PARTIAL_WRITE',
+                        f'wrote {written}/{len(payload)} bytes')
+                    return False
                 return True
             except Exception as e:
-                self.get_logger().error(f'UART 쓰기 실패: {e}')
-                self.publish_status(f'ERR,UART_WRITE:{e}')
+                self._latch_transport_fault('ERR,UART_WRITE', str(e))
         return False
 
     # ===== STM32 → ROS2 =====
@@ -433,14 +581,14 @@ class Stm32BridgeNode(Node):
             if waiting > 0:
                 self.rx_buffer.extend(self.ser.read(min(waiting, 1024)))
         except Exception as exc:
-            self.get_logger().error(f'UART 읽기 실패: {exc}')
-            self.publish_status(f'ERR,UART_READ:{exc}')
+            self._latch_transport_fault('ERR,UART_READ', str(exc))
             return
 
         if len(self.rx_buffer) > self.max_rx_buffer:
             self.rx_buffer.clear()
-            self.get_logger().error('UART RX buffer overflow — buffer reset')
-            self.publish_status('ERR,UART_RX_OVERFLOW')
+            self._latch_transport_fault(
+                'ERR,UART_RX_OVERFLOW',
+                f'buffer exceeded {self.max_rx_buffer} bytes')
             return
 
         processed = 0
@@ -451,19 +599,39 @@ class Stm32BridgeNode(Node):
             raw = bytes(self.rx_buffer[:newline])
             del self.rx_buffer[:newline + 1]
             processed += 1
+            if len(raw) > 256:
+                self._record_invalid_frame('oversize frame')
+                continue
             try:
                 line = raw.rstrip(b'\r').decode('ascii', errors='strict').strip()
             except UnicodeDecodeError:
-                self.get_logger().warn('비 ASCII STM32 frame 폐기')
+                self._record_invalid_frame('non-ASCII frame')
                 continue
             if not line:
                 continue
             self._handle_serial_line(line)
+            if self.transport_fault:
+                break
+
+    def _record_invalid_frame(self, reason):
+        now = time.monotonic()
+        self.invalid_frame_times.append(now)
+        while (self.invalid_frame_times and
+               now - self.invalid_frame_times[0] >
+               self.uart_frame_fault_window):
+            self.invalid_frame_times.popleft()
+        self.get_logger().warn(
+            f'잘못된 STM32 frame: {reason} '
+            f'({len(self.invalid_frame_times)}/'
+            f'{self.uart_frame_fault_count})')
+        if len(self.invalid_frame_times) >= self.uart_frame_fault_count:
+            self._latch_transport_fault(
+                'ERR,UART_FRAME_CORRUPTION', reason)
 
     def _handle_serial_line(self, line):
         parsed = self.protocol.parse(line)
         if parsed is None:
-            self.get_logger().warn(f'잘못된 STM32 frame 폐기: {line[:48]}')
+            self._record_invalid_frame(line[:80])
             return
 
         if parsed['type'] == 'encoder':
@@ -478,43 +646,98 @@ class Stm32BridgeNode(Node):
         elif parsed['type'] == 'lift':
             self.pub_lift.publish(String(data=parsed['status']))
         elif parsed['type'] == 'ack':
-            self.last_ack_time = time.monotonic()
-            if parsed['value'] == 'SERVO_ATTACH':
-                if self.estop_latched or self.servo_attach_blocked:
-                    self.get_logger().warn(
-                        'ESTOP/attach blocked 상태의 '
-                        'ACK,SERVO_ATTACH 무시')
-                elif not self.servo_attached:
-                    self.servo_attached = True
-                    self.get_logger().info(
-                        f'[{self.role}] ACK,SERVO_ATTACH; '
-                        'servo_attached=true')
-            self.publish_status(f"ACK,{parsed['value']}")
+            self._handle_ack(parsed['value'])
         elif parsed['type'] == 'error':
-            if parsed['code'] == 'ESTOP_LATCHED':
-                first_report = not self.estop_latched
-                self.estop_latched = True
-                self.servo_attached = False
-                self.servo_attach_blocked = True
-                self.command_arbiter.force_zero(time.monotonic())
-                if first_report:
-                    self.get_logger().error(
-                        f'[{self.role}] STM32 ESTOP latch; servo attach '
-                        '재시도 중단. 수동 power-cycle/reset 후 '
-                        'bridge restart 필요')
-                    self.publish_status(
-                        'WARN,ESTOP_LATCHED_POWER_CYCLE_REQUIRED')
-            elif parsed['code'] == 'BAD_SERVO_ATTACH':
-                # 구성 오류를 주기적으로 반복해 실차 UART와
-                # state machine을 연속 fault로 만들지 않는다.
-                self.servo_attached = False
-                self.servo_attach_blocked = True
-            self.get_logger().error(f"STM32 ERR: {parsed['code']}")
-            self.publish_status(f"ERR,{parsed['code']}")
+            self._handle_error(parsed['code'])
         elif parsed['type'] == 'telemetry':
             # E/U frame가 ROS 데이터의 기준이며 T는 수동 시험기용 진단값이다.
             # 바퀴별로 목표를 못 따라가는 모터를 찾을 수 있도록 그대로 발행한다.
             self.publish_motor_diagnostics(parsed)
+
+    def _handle_ack(self, value):
+        now = time.monotonic()
+        expected_hello = self.protocol.hello_ack_value(self.session_id)
+        if value.startswith('HELLO:'):
+            if (value != expected_hello or self.active_fault or
+                    self.estop_latched):
+                self.get_logger().warn(
+                    f'current session과 불일치하는 HELLO ACK 무시: {value}')
+                self.publish_status('WARN,IGNORED_HELLO_ACK')
+                return
+            if not self.hello_acknowledged:
+                self.hello_acknowledged = True
+                self.get_logger().info(
+                    f'[{self.role}] protocol v2 HELLO ACK '
+                    f'session={self.session_id}')
+                self.publish_status(f'ACK,{value}')
+                for code in self.previous_session_faults:
+                    self.publish_status(
+                        f'INFO,PREVIOUS_SESSION_FAULT:{code}')
+                self.previous_session_faults.clear()
+                self.send_heartbeat()
+            return
+
+        sent_at = self.outstanding_heartbeats.pop(value, None)
+        if sent_at is not None:
+            if (not self.hello_acknowledged or
+                    now - sent_at >= self.heartbeat_ack_timeout or
+                    self.active_fault or self.estop_latched):
+                self.get_logger().warn(f'stale heartbeat ACK 무시: {value}')
+                return
+            self.last_heartbeat_ack_time = now
+            self.publish_status(f'ACK,{value}')
+            self.send_zero_velocity_probe()
+            return
+
+        if value == self.protocol.zero_velocity_ack_value(self.session_id):
+            if (not self.zero_command_sent or not self._heartbeat_fresh(now) or
+                    self.active_fault or self.estop_latched):
+                self.get_logger().warn('startup zero command ACK 무시')
+                return
+            self.zero_command_acknowledged = True
+            self.publish_status(f'ACK,{value}')
+            self.send_servo_attach()
+            return
+
+        if value == 'SERVO_ATTACH':
+            if (not self.servo_attach_requested or
+                    not self.zero_command_acknowledged or
+                    not self._heartbeat_fresh(now) or self.estop_latched or
+                    self.servo_attach_blocked or self.active_fault):
+                self.get_logger().warn(
+                    'startup gate 이전 ACK,SERVO_ATTACH 무시')
+                return
+            if not self.servo_attached:
+                self.servo_attached = True
+                self.get_logger().info(
+                    f'[{self.role}] ACK,SERVO_ATTACH; servo_attached=true')
+            self.publish_status('ACK,SERVO_ATTACH')
+            return
+
+        # Servo/action ACKs remain observable but are never heartbeat evidence.
+        self.publish_status(f'ACK,{value}')
+
+    def _handle_error(self, code):
+        communication_timeouts = {
+            'HEARTBEAT_TIMEOUT', 'COMMAND_TIMEOUT'}
+        if not self.hello_acknowledged and code in communication_timeouts:
+            if code not in self.previous_session_faults:
+                self.previous_session_faults.append(code)
+            self.get_logger().warn(
+                f'[{self.role}] 이전 communication session fault 격리: {code}')
+            return
+
+        status = f'ERR,{code}'
+        self.get_logger().error(f'STM32 ERR: {code}')
+        if code == 'ESTOP_LATCHED':
+            self.estop_latched = True
+            self.get_logger().error(
+                f'[{self.role}] STM32 ESTOP latch; 수동 power-cycle/reset 후 '
+                'bridge restart 필요')
+        if code in {'LIFT_WHILE_MOVING', 'SERVO_NOT_ATTACHED'}:
+            self.publish_status(status)
+            return
+        self._latch_fault(status)
 
     def publish_motor_diagnostics(self, parsed):
         wheels = ('FL', 'FR', 'RL', 'RR')
@@ -530,7 +753,6 @@ class Stm32BridgeNode(Node):
     def publish_ultrasonic(self, parsed):
         side = parsed['side']
         now = time.monotonic()
-        self.last_ultrasonic_frame[side] = now
 
         msg = Range()
         msg.header.stamp = self.get_clock().now().to_msg()
@@ -541,6 +763,7 @@ class Stm32BridgeNode(Node):
         msg.max_range = self.ultrasonic_max_range
 
         if not parsed['valid']:
+            self.last_ultrasonic_valid[side] = 0.0
             msg.range = float('inf')
             status = f'{side},TIMEOUT'
         else:
@@ -554,6 +777,8 @@ class Stm32BridgeNode(Node):
             else:
                 msg.range = distance
                 status = f'{side},OK,{distance:.3f}'
+                if self.hello_acknowledged:
+                    self.last_ultrasonic_valid[side] = now
         self.pub_ultrasonic[side].publish(msg)
         self.pub_ultrasonic_status.publish(String(data=status))
 
@@ -562,18 +787,32 @@ class Stm32BridgeNode(Node):
         msg.data = value
         self.pub_hw.publish(msg)
 
+    def hardware_ready_conditions(self, now=None):
+        """Return the single authoritative fail-closed readiness gate."""
+        now = time.monotonic() if now is None else now
+        serial_connected = (
+            self.ser is not None and getattr(self.ser, 'is_open', True))
+        ultrasonic_fresh = all(
+            stamp > 0.0 and now - stamp < self.ultrasonic_frame_timeout
+            for stamp in self.last_ultrasonic_valid.values())
+        if not self.require_ultrasonic_for_ready:
+            ultrasonic_fresh = True
+        return {
+            'serial_connected': serial_connected,
+            'hello_ack_for_current_session': self.hello_acknowledged,
+            'heartbeat_ack_fresh': self._heartbeat_fresh(now),
+            'zero_command_initialized': self.zero_command_acknowledged,
+            'servo_attach_ack': self.servo_attached,
+            'ultrasonic_fresh': ultrasonic_fresh,
+            'no_estop_latch': not self.estop_latched,
+            'no_active_fault': self.active_fault is None,
+            'no_uart_transport_fault': self.transport_fault is None,
+        }
+
     def publish_hardware_state(self):
         now = time.monotonic()
-        uart_ready = (self.ser is not None and not self.estop_latched and
-                      self.servo_attached and
-                      now - self.last_ack_time < 0.5)
-        ultrasonic_ready = all(
-            now - stamp < self.ultrasonic_frame_timeout
-            for stamp in self.last_ultrasonic_frame.values())
-        if not self.require_ultrasonic_for_ready:
-            ultrasonic_ready = True
-
-        ready = uart_ready and ultrasonic_ready
+        conditions = self.hardware_ready_conditions(now)
+        ready = all(conditions.values())
         if ready and not self.hardware_ready:
             self.get_logger().info(f'[{self.role}] hardware_ready=true')
         elif not ready and self.hardware_ready:
@@ -583,18 +822,24 @@ class Stm32BridgeNode(Node):
         self.pub_manual_active.publish(Bool(
             data=self.command_arbiter.manual_enabled))
 
-        stale = self.require_ultrasonic_for_ready and not ultrasonic_ready
+        stale = (self.require_ultrasonic_for_ready and
+                 not conditions['ultrasonic_fresh'])
         if stale and not self.ultrasonic_stale_reported:
             self.ultrasonic_stale_reported = True
             missing = [
-                side for side, stamp in self.last_ultrasonic_frame.items()
-                if now - stamp >= self.ultrasonic_frame_timeout
+                side for side, stamp in self.last_ultrasonic_valid.items()
+                if stamp <= 0.0 or
+                now - stamp >= self.ultrasonic_frame_timeout
             ]
             self.publish_status(
                 'WARN,ULTRASONIC_STALE:' + '|'.join(missing))
         elif not stale and self.ultrasonic_stale_reported:
             self.ultrasonic_stale_reported = False
             self.publish_status('INFO,ULTRASONIC_STREAM_OK')
+        if self.active_fault is not None:
+            # Preserve the current safety latch for late-joining consumers;
+            # ACK/INFO diagnostics must never become the retained final value.
+            self.publish_status(self.active_fault)
 
     def publish_odom(self, odom):
         msg = Odometry()
@@ -615,9 +860,12 @@ class Stm32BridgeNode(Node):
 
     def destroy_node(self):
         if self.ser:
+            serial_handle = self.ser
             if not self.estop_latched:
                 self._write(self.protocol.encode_velocity(0.0, 0.0, 0.0))
-            self.ser.close()
+            if self.ser is serial_handle:
+                serial_handle.close()
+                self.ser = None
         super().destroy_node()
 
 

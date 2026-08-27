@@ -148,6 +148,7 @@ def _rigid_sync_for_relative_pose(now_ns=10_000_000_000):
     node = object.__new__(RigidBodySyncNode)
     node.stamp_gates = {"aruco": StampGate(0.30, 0.10)}
     node.aruco_distance_offset = 0.570
+    node.use_aruco_distance = True
     node.aruco_min_distance = 0.05
     node.aruco_max_distance = 1.50
     node.aruco_raw_dist = None

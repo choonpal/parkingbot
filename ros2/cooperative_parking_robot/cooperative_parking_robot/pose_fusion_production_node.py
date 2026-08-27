@@ -65,7 +65,6 @@ class PoseFusionNode(BaselinePoseFusionNode):
             if raw_dt <= 0.0:
                 self.get_logger().warn(
                     '역행/중복 wheel_odom timestamp — 측정 폐기')
-                self.publish_odom(msg.header.stamp)
                 return
             dt = min(raw_dt, self.max_dt)
         dx_body = float(msg.twist.twist.linear.x)

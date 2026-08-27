@@ -20,11 +20,14 @@ from nav_msgs.msg import Odometry, Path
 from rclpy.node import Node
 from rclpy.qos import (
     DurabilityPolicy, QoSProfile, ReliabilityPolicy,
-    qos_profile_sensor_data,
 )
 from std_msgs.msg import Bool, String
 
 from cooperative_parking_robot.command_qos import CMD_VEL_QOS
+from cooperative_parking_robot.latest_qos import (
+    SENSOR_LATEST_QOS,
+    STATE_LATEST_QOS,
+)
 from cooperative_parking_robot.kalman_filter import ScalarKalman
 from cooperative_parking_robot.freshness import StampGate, stamp_to_ns
 from cooperative_parking_robot.mission_protocol import make_arrival_status
@@ -235,31 +238,34 @@ class RigidBodySyncNode(Node):
         self.create_subscription(
             Path, '/virtual_robot/waypoints', self.path_cb, self.mission_qos)
         self.create_subscription(
-            Odometry, '/front/odom', self.front_cb, qos_profile_sensor_data)
+            Odometry, '/front/odom', self.front_cb, SENSOR_LATEST_QOS)
         self.create_subscription(
-            Odometry, '/rear/odom', self.rear_cb, qos_profile_sensor_data)
+            Odometry, '/rear/odom', self.rear_cb, SENSOR_LATEST_QOS)
         self.create_subscription(
             PoseStamped, '/sync/relative_pose', self.aruco_cb,
-            qos_profile_sensor_data)
+            SENSOR_LATEST_QOS)
         self.create_subscription(
             Bool, '/sync/marker_visible', self.marker_cb,
-            qos_profile_sensor_data)
+            SENSOR_LATEST_QOS)
         self.create_subscription(
             Bool, '/front/cctv_marker_visible', self.front_top_marker_cb,
-            qos_profile_sensor_data)
+            SENSOR_LATEST_QOS)
         self.create_subscription(
             Bool, '/rear/cctv_marker_visible', self.rear_top_marker_cb,
-            qos_profile_sensor_data)
-        self.create_subscription(Bool, '/emergency_stop', self.estop_cb, 10)
+            SENSOR_LATEST_QOS)
+        self.create_subscription(
+            Bool, '/emergency_stop', self.estop_cb, STATE_LATEST_QOS)
         self.create_subscription(
             Bool, '/robot/lifted', self.vehicle_lifted_cb, 10)
         self.create_subscription(
-            String, '/front/robot_state', self.front_state_cb, 10)
+            String, '/front/robot_state', self.front_state_cb,
+            STATE_LATEST_QOS)
         self.create_subscription(
-            String, '/rear/robot_state', self.rear_state_cb, 10)
+            String, '/rear/robot_state', self.rear_state_cb,
+            STATE_LATEST_QOS)
         self.create_subscription(
             PoseStamped, '/parking/vehicle_pose_feedback',
-            self.cctv_feedback_cb, qos_profile_sensor_data)
+            self.cctv_feedback_cb, SENSOR_LATEST_QOS)
         self.create_subscription(
             PoseStamped, '/parking/target_pose', self.target_cb, 10)
         self.create_subscription(

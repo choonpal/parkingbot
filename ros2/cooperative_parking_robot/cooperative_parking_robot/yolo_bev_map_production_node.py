@@ -8,6 +8,10 @@ import rclpy
 from cooperative_parking_robot.mvp_integration_nodes import (
     OriginAwareYoloBevMapNode as BaselineYoloBevMapNode,
 )
+from cooperative_parking_robot.gpu_inference_guard import (
+    GPU_INFERENCE_GUARD,
+    release_unused_cuda_cache,
+)
 from cooperative_parking_robot.site_geometry import (
     CAMERA_GEOMETRY,
     VEHICLE_DETECTION_EFFECTIVE_HEIGHT_M,
@@ -27,22 +31,39 @@ class _MaskCenteredYoloModel:
     the original bounding-box centre remains the fallback.
     """
 
-    def __init__(self, delegate, vehicle_class_id: int):
+    def __init__(self, delegate, vehicle_class_id=None):
         self._delegate = delegate
-        self._vehicle_class_id = int(vehicle_class_id)
+        self._vehicle_class_id = (
+            None if vehicle_class_id is None else int(vehicle_class_id))
 
     def __getattr__(self, name):
         return getattr(self._delegate, name)
 
     def __call__(self, frame, *args, **kwargs):
-        results = self._delegate(frame, *args, **kwargs)
-        height, width = frame.shape[:2]
-        recenter_vehicle_result_boxes(
-            results,
-            frame_width=width,
-            frame_height=height,
-            vehicle_class_id=self._vehicle_class_id,
-        )
+        # Two production camera nodes are separate processes. Serializing the
+        # CUDA section prevents simultaneous CUBLAS handle/workspace peaks.
+        # Move finite result tensors to CPU before releasing the lock so the
+        # other camera does not overlap inference with retained GPU results.
+        with GPU_INFERENCE_GUARD.hold():
+            try:
+                raw_results = self._delegate(frame, *args, **kwargs)
+                results = [
+                    result.cpu() if hasattr(result, 'cpu') else result
+                    for result in raw_results
+                ]
+                # Drop the GPU Results container before empty_cache() and
+                # before another camera is allowed to enter the CUDA section.
+                del raw_results
+                if self._vehicle_class_id is not None:
+                    height, width = frame.shape[:2]
+                    recenter_vehicle_result_boxes(
+                        results,
+                        frame_width=width,
+                        frame_height=height,
+                        vehicle_class_id=self._vehicle_class_id,
+                    )
+            finally:
+                release_unused_cuda_cache()
         return results
 
 
@@ -63,9 +84,15 @@ class YoloBevMapNode(BaselineYoloBevMapNode):
 
         # Keep runtime and camera_preview on exactly the same centre definition:
         # Seg mask minAreaRect centre -> Homography -> optional parallax.
+        if self.model is not None:
+            vehicle_class_id = (
+                self.cls_vehicle
+                if self.model_mode in ('vehicle_seg', 'parking_seg')
+                else None)
+            self.model = _MaskCenteredYoloModel(
+                self.model, vehicle_class_id)
         if (self.model is not None and
                 self.model_mode in ('vehicle_seg', 'parking_seg')):
-            self.model = _MaskCenteredYoloModel(self.model, self.cls_vehicle)
             self.get_logger().info(
                 f'[{self.camera_id}] vehicle centre policy: '
                 'segmentation minAreaRect centre (bbox fallback)')
@@ -79,6 +106,14 @@ class YoloBevMapNode(BaselineYoloBevMapNode):
         else:
             self.vehicle_detection_height = float(
                 VEHICLE_DETECTION_EFFECTIVE_HEIGHT_M)
+
+    def _load_models(self):
+        """Bound concurrent CUDA context/CUBLAS initialization across cameras."""
+        with GPU_INFERENCE_GUARD.hold():
+            try:
+                super()._load_models()
+            finally:
+                release_unused_cuda_cache()
 
 
 def main(args=None):

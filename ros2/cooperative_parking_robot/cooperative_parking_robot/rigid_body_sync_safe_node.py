@@ -22,9 +22,9 @@ import time
 import rclpy
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
-from rclpy.qos import qos_profile_sensor_data
 
 from cooperative_parking_robot.freshness import stamp_to_ns
+from cooperative_parking_robot.latest_qos import SENSOR_LATEST_QOS
 from cooperative_parking_robot.relative_sync_filter import (
     CctvPairStampGate,
     DeltaKalman1D,
@@ -264,19 +264,19 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
         self.create_subscription(
             Odometry, '/front/wheel_odom',
             lambda msg: self._wheel_odom_cb('front', msg),
-            qos_profile_sensor_data)
+            SENSOR_LATEST_QOS)
         self.create_subscription(
             Odometry, '/rear/wheel_odom',
             lambda msg: self._wheel_odom_cb('rear', msg),
-            qos_profile_sensor_data)
+            SENSOR_LATEST_QOS)
         self.create_subscription(
             PoseStamped, '/front/cctv_pose',
             lambda msg: self._cctv_pose_cb('front', msg),
-            qos_profile_sensor_data)
+            SENSOR_LATEST_QOS)
         self.create_subscription(
             PoseStamped, '/rear/cctv_pose',
             lambda msg: self._cctv_pose_cb('rear', msg),
-            qos_profile_sensor_data)
+            SENSOR_LATEST_QOS)
 
         self.get_logger().info(
             'relative sync hardening active | one-frame-one-update | '

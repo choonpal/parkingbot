@@ -137,8 +137,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "rear_camera_gst", default_value="",
             description="비우면 V4L2, 채우면 GStreamer 파이프라인 사용"),
-        DeclareLaunchArgument("rear_camera_width", default_value="1280"),
-        DeclareLaunchArgument("rear_camera_height", default_value="720"),
+        DeclareLaunchArgument("rear_camera_width", default_value="640"),
+        DeclareLaunchArgument("rear_camera_height", default_value="480"),
         DeclareLaunchArgument("rear_camera_fps", default_value="12.0"),
         DeclareLaunchArgument(
             "camera_calib",

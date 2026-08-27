@@ -53,6 +53,8 @@ setup(
              'cooperative_parking_robot.pose_fusion_node:main'),
             'hardware_preflight = cooperative_parking_robot.hardware_preflight:main',
             'keyboard_teleop = cooperative_parking_robot.keyboard_teleop_node:main',
+            ('drive_pulse = '
+             'cooperative_parking_robot.drive_pulse_node:main'),
             'cooperative_drive_test = cooperative_parking_robot.cooperative_drive_test_node:main',
             'keyboard_follow = cooperative_parking_robot.keyboard_follow_node:main',
             'calibrate_camera = cooperative_parking_robot.calibrate_camera_node:main',

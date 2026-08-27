@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import datetime as dt
-from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -138,6 +137,45 @@ def remote_run(runner: Runner, host: str, command: str, timeout=10):
     return runner.run(remote_argv(host, command), timeout=timeout)
 
 
+def stack_process_status(runner, host, timeout=7):
+    """Return authoritative tmux pane state without treating SSH errors as exit."""
+    command = (
+        f"if tmux has-session -t {shlex.quote(SESSION)} 2>/dev/null; then "
+        f"tmux display-message -p -t {shlex.quote(SESSION + ':stack.0')} "
+        "'#{pane_pid}|#{pane_dead}|#{pane_dead_status}|"
+        "#{pane_current_command}'; "
+        "else printf 'MISSING\\n'; exit 3; fi")
+    result = remote_run(runner, host, command, timeout=timeout)
+    status = {
+        "state": "UNKNOWN",
+        "pid": None,
+        "process_alive": None,
+        "returncode": None,
+        "probe_returncode": result.returncode,
+    }
+    output = result.stdout.strip().splitlines()
+    if result.returncode == 3 and output and output[-1] == "MISSING":
+        status["state"] = "SESSION_MISSING"
+        status["process_alive"] = False
+        return status
+    if result.returncode != 0 or not output:
+        return status
+    fields = output[-1].split("|", 3)
+    if len(fields) != 4 or not fields[0].isdigit():
+        return status
+    pid_text, dead_text, dead_status, current_command = fields
+    dead = dead_text in ("1", "on", "true")
+    status.update({
+        "state": "EXITED" if dead else "RUNNING",
+        "pid": int(pid_text),
+        "process_alive": not dead,
+        "returncode": (int(dead_status) if dead and
+                       dead_status.lstrip("-").isdigit() else None),
+        "current_command": current_command,
+    })
+    return status
+
+
 def role_host(config, role):
     return config[f"{role.upper()}_HOST"]
 
@@ -146,14 +184,29 @@ def role_workspace(config, role):
     return config[f"{role.upper()}_WORKSPACE"]
 
 
-def ros_prefix(config, role):
-    workspace = role_workspace(config, role)
+def ros_environment_prefix(config, workspace):
     return (
         f"source {shlex.quote(config['ROS_SETUP'])} && "
         f"source {shlex.quote(workspace + '/install/setup.bash')} && "
         f"export ROS_DOMAIN_ID={shlex.quote(config['ROS_DOMAIN_ID'])} && "
         f"export ROS_LOCALHOST_ONLY={shlex.quote(config['ROS_LOCALHOST_ONLY'])} && "
         f"export RMW_IMPLEMENTATION={shlex.quote(config['RMW_IMPLEMENTATION'])}")
+
+
+def ros_prefix(config, role):
+    return ros_environment_prefix(config, role_workspace(config, role))
+
+
+def local_ros_prefix(config):
+    """Controller ROS environment, independent of the calling shell."""
+    return ros_environment_prefix(config, config["CONTROL_WORKSPACE"])
+
+
+def local_ros_argv(config, argv):
+    """Run a controller-side ROS command after sourcing underlay + overlay."""
+    command = local_ros_prefix(config) + " && exec " + shlex.join(
+        [str(item) for item in argv])
+    return ["bash", "-lc", command]
 
 
 def q(value):
@@ -260,40 +313,61 @@ def parse_scalar(raw):
         return text
 
 
-def topic_once(runner, topic, timeout=12.0):
+def topic_once(config, runner, topic, timeout=1.2):
     try:
         result = runner.run(
-            ["ros2", "topic", "echo", "--once", "--field", "data", topic],
+            local_ros_argv(config, [
+                "ros2", "topic", "echo", "--once", "--field", "data",
+                topic]),
             timeout=timeout)
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return None
     return parse_scalar(result.stdout) if result.returncode == 0 else None
 
 
-def topic_present(runner, topic, timeout=12.0):
+def topic_present(config, runner, topic, timeout=1.2):
     try:
         result = runner.run(
-            ["ros2", "topic", "echo", "--once", topic], timeout=timeout)
+            local_ros_argv(config, [
+                "ros2", "topic", "echo", "--once", topic]),
+            timeout=timeout)
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return False
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
-def snapshot(runner=None, timeout=12.0, hosts=None):
+def _snapshot_topics(config, runner, timeout):
+    helper = Path(__file__).with_name("parkingbot_ros_snapshot.py")
+    result = runner.run(
+        local_ros_argv(config, [
+            "python3", str(helper), "--timeout", str(float(timeout))]),
+        timeout=float(timeout) + 2.0)
+    if result.returncode != 0:
+        return None
+    for line in reversed(result.stdout.splitlines()):
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict) and isinstance(
+                payload.get("topics"), dict):
+            return payload["topics"]
+    return None
+
+
+def snapshot(config, runner=None, timeout=1.2, hosts=None):
     runner = runner or Runner()
-    # Every topic has its own bounded subprocess, sampled concurrently so a
-    # dead topic cannot turn one field into a 20-second sequential delay.
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        pending = {
-            key: pool.submit(topic_once, runner, topic, timeout)
-            for key, topic in TOPICS.items()}
-        values = {key: future.result() for key, future in pending.items()}
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        pending = {
-            key: pool.submit(topic_present, runner, topic, timeout)
-            for key, topic in PRESENCE_TOPICS.items()}
-        values.update({key: future.result()
-                       for key, future in pending.items()})
+    # One bounded observer subscribes to every field.  The previous design
+    # kept three ros2 topic echo processes alive at a time for up to 12 s and
+    # serialized 23 probes, producing minute-long snapshots and continuous
+    # DDS participant churn on the RPis.
+    sampled = _snapshot_topics(config, runner, timeout)
+    values = {key: None for key in TOPICS}
+    values.update({key: False for key in PRESENCE_TOPICS})
+    if sampled is not None:
+        for key in values:
+            if key in sampled:
+                values[key] = sampled[key]
     for key in ("fleet", "target_status", "vehicle_spec", "merge", "front_loc", "rear_loc", "sync"):
         if isinstance(values[key], str):
             try:
@@ -405,18 +479,28 @@ def format_snapshot(data):
     return "\n".join(lines)
 
 
-def incident_snapshot(run_dir: Path, reason: str, state: dict, runner=None):
+def incident_snapshot(run_dir: Path, reason: str, state: dict, config,
+                      runner=None, metadata=None):
     runner = runner or Runner()
     safe = re.sub(r"[^A-Z0-9_-]+", "_", reason.upper()).strip("_")[:64] or "FAULT"
     target = run_dir / "incidents" / (
         dt.datetime.now().strftime("%Y%m%d_%H%M%S_%f_") + safe)
     target.mkdir(parents=True, exist_ok=False)
-    (target / "state.json").write_text(json.dumps(state, indent=2, ensure_ascii=False) + "\n")
+    incident = dict(metadata or {})
+    incident.setdefault("reason", reason)
+    incident.setdefault(
+        "timestamp", dt.datetime.now(dt.timezone.utc).astimezone().isoformat())
+    recorded_state = dict(state)
+    recorded_state["incident"] = incident
+    (target / "state.json").write_text(
+        json.dumps(recorded_state, indent=2, ensure_ascii=False) + "\n")
+    (target / "incident.json").write_text(
+        json.dumps(incident, indent=2, ensure_ascii=False) + "\n")
     (target / "summary.txt").write_text(format_snapshot(state) + "\n")
     for command, filename in ((["ros2", "node", "list"], "ros_node_list.txt"),
                               (["ros2", "topic", "list", "-t"], "ros_topic_list.txt")):
         try:
-            result = runner.run(command, timeout=3)
+            result = runner.run(local_ros_argv(config, command), timeout=3)
             (target / filename).write_text(result.stdout + result.stderr)
         except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
             (target / filename).write_text(f"unavailable: {exc}\n")

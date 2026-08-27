@@ -9,6 +9,8 @@ mkdir -p "$config_dir"
 
 install -m 0755 "$tool_dir/robotctl" "$install_dir/robotctl"
 install -m 0644 "$tool_dir/parkingbot_ops.py" "$install_dir/parkingbot_ops.py"
+install -m 0755 "$tool_dir/parkingbot_ros_snapshot.py" \
+  "$install_dir/parkingbot_ros_snapshot.py"
 for command in start state logs stop restart doctor; do
   ln -sfn robotctl "$install_dir/robot_${command}"
 done

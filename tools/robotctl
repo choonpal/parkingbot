@@ -16,7 +16,7 @@ from parkingbot_ops import (
     conditional_config_errors, incident_snapshot, invalid_paths,
     launch_command, load_env, missing_config,
     remote_argv, remote_run, role_host, role_workspace, ros_prefix, run_root,
-    snapshot,
+    snapshot, stack_process_status,
 )
 
 HERE = Path(__file__).resolve().parent
@@ -51,21 +51,6 @@ def checked_config(args):
     return config
 
 
-def ensure_local_ros(config):
-    """Re-exec once inside the configured controller ROS environment."""
-    if shutil.which("ros2") or os.environ.get("PARKINGBOT_ROS_READY") == "1":
-        return
-    setup = config["ROS_SETUP"]
-    overlay = config["CONTROL_WORKSPACE"] + "/install/setup.bash"
-    env = (
-        f"export PARKINGBOT_ROS_READY=1 ROS_DOMAIN_ID={shlex.quote(config['ROS_DOMAIN_ID'])} "
-        f"ROS_LOCALHOST_ONLY={shlex.quote(config['ROS_LOCALHOST_ONLY'])} "
-        f"RMW_IMPLEMENTATION={shlex.quote(config['RMW_IMPLEMENTATION'])}; "
-        f"source {shlex.quote(setup)} && source {shlex.quote(overlay)} && "
-        f"exec {shlex.join([str(Path(__file__).resolve()), *sys.argv[1:]])}")
-    os.execvp("bash", ["bash", "-lc", env])
-
-
 def reachable(runner, config, role):
     result = remote_run(runner, role_host(config, role), "true", timeout=7)
     return result.returncode == 0
@@ -77,12 +62,13 @@ def session_exists(runner, config, role):
     return result.returncode == 0
 
 
-def stack_process_exists(runner, config, role):
-    result = remote_run(
-        runner, role_host(config, role),
-        f"tmux list-windows -t {SESSION} -F '#{{window_name}}' | grep -Fxq stack",
-        timeout=7)
-    return result.returncode == 0
+def process_status(runner, config, role):
+    status = stack_process_status(runner, role_host(config, role))
+    status.update({
+        "role": role,
+        "launch_command": launch_command(config, role),
+    })
+    return status
 
 
 def manifest(config, role, launch):
@@ -97,9 +83,104 @@ def manifest(config, role, launch):
         f"{shlex.quote(launch)} {shlex.quote(workspace)}")
 
 
+def stack_launch_command(prefix, launch, remote_dir, log_name):
+    """Create a detached pane whose real exit code remains inspectable."""
+    log_path = f"{remote_dir}/{log_name}"
+    pane_body = (
+        "set -o pipefail; "
+        f"printf '%s\\n' \"$$\" > {remote_dir}/stack_shell.pid; "
+        f"({prefix} && {launch}) 2>&1 | tee -a {log_path}; "
+        "rc=${PIPESTATUS[0]}; "
+        f"printf 'returncode=%s\\nfinished_at=%s\\n' \"$rc\" "
+        f"\"$(date --iso-8601=seconds)\" > {remote_dir}/stack_exit.env; "
+        "exit \"$rc\"")
+    pane_command = "bash -lc " + shlex.quote(pane_body)
+    target = SESSION + ":stack.0"
+    return (
+        f"tmux new-session -d -s {SESSION} -n stack && "
+        f"tmux set-option -w -t {target} remain-on-exit on && "
+        f"tmux respawn-pane -k -t {target} {shlex.quote(pane_command)} && "
+        f"tmux display-message -p -t {target} '#{{pane_pid}}' > "
+        f"{remote_dir}/stack_pane.pid")
+
+
+def startup_conditions(data):
+    values = data["topics"]
+    return {
+        "Fleet manager": isinstance(values["fleet"], dict),
+        "Front state_machine": values["front_state"] is not None,
+        "Rear state_machine": values["rear_state"] is not None,
+        "cctv_merge": values["merge"] is not None,
+        "Rear ID0 camera/tracker": values["id0_marker"] is not None,
+        "Front hardware_ready": (
+            values["front_hw"] is True and values["front_state"] == "IDLE"),
+        "Rear hardware_ready": (
+            values["rear_hw"] is True and values["rear_state"] == "IDLE"),
+    }
+
+
+def startup_fatal_faults(data):
+    values = data["topics"]
+    faults = []
+    for role in ("front", "rear"):
+        state = values[f"{role}_state"]
+        status = values[f"{role}_hw_status"]
+        if state == "FAULT":
+            faults.append(
+                f"{role.upper()} hardware_ready=false "
+                f"({status or 'robot_state=FAULT'})")
+        elif isinstance(status, str) and status.startswith(("ERR,", "ESTOP")):
+            faults.append(
+                f"{role.upper()} hardware_ready=false ({status})")
+    return faults
+
+
+def report_startup_progress(data, previous):
+    conditions = startup_conditions(data)
+    values = data["topics"]
+    current = {}
+    for label, ok in conditions.items():
+        if ok:
+            rendered = "OK"
+        elif label.endswith("hardware_ready"):
+            role = label.split()[0].lower()
+            status = values[f"{role}_hw_status"]
+            rendered = f"WAIT:{status}" if status else "WAIT"
+        else:
+            rendered = "WAIT"
+        current[label] = rendered
+        if previous.get(label) != rendered:
+            prefix = "OK" if rendered == "OK" else "WAIT"
+            detail = ""
+            if rendered.startswith("WAIT:"):
+                detail = f" ({rendered.removeprefix('WAIT:')})"
+            print(f"[{prefix}] {label}{detail}", flush=True)
+    return current, conditions
+
+
+def incident_metadata(role, reason, data, process=None, config=None):
+    values = data.get("topics", {})
+    process = process or {}
+    return {
+        "role": role,
+        "reason": reason,
+        "pid": process.get("pid"),
+        "process_state": process.get("state"),
+        "process_alive": process.get("process_alive"),
+        "returncode": process.get("returncode"),
+        "probe_returncode": process.get("probe_returncode"),
+        "hardware_ready": values.get(f"{role}_hw") if role else None,
+        "robot_state": values.get(f"{role}_state") if role else None,
+        "motion_fault": values.get(f"{role}_fault") if role else None,
+        "timestamp": data.get("timestamp"),
+        "launch_command": (
+            process.get("launch_command") or
+            (launch_command(config, role) if config and role else None)),
+    }
+
+
 def start(args):
     config = checked_config(args)
-    ensure_local_ros(config)
     runner = Runner()
     print("ParkingBot Production Start\n===========================\n")
     if shutil.which("tmux") is None:
@@ -117,6 +198,7 @@ def start(args):
         return 2
     run_dir = create_run_dir()
     run_id = run_dir.name
+    processes = {}
     head = subprocess.run(["git", "rev-parse", "HEAD"], text=True, capture_output=True).stdout.strip()
     for role in ROLES:
         remote_head = remote_run(
@@ -133,14 +215,22 @@ def start(args):
             f"mkdir -p {remote_dir} $HOME/.ros/parkingbot_logs/{run_id}/incidents && "
             f"ln -sfn {run_id} $HOME/.ros/parkingbot_logs/latest && "
             f"({manifest(config, role, launch)}) > {remote_dir}/run_manifest.txt && "
-            f"tmux new-session -d -s {SESSION} -n stack "
-            f"{shlex.quote(prefix + ' && ' + launch + ' 2>&1 | tee -a ' + remote_dir + '/' + log_name)}")
+            + stack_launch_command(prefix, launch, remote_dir, log_name))
         print(f"[START] {role.title()} production stack")
         result = remote_run(runner, role_host(config, role), command, timeout=12)
         if result.returncode:
             print(f"[FAIL] {role.title()} start: {(result.stderr or result.stdout).strip()}")
             stop_sessions(runner, config, publish_estop=False)
             return 1
+        status = process_status(runner, config, role)
+        processes[role] = status
+        if status["state"] != "RUNNING":
+            print(
+                f"[FAIL] {role.title()} stack did not stay alive: "
+                f"{status['state']} returncode={status.get('returncode')}")
+            stop_sessions(runner, config, publish_estop=False)
+            return 1
+        print(f"[OK] {role.title()} stack pid={status['pid']}")
         if (role == "rear" and
                 config["REAR_ENABLE_INTERNAL_CAMERA"].lower() == "false"):
             camera_log = f"$HOME/.ros/parkingbot_logs/{run_id}/rear/rear_camera.log"
@@ -158,33 +248,51 @@ def start(args):
                 return 1
     (run_dir / "run_manifest.txt").write_text(
         f"run_id={run_id}\ncontroller_commit={head}\nconfig={config_path(args)}\n")
-    print("[START] State/log monitor")
-    monitor_cmd = f"{shlex.quote(str(Path(__file__).resolve()))} --config {shlex.quote(str(config_path(args)))} monitor"
-    subprocess.run(["tmux", "new-session", "-d", "-s", SESSION + "-monitor", monitor_cmd], check=False)
+    (run_dir / "state" / "processes.json").write_text(
+        json.dumps(processes, indent=2, ensure_ascii=False) + "\n")
     print("\nWaiting for ROS graph...")
-    deadline = time.monotonic() + 20.0
+    started_at = time.monotonic()
+    grace_until = started_at + 3.0
+    deadline = started_at + 30.0
     data = None
+    previous = {}
+    conditions = {}
     while time.monotonic() < deadline:
-        data = snapshot(timeout=10.0)
-        values = data["topics"]
-        if (isinstance(values["fleet"], dict) and
-                values["front_state"] is not None and
-                values["rear_state"] is not None and
-                values["merge"] is not None):
+        data = snapshot(config, timeout=1.0)
+        data["processes"] = processes
+        previous, conditions = report_startup_progress(data, previous)
+        fatal = startup_fatal_faults(data)
+        if fatal and time.monotonic() >= grace_until:
+            for reason in fatal:
+                print(f"[FAIL] {reason}")
+            role = "front" if fatal[0].startswith("FRONT") else "rear"
+            reason = f"{role.upper()}_STARTUP_HARDWARE_FAULT"
+            incident_snapshot(
+                run_dir, reason, data, config, runner,
+                incident_metadata(
+                    role, reason, data, processes.get(role), config))
+            print("Startup failed fast; processes remain available for robot_logs.")
+            return 1
+        if conditions and all(conditions.values()):
             break
-        time.sleep(1.0)
-    checks = {
-        "Fleet manager": isinstance(data["topics"]["fleet"], dict),
-        "Front robot": data["topics"]["front_state"] is not None,
-        "Rear robot": data["topics"]["rear_state"] is not None,
-        "cctv_merge": data["topics"]["merge"] is not None,
-        "Rear ID0 camera/tracker": data["topics"]["id0_marker"] is not None,
-    }
-    for label, ok in checks.items():
-        print(f"[{'OK' if ok else 'FAIL'}] {label}")
-    if not all(checks.values()):
+        time.sleep(0.25)
+    if not conditions or not all(conditions.values()):
+        for label, ok in conditions.items():
+            if not ok:
+                print(f"[FAIL] {label}")
+        reason = "STARTUP_READINESS_TIMEOUT"
+        incident_snapshot(
+            run_dir, reason, data, config, runner,
+            incident_metadata(None, reason, data))
         print("Startup graph incomplete; processes remain available for robot_logs.")
         return 1
+    print("[START] State/log monitor")
+    monitor_cmd = (
+        f"{shlex.quote(str(Path(__file__).resolve()))} --config "
+        f"{shlex.quote(str(config_path(args)))} monitor")
+    subprocess.run([
+        "tmux", "new-session", "-d", "-s", SESSION + "-monitor",
+        monitor_cmd], check=False)
     print("\nSystem started. Safety readiness remains visible in robot_state.")
     print("Run:\n  robot_state\n  robot_logs\n  robot_stop")
     return 0
@@ -203,7 +311,10 @@ def stop_sessions(runner, config, publish_estop=True):
 
 def stop(args):
     config = checked_config(args)
-    stop_sessions(Runner(), config)
+    # STM32 는 ESTOP 을 전원 재인가까지 latch 한다. 곧바로 다시 띄울 때는
+    # latch 를 남기면 새 세션이 시작하자마자 FAULT 로 떨어져 복구가 안 된다.
+    stop_sessions(Runner(), config,
+                  publish_estop=not getattr(args, "no_estop", False))
     print("[OK] Production stack stopped")
     print("Safety/STM32 ESTOP latches are not reset; MANUAL RESET MAY BE REQUIRED.")
     return 0
@@ -211,12 +322,11 @@ def stop(args):
 
 def state(args):
     config = checked_config(args)
-    ensure_local_ros(config)
     hosts = {}
     runner = Runner()
     hosts = {role: ("ONLINE" if reachable(runner, config, role) else "OFFLINE") for role in ROLES}
     while True:
-        data = snapshot(hosts=hosts)
+        data = snapshot(config, hosts=hosts)
         output = json.dumps(data, ensure_ascii=False, indent=2) if args.json else format_snapshot(data)
         if args.watch and not args.json:
             print("\033[2J\033[H", end="")
@@ -337,7 +447,6 @@ def doctor(args):
 
 def monitor(args):
     config = checked_config(args)
-    ensure_local_ros(config)
     root = run_root()
     latest = root / "latest"
     if not latest.exists():
@@ -347,18 +456,37 @@ def monitor(args):
     last_faults = set()
     grace_until = time.monotonic() + 15.0
     while True:
-        data = snapshot(timeout=10.0)
+        data = snapshot(config, timeout=1.2)
+        processes = {
+            role: process_status(runner, config, role) for role in ROLES}
+        data["processes"] = processes
         with (run_dir / "state" / "state_monitor.jsonl").open("a") as stream:
             stream.write(json.dumps(data, ensure_ascii=False) + "\n")
         faults = set(data["blockers"])
-        for role in ROLES:
-            if not stack_process_exists(runner, config, role):
+        process_incidents = {}
+        for role, status in processes.items():
+            # UNKNOWN covers SSH timeout/unreachable and SESSION_MISSING covers
+            # an externally removed tmux session. Neither proves a process
+            # crash. remain-on-exit makes EXITED authoritative.
+            if status["state"] == "EXITED":
                 faults.add(f"{role.upper()} PROCESS EXITED")
+                process_incidents[f"{role.upper()} PROCESS EXITED"] = (
+                    role, status)
         for reason in sorted(faults - last_faults):
             if (time.monotonic() >= grace_until and any(
                     word in reason for word in
                     ("FAULT", "SYNC:", "HARDWARE", "PROCESS EXITED"))):
-                target = incident_snapshot(run_dir, reason, data)
+                if reason in process_incidents:
+                    role, status = process_incidents[reason]
+                elif reason.startswith("FRONT"):
+                    role, status = "front", processes["front"]
+                elif reason.startswith("REAR"):
+                    role, status = "rear", processes["rear"]
+                else:
+                    role, status = None, None
+                target = incident_snapshot(
+                    run_dir, reason, data, config, runner,
+                    incident_metadata(role, reason, data, status, config))
                 for role in ROLES:
                     name = ("cctv_server_dual.log" if role == "jetson"
                             else f"{role}_robot.log")
@@ -368,16 +496,22 @@ def monitor(args):
                         f"tail -n 200 {remote_path}", timeout=8)
                     (target / f"{role}_tail.log").write_text(
                         result.stdout + result.stderr)
-        last_faults = faults
-        time.sleep(1.0)
+        # Faults first observed during discovery grace must still create one
+        # incident when grace expires; do not mark them handled prematurely.
+        last_faults = faults if time.monotonic() >= grace_until else set()
+        time.sleep(2.0)
 
 
 def main():
     parser = argparse.ArgumentParser(prog="robotctl")
     parser.add_argument("--config")
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("start", "stop", "restart", "doctor", "monitor"):
+    for name in ("start", "restart", "doctor", "monitor"):
         sub.add_parser(name)
+    stop_parser = sub.add_parser("stop")
+    stop_parser.add_argument(
+        "--no-estop", action="store_true",
+        help="ESTOP latch 를 남기지 않고 세션만 내린다 (바로 재시작할 때)")
     state_parser = sub.add_parser("state")
     state_parser.add_argument("-w", "--watch", action="store_true")
     state_parser.add_argument("--json", action="store_true")
@@ -391,6 +525,7 @@ def main():
         argv.insert(0, invoked.removeprefix("robot_"))
     args = parser.parse_args(argv)
     if args.command == "restart":
+        args.no_estop = True
         code = stop(args)
         return code or start(args)
     return globals()[args.command](args)

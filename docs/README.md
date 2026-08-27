@@ -14,6 +14,7 @@
 | [프로젝트 용어](../CONTEXT.md) | 미션·슬롯·Registry 공통 언어 |
 | [하드웨어 문서](our_robot/README.md) | BOM, 배선, 실기 시험 기록 |
 | [ADR](adr/) | 설계 결정과 변경 이유 |
+| [변경 기록](change_logs/) | 구현 변경, 검증 결과, 실차 재확인 항목 |
 
 ROS 패키지의 노드·launch 개요는
 [cooperative_parking_robot README](../ros2/cooperative_parking_robot/README.md)를

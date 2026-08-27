@@ -2,8 +2,12 @@
 """ROS-independent regressions for field operation tooling."""
 
 import json
+import os
 from pathlib import Path
+import runpy
+import shutil
 import subprocess
+import time
 
 import pytest
 
@@ -25,18 +29,26 @@ class FakeRunner:
 
     def run(self, argv, **kwargs):
         self.calls.append(argv)
-        if argv and argv[0] == "ros2" and argv[-1] in self.topic_values:
-            value = self.topic_values[argv[-1]]
-            if value is TimeoutError:
-                raise subprocess.TimeoutExpired(argv, kwargs.get("timeout", 1))
-            text = json.dumps(value) if isinstance(value, (dict, bool)) else str(value)
-            return Result(stdout=text + "\n")
+        command = argv[-1] if argv else ""
+        if "parkingbot_ros_snapshot.py" in command:
+            values = {key: None for key in ops.TOPICS}
+            values.update({key: False for key in ops.PRESENCE_TOPICS})
+            for key, topic in ops.TOPICS.items():
+                value = self.topic_values.get(topic)
+                values[key] = None if value is TimeoutError else value
+            for key, topic in ops.PRESENCE_TOPICS.items():
+                value = self.topic_values.get(topic)
+                values[key] = value not in (None, TimeoutError, False)
+            return Result(stdout=json.dumps({"topics": values}) + "\n")
         return Result(returncode=self.remote_code)
 
 
 def valid_config():
     config = {key: "value" for key in ops.REQUIRED}
-    config.update({"REAR_ENABLE_INTERNAL_CAMERA": "false",
+    config.update({"ROS_SETUP": "/opt/ros/humble/setup.bash",
+                   "ROS_LOCALHOST_ONLY": "0",
+                   "RMW_IMPLEMENTATION": "rmw_fastrtps_cpp",
+                   "REAR_ENABLE_INTERNAL_CAMERA": "false",
                    "REAR_EXTERNAL_CAMERA_COMMAND": "ros2 run camera driver",
                    "REAR_CAMERA_TOPIC": "/rear/marker_camera/image"})
     return config
@@ -91,9 +103,11 @@ def test_missing_topics_timeout_is_bounded_and_becomes_blocker():
     runner = FakeRunner({
         topic: TimeoutError for topic in
         (*ops.TOPICS.values(), *ops.PRESENCE_TOPICS.values())})
-    data = ops.snapshot(runner=runner, timeout=0.01)
+    data = ops.snapshot(valid_config(), runner=runner, timeout=0.01)
     assert data["overall"] == "NOT READY"
     assert "FLEET STATE UNAVAILABLE" in data["blockers"]
+    assert len(runner.calls) == 1
+    assert "parkingbot_ros_snapshot.py" in runner.calls[0][-1]
 
 
 def test_status_format_uses_real_safety_fields():
@@ -117,7 +131,7 @@ def test_status_format_uses_real_safety_fields():
         "/cctv/merge_status": {
             "cameras": {"cam0": {"alive": True}, "cam2": {"alive": True}}},
     }
-    data = ops.snapshot(FakeRunner(values))
+    data = ops.snapshot(valid_config(), FakeRunner(values))
     text = ops.format_snapshot(data)
     assert "Fleet        WAIT_TARGET" in text
     assert "Vehicle Spec VALID" in text
@@ -131,10 +145,13 @@ def test_incident_snapshot_contains_state_and_log_tails(tmp_path):
                  key: None for key in (*ops.TOPICS, *ops.PRESENCE_TOPICS)},
              "fleet_state": "FAULT", "mission_id": "m1", "empty_slots": 0,
              "blockers": ["FRONT ROBOT FAULT"], "overall": "NOT READY"}
-    target = ops.incident_snapshot(run, "front robot fault", state, FakeRunner())
+    target = ops.incident_snapshot(
+        run, "front robot fault", state, valid_config(), FakeRunner(),
+        {"role": "front", "process_alive": True})
     assert (target / "state.json").exists()
     assert "fault" in (target / "front_tail.log").read_text()
     assert (target / "ros_topic_list.txt").exists()
+    assert json.loads((target / "incident.json").read_text())["role"] == "front"
 
 
 def test_launch_commands_use_documented_production_launches_and_no_force():
@@ -149,3 +166,160 @@ def test_launch_commands_use_documented_production_launches_and_no_force():
     assert "rear_robot.launch.py" in ops.launch_command(config, "rear")
     assert "--force" not in " ".join(
         ops.launch_command(config, role) for role in ops.ROLES)
+
+
+def test_local_ros_commands_always_source_underlay_and_control_overlay():
+    config = valid_config()
+    config.update({
+        "ROS_SETUP": "/opt/ros/humble/setup.bash",
+        "CONTROL_WORKSPACE": "/srv/parkingbot_ws",
+        "ROS_LOCALHOST_ONLY": "0",
+        "RMW_IMPLEMENTATION": "rmw_fastrtps_cpp",
+    })
+    argv = ops.local_ros_argv(config, ["ros2", "node", "list"])
+    assert argv[:2] == ["bash", "-lc"]
+    command = argv[2]
+    assert "source /opt/ros/humble/setup.bash" in command
+    assert "source /srv/parkingbot_ws/install/setup.bash" in command
+    assert "export ROS_DOMAIN_ID=value" in command
+    assert "exec ros2 node list" in command
+
+
+@pytest.mark.parametrize("arguments", (
+    ["node", "list"],
+    ["topic", "list", "-t"],
+    ["topic", "echo", "--once", "/test"],
+))
+def test_ros_cli_helper_works_from_clean_noninteractive_environment(
+        tmp_path, arguments):
+    underlay = tmp_path / "underlay.bash"
+    workspace = tmp_path / "ws"
+    overlay = workspace / "install/setup.bash"
+    binary_dir = tmp_path / "bin"
+    overlay.parent.mkdir(parents=True)
+    binary_dir.mkdir()
+    fake_ros2 = binary_dir / "ros2"
+    underlay.write_text("export PARKINGBOT_TEST_UNDERLAY=1\n")
+    overlay.write_text(
+        f"export PATH={binary_dir}:$PATH\n"
+        "export PARKINGBOT_TEST_OVERLAY=1\n")
+    fake_ros2.write_text(
+        "#!/usr/bin/env bash\n"
+        "test \"${PARKINGBOT_TEST_UNDERLAY:-}\" = 1\n"
+        "test \"${PARKINGBOT_TEST_OVERLAY:-}\" = 1\n"
+        "printf '%s\\n' \"$*\"\n")
+    fake_ros2.chmod(0o755)
+    config = valid_config()
+    config.update({
+        "ROS_SETUP": str(underlay),
+        "CONTROL_WORKSPACE": str(workspace),
+        "ROS_LOCALHOST_ONLY": "0",
+        "RMW_IMPLEMENTATION": "rmw_fastrtps_cpp",
+    })
+    clean_env = {"PATH": "/usr/bin:/bin"}
+    result = subprocess.run(
+        ops.local_ros_argv(config, ["ros2", *arguments]),
+        text=True, capture_output=True, env=clean_env)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == " ".join(arguments)
+
+
+class StaticRunner:
+    def __init__(self, result):
+        self.result = result
+
+    def run(self, _argv, **_kwargs):
+        return self.result
+
+
+def test_process_probe_distinguishes_exit_from_ssh_failure_and_missing_session():
+    running = ops.stack_process_status(
+        StaticRunner(Result(stdout="123|0||bash\n")), "robot")
+    exited = ops.stack_process_status(
+        StaticRunner(Result(stdout="123|1|17|bash\n")), "robot")
+    unreachable = ops.stack_process_status(
+        StaticRunner(Result(returncode=255, stderr="ssh timeout")), "robot")
+    missing = ops.stack_process_status(
+        StaticRunner(Result(returncode=3, stdout="MISSING\n")), "robot")
+
+    assert running["state"] == "RUNNING" and running["process_alive"] is True
+    assert exited["state"] == "EXITED" and exited["returncode"] == 17
+    assert unreachable["state"] == "UNKNOWN"
+    assert unreachable["process_alive"] is None
+    assert missing["state"] == "SESSION_MISSING"
+
+
+def test_tmux_launch_retains_exit_status_and_startup_reports_each_gate():
+    robotctl = runpy.run_path(str(Path(__file__).with_name("robotctl")))
+    command = robotctl["stack_launch_command"](
+        "source /opt/ros/humble/setup.bash", "ros2 launch pkg file.py",
+        "$HOME/logs/run/front", "front.log")
+    assert "remain-on-exit on" in command
+    assert "respawn-pane" in command
+    assert "PIPESTATUS[0]" in command
+    assert "stack_exit.env" in command
+
+    values = {key: None for key in ops.TOPICS}
+    values.update({key: False for key in ops.PRESENCE_TOPICS})
+    values.update({
+        "fleet": {"state": "WAIT_TARGET"},
+        "front_state": "IDLE", "rear_state": "IDLE",
+        "front_hw": True, "rear_hw": False,
+        "merge": {}, "id0_marker": False,
+    })
+    _, conditions = robotctl["report_startup_progress"](
+        {"topics": values}, {})
+    assert conditions["Front hardware_ready"] is True
+    assert conditions["Rear hardware_ready"] is False
+
+    metadata = robotctl["incident_metadata"](
+        "front", "FRONT HARDWARE NOT READY", {"timestamp": "now",
+        "topics": {"front_hw": False, "front_state": "IDLE",
+                   "front_fault": ""}},
+        {"state": "RUNNING", "pid": 123, "process_alive": True,
+         "returncode": None, "launch_command": "ros2 launch ..."})
+    assert metadata["reason"] == "FRONT HARDWARE NOT READY"
+    assert metadata["process_alive"] is True
+    assert metadata["returncode"] is None
+
+
+@pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux unavailable")
+def test_detached_stack_survives_starting_shell_return(tmp_path):
+    robotctl = runpy.run_path(str(Path(__file__).with_name("robotctl")))
+    function = robotctl["stack_launch_command"]
+    session = f"parkingbot-lifecycle-test-{os.getpid()}"
+    function.__globals__["SESSION"] = session
+    command = function(
+        "true", "bash -c 'sleep 1; exit 7'", str(tmp_path), "stack.log")
+    started = time.monotonic()
+    try:
+        result = subprocess.run(
+            ["bash", "-lc", command], text=True, capture_output=True,
+            timeout=2.0)
+        if (result.returncode != 0 and
+                "Operation not permitted" in result.stderr):
+            pytest.skip("sandbox does not permit access to the tmux socket")
+        assert result.returncode == 0, result.stderr
+        assert time.monotonic() - started < 2.0
+        probe = subprocess.run([
+            "tmux", "display-message", "-p", "-t", f"{session}:stack.0",
+            "#{pane_dead}|#{pane_pid}"], text=True, capture_output=True)
+        assert probe.returncode == 0, probe.stderr
+        dead, pid = probe.stdout.strip().split("|")
+        assert dead == "0"
+        assert int(pid) > 1
+
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            probe = subprocess.run([
+                "tmux", "display-message", "-p", "-t",
+                f"{session}:stack.0",
+                "#{pane_dead}|#{pane_dead_status}"],
+                text=True, capture_output=True)
+            if probe.stdout.strip().startswith("1|"):
+                break
+            time.sleep(0.05)
+        assert probe.stdout.strip() == "1|7"
+    finally:
+        subprocess.run(
+            ["tmux", "kill-session", "-t", session], capture_output=True)

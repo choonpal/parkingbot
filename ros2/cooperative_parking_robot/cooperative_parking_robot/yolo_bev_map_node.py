@@ -45,6 +45,7 @@ from std_msgs.msg import Bool, String
 from cooperative_parking_robot.vision_utils import (
     correct_floor_projection,
     directed_axis_yaw,
+    load_yolo_model,
     normalize_model_mode,
     parse_class_ids,
     principal_axis_yaw,
@@ -119,9 +120,10 @@ class YoloBevMapNode(Node):
         self.declare_parameter('stationary_hold_s', 2.0)
         self.declare_parameter('target_detection_timeout_s', 0.5)
         self.declare_parameter('target_mask_radius_m', 0.30)
-        # P1-3: 로봇 외곽 0.565x0.275m의 반대각은 0.314m다. 기존 0.25m는
-        # 오검출된 로봇의 모서리를 덮지 못해 팽창 후 A* 시작점을 막을 수 있었다.
-        self.declare_parameter('robot_mask_radius_m', 0.32)
+        # 로봇 외곽 0.565x0.42m 의 반대각은 0.352m 다. 이 반경이
+        # 실제 외곽보다 작으면 오검출된 로봇의 모서리를 덮지 못하고, 팽창 후
+        # A* 시작점을 막을 수 있다. 폭 실측(2026-08-28: 0.42m) 반영.
+        self.declare_parameter('robot_mask_radius_m', 0.37)
         # 운반 차량 feedback은 YOLO 결과 순서가 아니라 Front/Rear 중점에
         # 가장 가까운 마스크만 사용한다.
         self.declare_parameter('vehicle_feedback_association_gate_m', 0.45)
@@ -476,7 +478,12 @@ class YoloBevMapNode(Node):
                 f'YOLO requires a local model file; network download is '
                 f'disabled: {mp}')
         try:
-            self.model = YOLO(mp)
+            # `.engine`/`.onnx` 에는 task 정보가 없다. YOLO(mp) 로만 열면
+            # ultralytics 가 task=detect 로 추정해 **mask 가 사라진다**.
+            # mask 가 없으면 차량 길이/폭을 못 내고 vehicle_spec 이 영원히
+            # invalid 라서 미션이 시작되지 않는다. load_yolo_model 이
+            # model_mode 에 맞는 task 를 붙여준다.
+            self.model, _task = load_yolo_model(YOLO, mp, self.model_mode)
             self._validate_model_classes()
             self.get_logger().info(
                 f'YOLO loaded: {mp} | mode={self.model_mode} | '

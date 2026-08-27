@@ -53,7 +53,7 @@ class LoadedFootprint:
 def compute_loaded_footprint(
         wheelbase_m,
         robot_length_m=0.565,
-        robot_width_m=0.275,
+        robot_width_m=0.420,
         vehicle_length_m=0.90,
         vehicle_width_m=0.35,
         safety_margin_m=0.06,

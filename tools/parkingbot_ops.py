@@ -1,0 +1,412 @@
+#!/usr/bin/env python3
+"""ROS-independent orchestration and status helpers for production tooling."""
+
+from __future__ import annotations
+
+import datetime as dt
+from concurrent.futures import ThreadPoolExecutor
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import subprocess
+import time
+
+SESSION = "parkingbot-production"
+ROLES = ("jetson", "rear", "front")
+REQUIRED = (
+    "JETSON_HOST", "FRONT_HOST", "REAR_HOST", "JETSON_WORKSPACE",
+    "FRONT_WORKSPACE", "REAR_WORKSPACE", "CONTROL_WORKSPACE", "ROS_DOMAIN_ID",
+    "CAM0_DEVICE", "CAM2_DEVICE", "MODEL_PATH", "CAM0_GROUND_X_M",
+    "CAM0_GROUND_Y_M", "CAM0_HEIGHT_M", "CAM2_GROUND_X_M",
+    "CAM2_GROUND_Y_M", "CAM2_HEIGHT_M", "FRONT_MARKER_HEIGHT_M",
+    "REAR_MARKER_HEIGHT_M", "WHEELBASE", "FRONT_SERIAL",
+    "FRONT_WHEEL_RADIUS", "FRONT_ENCODER_PPR", "FRONT_LX", "FRONT_LY",
+    "FRONT_LEFT_SENSOR_X", "FRONT_RIGHT_SENSOR_X", "REAR_SERIAL",
+    "REAR_WHEEL_RADIUS", "REAR_ENCODER_PPR", "REAR_LX", "REAR_LY",
+    "REAR_LEFT_SENSOR_X", "REAR_RIGHT_SENSOR_X", "REAR_CALIB",
+)
+ABSOLUTE_PATH_KEYS = (
+    "JETSON_WORKSPACE", "FRONT_WORKSPACE", "REAR_WORKSPACE",
+    "CONTROL_WORKSPACE", "ROS_SETUP", "CAM0_DEVICE", "CAM2_DEVICE",
+    "MODEL_PATH", "FRONT_SERIAL", "REAR_SERIAL", "REAR_CALIB",
+)
+
+TOPICS = {
+    "fleet": "/fleet/state",
+    "target_ready": "/parking/target_ready",
+    "target_status": "/parking/target_status",
+    "vehicle_spec": "/parking/vehicle_spec",
+    "merge": "/cctv/merge_status",
+    "front_state": "/front/robot_state",
+    "rear_state": "/rear/robot_state",
+    "front_hw": "/front/hardware_ready",
+    "rear_hw": "/rear/hardware_ready",
+    "front_hw_status": "/front/hardware_status",
+    "rear_hw_status": "/rear/hardware_status",
+    "front_fault": "/front/motion_fault",
+    "rear_fault": "/rear/motion_fault",
+    "front_loc": "/front/localization_status",
+    "rear_loc": "/rear/localization_status",
+    "front_marker": "/front/cctv_marker_visible",
+    "rear_marker": "/rear/cctv_marker_visible",
+    "id0_marker": "/sync/marker_visible",
+    "sync": "/sync/error_state",
+}
+PRESENCE_TOPICS = {
+    "front_odom": "/front/odom",
+    "rear_odom": "/rear/odom",
+    "relative_pose": "/sync/relative_pose",
+    "map_stream": "/parking/map",
+}
+
+
+def load_env(path: Path) -> dict[str, str]:
+    values = {}
+    if not path.exists():
+        raise ValueError(
+            f"site config missing: {path}\n"
+            "copy tools/production_hosts.env.example and fill measured values")
+    for number, raw in enumerate(path.read_text().splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            raise ValueError(f"{path}:{number}: expected KEY=VALUE")
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]*", key):
+            raise ValueError(f"{path}:{number}: invalid key {key!r}")
+        parsed = shlex.split(value, comments=True)
+        values[key] = parsed[0] if parsed else ""
+    values.setdefault("ROS_LOCALHOST_ONLY", "0")
+    values.setdefault("RMW_IMPLEMENTATION", "rmw_fastrtps_cpp")
+    values.setdefault("ROS_SETUP", "/opt/ros/humble/setup.bash")
+    values.setdefault("REAR_CAMERA_TOPIC", "/rear/marker_camera/image")
+    values.setdefault("REAR_ENABLE_INTERNAL_CAMERA", "false")
+    return values
+
+
+def missing_config(config: dict[str, str]) -> list[str]:
+    return [key for key in REQUIRED if not config.get(key, "").strip()]
+
+
+def invalid_paths(config: dict[str, str]) -> list[str]:
+    return [key for key in ABSOLUTE_PATH_KEYS
+            if config.get(key) and not config[key].startswith("/")]
+
+
+def conditional_config_errors(config: dict[str, str]) -> list[str]:
+    internal = config.get("REAR_ENABLE_INTERNAL_CAMERA", "false").lower()
+    if internal not in ("true", "false"):
+        return ["REAR_ENABLE_INTERNAL_CAMERA must be true or false"]
+    if internal == "true" and not config.get("REAR_CAMERA_ID", "").strip():
+        return ["REAR_CAMERA_ID is required for the internal camera"]
+    if internal == "false" and not config.get(
+            "REAR_EXTERNAL_CAMERA_COMMAND", "").strip():
+        return ["REAR_EXTERNAL_CAMERA_COMMAND is required for the external camera"]
+    return []
+
+
+class Runner:
+    def run(self, argv, *, timeout=10, check=False):
+        return subprocess.run(
+            argv, text=True, capture_output=True, timeout=timeout, check=check)
+
+
+def remote_argv(host: str, command: str) -> list[str]:
+    if host in ("local", "localhost", "127.0.0.1"):
+        return ["bash", "-lc", command]
+    return [
+        "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
+        "-o", "ServerAliveInterval=2", "-o", "ServerAliveCountMax=2",
+        host, "bash", "-lc", shlex.quote(command),
+    ]
+
+
+def remote_run(runner: Runner, host: str, command: str, timeout=10):
+    return runner.run(remote_argv(host, command), timeout=timeout)
+
+
+def role_host(config, role):
+    return config[f"{role.upper()}_HOST"]
+
+
+def role_workspace(config, role):
+    return config[f"{role.upper()}_WORKSPACE"]
+
+
+def ros_prefix(config, role):
+    workspace = role_workspace(config, role)
+    return (
+        f"source {shlex.quote(config['ROS_SETUP'])} && "
+        f"source {shlex.quote(workspace + '/install/setup.bash')} && "
+        f"export ROS_DOMAIN_ID={shlex.quote(config['ROS_DOMAIN_ID'])} && "
+        f"export ROS_LOCALHOST_ONLY={shlex.quote(config['ROS_LOCALHOST_ONLY'])} && "
+        f"export RMW_IMPLEMENTATION={shlex.quote(config['RMW_IMPLEMENTATION'])}")
+
+
+def q(value):
+    if str(value).startswith("$HOME/"):
+        return '"' + str(value) + '"'
+    return shlex.quote(str(value))
+
+
+def launch_command(config, role):
+    if role == "jetson":
+        runtime = "$HOME/.ros/adaptive_valet_bot"
+        args = {
+            "enable_opencv_camera": "true", "camera0_device": config["CAM0_DEVICE"],
+            "camera2_device": config["CAM2_DEVICE"],
+            "cctv0_camera_calib": f"{runtime}/cctv0_camera_calibration.npz",
+            "cctv2_camera_calib": f"{runtime}/cctv2_camera_calibration.npz",
+            "homography_cam0_file": f"{runtime}/homography_cam0_rectified.npy",
+            "homography_cam2_file": f"{runtime}/homography_cam2_rectified.npy",
+            "layout_config": f"{runtime}/parking_layout.yaml",
+            "parking_registry_db_path": f"{runtime}/parking_registry.db",
+            "model_path": config["MODEL_PATH"],
+            "cam0_ground_x_m": config["CAM0_GROUND_X_M"],
+            "cam0_ground_y_m": config["CAM0_GROUND_Y_M"],
+            "cam0_height_m": config["CAM0_HEIGHT_M"],
+            "cam2_ground_x_m": config["CAM2_GROUND_X_M"],
+            "cam2_ground_y_m": config["CAM2_GROUND_Y_M"],
+            "cam2_height_m": config["CAM2_HEIGHT_M"],
+            "camera_ground_points": "[" + ", ".join((
+                config["CAM0_GROUND_X_M"], config["CAM0_GROUND_Y_M"],
+                config["CAM2_GROUND_X_M"], config["CAM2_GROUND_Y_M"])) + "]",
+            "front_marker_height_m": config["FRONT_MARKER_HEIGHT_M"],
+            "rear_marker_height_m": config["REAR_MARKER_HEIGHT_M"],
+            "enable_operator_ui": "true", "enable_debug_overlay": "false",
+            "simultaneous_entry": "false", "require_all_cameras": "true",
+            "require_exact_camera_resolution": "true",
+        }
+        launch = "cctv_server_dual.launch.py"
+    else:
+        p = role.upper()
+        args = {
+            "serial_port": config[f"{p}_SERIAL"], "enable_serial": "true",
+            "require_serial": "true", "require_hardware_ready": "true",
+            "require_ultrasonic_for_ready": "true", "wheelbase": config["WHEELBASE"],
+            "wheel_radius": config[f"{p}_WHEEL_RADIUS"],
+            "encoder_ppr": config[f"{p}_ENCODER_PPR"],
+            "lx": config[f"{p}_LX"], "ly": config[f"{p}_LY"],
+            "left_sensor_to_gripper_x_m": config[f"{p}_LEFT_SENSOR_X"],
+            "right_sensor_to_gripper_x_m": config[f"{p}_RIGHT_SENSOR_X"],
+            "simultaneous_entry": "false",
+        }
+        if role == "front":
+            args["use_aruco_distance"] = "true"
+            launch = "front_robot.launch.py"
+        else:
+            args.update({
+                "enable_rear_camera": config["REAR_ENABLE_INTERNAL_CAMERA"],
+                "rear_camera_topic": config["REAR_CAMERA_TOPIC"],
+                "camera_calib": config["REAR_CALIB"],
+            })
+            if config["REAR_ENABLE_INTERNAL_CAMERA"].lower() == "true":
+                args["rear_camera_id"] = config["REAR_CAMERA_ID"]
+            launch = "rear_robot.launch.py"
+    rendered = " ".join(f"{key}:={q(value)}" for key, value in args.items())
+    return f"ros2 launch cooperative_parking_robot {launch} {rendered}"
+
+
+def run_root(base=None):
+    root = Path(base or os.environ.get(
+        "PARKINGBOT_LOG_ROOT", "~/.ros/parkingbot_logs")).expanduser()
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def create_run_dir(base=None, timestamp=None):
+    stamp = timestamp or dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    root = run_root(base)
+    target = root / stamp
+    for name in (*ROLES, "state", "incidents"):
+        (target / name).mkdir(parents=True, exist_ok=False)
+    latest = root / "latest"
+    if latest.is_symlink() or latest.exists():
+        latest.unlink()
+    latest.symlink_to(target.name)
+    return target
+
+
+def parse_scalar(raw):
+    text = raw.strip()
+    if text in ("true", "false"):
+        return text == "true"
+    if (len(text) >= 2 and text[0] == text[-1] and text[0] in "'\""):
+        text = text[1:-1]
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return text
+
+
+def topic_once(runner, topic, timeout=1.2):
+    try:
+        result = runner.run(
+            ["ros2", "topic", "echo", "--once", "--field", "data", topic],
+            timeout=timeout)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+    return parse_scalar(result.stdout) if result.returncode == 0 else None
+
+
+def topic_present(runner, topic, timeout=1.2):
+    try:
+        result = runner.run(
+            ["ros2", "topic", "echo", "--once", topic], timeout=timeout)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
+def snapshot(runner=None, timeout=1.2, hosts=None):
+    runner = runner or Runner()
+    # Every topic has its own bounded subprocess, sampled concurrently so a
+    # dead topic cannot turn one field into a 20-second sequential delay.
+    with ThreadPoolExecutor(max_workers=len(TOPICS)) as pool:
+        pending = {
+            key: pool.submit(topic_once, runner, topic, timeout)
+            for key, topic in TOPICS.items()}
+        values = {key: future.result() for key, future in pending.items()}
+    with ThreadPoolExecutor(max_workers=len(PRESENCE_TOPICS)) as pool:
+        pending = {
+            key: pool.submit(topic_present, runner, topic, timeout)
+            for key, topic in PRESENCE_TOPICS.items()}
+        values.update({key: future.result()
+                       for key, future in pending.items()})
+    for key in ("fleet", "target_status", "vehicle_spec", "merge", "front_loc", "rear_loc", "sync"):
+        if isinstance(values[key], str):
+            try:
+                values[key] = json.loads(values[key])
+            except json.JSONDecodeError:
+                pass
+    fleet = values["fleet"] if isinstance(values["fleet"], dict) else {}
+    sync = values["sync"] if isinstance(values["sync"], dict) else {}
+    blockers = []
+    for role in ("front", "rear"):
+        state = values[f"{role}_state"]
+        fault = values[f"{role}_fault"]
+        if state in (None, "UNKNOWN"):
+            blockers.append(f"{role.upper()} STATE UNAVAILABLE")
+        elif state == "FAULT":
+            blockers.append(f"{role.upper()} ROBOT FAULT")
+        if values[f"{role}_hw"] is not True:
+            blockers.append(f"{role.upper()} HARDWARE NOT READY")
+        hardware_status = values[f"{role}_hw_status"]
+        if isinstance(hardware_status, str) and "ERR" in hardware_status.upper():
+            blockers.append(f"{role.upper()} HARDWARE: {hardware_status}")
+        if not values[f"{role}_odom"]:
+            blockers.append(f"{role.upper()} ODOM NOT FRESH")
+        if values[f"{role}_loc"] is None:
+            blockers.append(f"{role.upper()} LOCALIZATION UNAVAILABLE")
+        if values[f"{role}_marker"] is not True:
+            blockers.append(f"{role.upper()} CCTV MARKER NOT VISIBLE")
+        if fault not in (None, "", "OK", "-"):
+            blockers.append(f"{role.upper()} MOTION FAULT: {fault}")
+    sync_error = sync.get("error") if isinstance(sync, dict) else sync
+    if sync_error not in (None, "", "OK", "ARRIVED"):
+        blockers.append(f"SYNC: {sync_error}")
+    if values["id0_marker"] is not True:
+        blockers.append("ID0 MARKER NOT VISIBLE")
+    if not fleet:
+        blockers.append("FLEET STATE UNAVAILABLE")
+    if fleet and not fleet.get("vehicle_spec_ready", False):
+        blockers.append("VEHICLE DIMENSION NOT READY")
+    merge = values["merge"] if isinstance(values["merge"], dict) else {}
+    cameras = merge.get("cameras", {}) if merge else {}
+    for camera in ("cam0", "cam2"):
+        if not cameras.get(camera, {}).get("alive", False):
+            blockers.append(f"{camera.upper()} NOT FRESH")
+    if not values["map_stream"]:
+        blockers.append("MAP NOT FRESH")
+    data = {
+        "timestamp": dt.datetime.now(dt.timezone.utc).astimezone().isoformat(),
+        "hosts": hosts or {}, "topics": values, "fleet_state": fleet.get("state", "UNKNOWN"),
+        "mission_id": fleet.get("mission_id", ""), "empty_slots": fleet.get("empty_count"),
+        "blockers": blockers, "overall": "READY FOR PARK" if not blockers else "NOT READY",
+    }
+    return data
+
+
+def _shown(value):
+    if value is None:
+        return "UNAVAILABLE"
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, dict):
+        return str(value.get("state", value.get("error", "OK")))
+    return str(value)
+
+
+def format_snapshot(data):
+    v = data["topics"]
+    fleet = v["fleet"] if isinstance(v["fleet"], dict) else {}
+    spec = v["vehicle_spec"] if isinstance(v["vehicle_spec"], dict) else {}
+    sync = v["sync"] if isinstance(v["sync"], dict) else {}
+    merge = v["merge"] if isinstance(v["merge"], dict) else {}
+    cameras = merge.get("cameras", {})
+    lines = [
+        f"PARKINGBOT STATUS  {data['timestamp']}", "=" * 56, "",
+        "HOSTS",
+        f"Jetson       {data.get('hosts', {}).get('jetson', 'UNKNOWN')}",
+        f"Front RPi    {data.get('hosts', {}).get('front', 'UNKNOWN')}",
+        f"Rear RPi     {data.get('hosts', {}).get('rear', 'UNKNOWN')}", "",
+        "MISSION", f"Fleet        {data['fleet_state']}",
+        f"Mission ID   {data['mission_id'] or '-'}",
+        f"Target       {_shown(v['target_ready'])}",
+        f"Vehicle Spec {'VALID' if fleet.get('vehicle_spec_ready') else 'NOT READY'}",
+        f"Empty Slots  {_shown(data['empty_slots'])}", "",
+    ]
+    for role in ("front", "rear"):
+        lines.extend([
+            role.upper(), f"State        {_shown(v[role + '_state'])}",
+            f"HW Ready     {_shown(v[role + '_hw'])}",
+            f"Localization {_shown(v[role + '_loc'])}",
+            f"Motion Fault {_shown(v[role + '_fault'])}",
+            f"CCTV Marker  {_shown(v[role + '_marker'])}", "",
+        ])
+    lines.extend([
+        "SYNC", f"ID0 Marker   {_shown(v['id0_marker'])}",
+        f"Reference    {_shown(sync.get('reference_state'))}",
+        f"Sync Error   {_shown(sync.get('error'))}", "",
+        "VISION", f"Merge        {_shown(v['merge'])}",
+        f"CCTV0        {'OK / FRESH' if cameras.get('cam0', {}).get('alive') else 'NOT READY'}",
+        f"CCTV2        {'OK / FRESH' if cameras.get('cam2', {}).get('alive') else 'NOT READY'}",
+        f"Map          {'OK' if v['map_stream'] else 'NOT READY'}",
+        f"Dimension    {'VALID' if spec.get('dimension_valid') else 'NOT READY'}", "",
+        "FAULTS",
+        f"Front        {_shown(v['front_fault'])}",
+        f"Rear         {_shown(v['rear_fault'])}",
+        f"Sync         {_shown(sync.get('error'))}", "",
+        "OVERALL", data["overall"],
+    ])
+    if data["blockers"]:
+        lines.extend(["", "BLOCKERS:"] + [f"- {item}" for item in data["blockers"]])
+    return "\n".join(lines)
+
+
+def incident_snapshot(run_dir: Path, reason: str, state: dict, runner=None):
+    runner = runner or Runner()
+    safe = re.sub(r"[^A-Z0-9_-]+", "_", reason.upper()).strip("_")[:64] or "FAULT"
+    target = run_dir / "incidents" / (
+        dt.datetime.now().strftime("%Y%m%d_%H%M%S_%f_") + safe)
+    target.mkdir(parents=True, exist_ok=False)
+    (target / "state.json").write_text(json.dumps(state, indent=2, ensure_ascii=False) + "\n")
+    (target / "summary.txt").write_text(format_snapshot(state) + "\n")
+    for command, filename in ((["ros2", "node", "list"], "ros_node_list.txt"),
+                              (["ros2", "topic", "list", "-t"], "ros_topic_list.txt")):
+        try:
+            result = runner.run(command, timeout=3)
+            (target / filename).write_text(result.stdout + result.stderr)
+        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+            (target / filename).write_text(f"unavailable: {exc}\n")
+    for role in ROLES:
+        source = run_dir / role / f"{role}_robot.log"
+        if role == "jetson":
+            source = run_dir / role / "cctv_server_dual.log"
+        lines = source.read_text(errors="replace").splitlines()[-200:] if source.exists() else []
+        (target / f"{role}_tail.log").write_text("\n".join(lines) + "\n")
+    return target

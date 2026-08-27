@@ -211,6 +211,53 @@ Homography와 등록 layout이 준비되기 전에는 motion을 허용하지 않
 
 ## 4. 분산 기동
 
+### Production operation commands
+
+긴 launch 명령을 매번 입력하지 않도록 중앙 운용 PC에 다음 명령을 설치한다.
+
+```bash
+cd /absolute/path/to/parkingbot
+bash tools/install_robot_commands.sh
+```
+
+Installer는 shell startup file을 수정하지 않는다. 최초 한 번
+`~/.config/parkingbot/production_hosts.env`에 검증된 SSH host, 세 장비와 운용
+PC의 절대 colcon workspace 경로, stable device path 및 아래 launch에 필요한
+실측값을 입력한다. 저장소에는 실제 SSH 주소가 없으며 Rear=`robot-1`,
+Front=`robot-2` 역할만 확인되므로 빈 값을 추측해 채우지 않는다.
+Rear가 외부 camera driver를 쓰면 현장에서 이미 검증한 정확한 실행 명령을
+`REAR_EXTERNAL_CAMERA_COMMAND`에 넣는다. 명령을 알 수 없으면 start는 차단된다.
+
+```bash
+robot_doctor
+robot_start
+robot_state --watch
+```
+
+`robot_start`는 Jetson → Rear → Front 순서로 각 장비의
+`parkingbot-production` tmux session을 만들고, 이 절의 기존 production launch
+argument를 그대로 사용한다. PARK request는 자동 발행하지 않는다. 기동 후
+Jetson의 `http://JETSON_HOST:5000/kiosk`에서 PARK를 승인한다.
+
+```bash
+robot_state
+robot_state --json
+robot_logs
+robot_logs rear
+robot_stop
+```
+
+`robot_stop`은 기존 `/emergency_stop`을 먼저 발행한 다음 Front → Rear → Jetson
+session을 종료한다. STM32 ESTOP/FAULT latch를 해제하거나 Registry를 rollback하지
+않는다. 따라서 출력의 `MANUAL RESET MAY BE REQUIRED`는 아래 FAULT 복구 계약을
+따르라는 의미다.
+
+로그는 각 장비의 `~/.ros/parkingbot_logs/<run-id>/<role>/`에 저장되고 중앙
+운용 PC에는 state JSONL과 incident snapshot이 저장된다. Front/Rear motion
+fault, sync fatal error, robot FAULT, hardware-ready loss 또는 tmux process exit가
+새로 발생하면 `incidents/<timestamp>_<reason>/`에 상태, ROS graph와 세 장비
+최근 로그 tail을 수집한다.
+
 현재는 motor rail만 따로 끌 수 없으므로, 작업구역을 비우고 두 로봇의 모든
 바퀴를 견고하게 띄운 상태에서 공통 전원을 인가한 뒤 Jetson → Rear → Front
 순서로 기동한다. Production marker는 Front 상판 **ID2**, Rear 상판 **ID1**, Rear

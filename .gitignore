@@ -5,6 +5,7 @@
 **/__pycache__/
 **/.pytest_cache/
 *.py[cod]
+/tools/production_hosts.env
 
 # Homography GUI creates recoverable local backups before overwriting a camera H.
 /dual_tile_homography_tool/output/backups/

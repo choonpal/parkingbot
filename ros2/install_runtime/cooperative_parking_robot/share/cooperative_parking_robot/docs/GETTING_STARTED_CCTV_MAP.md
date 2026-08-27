@@ -1,0 +1,1 @@
+/home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/GETTING_STARTED_CCTV_MAP.md

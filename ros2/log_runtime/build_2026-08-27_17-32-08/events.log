@@ -1,0 +1,691 @@
+[0.000000] (-) TimerEvent: {}
+[0.000250] (cooperative_parking_robot) JobQueued: {'identifier': 'cooperative_parking_robot', 'dependencies': OrderedDict()}
+[0.001056] (cooperative_parking_robot) JobStarted: {'identifier': 'cooperative_parking_robot'}
+[0.100501] (-) TimerEvent: {}
+[0.201080] (-) TimerEvent: {}
+[0.301808] (-) TimerEvent: {}
+[0.402710] (-) TimerEvent: {}
+[0.503345] (-) TimerEvent: {}
+[0.603904] (-) TimerEvent: {}
+[0.704477] (-) TimerEvent: {}
+[0.805075] (-) TimerEvent: {}
+[0.905854] (-) TimerEvent: {}
+[1.006704] (-) TimerEvent: {}
+[1.107357] (-) TimerEvent: {}
+[1.209351] (-) TimerEvent: {}
+[1.309997] (-) TimerEvent: {}
+[1.410614] (-) TimerEvent: {}
+[1.511197] (-) TimerEvent: {}
+[1.611763] (-) TimerEvent: {}
+[1.712664] (-) TimerEvent: {}
+[1.813331] (-) TimerEvent: {}
+[1.921114] (-) TimerEvent: {}
+[2.021709] (-) TimerEvent: {}
+[2.122318] (-) TimerEvent: {}
+[2.222928] (-) TimerEvent: {}
+[2.323505] (-) TimerEvent: {}
+[2.424063] (-) TimerEvent: {}
+[2.524759] (-) TimerEvent: {}
+[2.625604] (-) TimerEvent: {}
+[2.737128] (-) TimerEvent: {}
+[2.837711] (-) TimerEvent: {}
+[2.938279] (-) TimerEvent: {}
+[3.038848] (-) TimerEvent: {}
+[3.139437] (-) TimerEvent: {}
+[3.240025] (-) TimerEvent: {}
+[3.340591] (-) TimerEvent: {}
+[3.441181] (-) TimerEvent: {}
+[3.541823] (-) TimerEvent: {}
+[3.642425] (-) TimerEvent: {}
+[3.743003] (-) TimerEvent: {}
+[3.843739] (-) TimerEvent: {}
+[3.944337] (-) TimerEvent: {}
+[4.045030] (-) TimerEvent: {}
+[4.145617] (-) TimerEvent: {}
+[4.246192] (-) TimerEvent: {}
+[4.346799] (-) TimerEvent: {}
+[4.447389] (-) TimerEvent: {}
+[4.547951] (-) TimerEvent: {}
+[4.648513] (-) TimerEvent: {}
+[4.749278] (-) TimerEvent: {}
+[4.849878] (-) TimerEvent: {}
+[4.950438] (-) TimerEvent: {}
+[5.051023] (-) TimerEvent: {}
+[5.151615] (-) TimerEvent: {}
+[5.252220] (-) TimerEvent: {}
+[5.352797] (-) TimerEvent: {}
+[5.453393] (-) TimerEvent: {}
+[5.554002] (-) TimerEvent: {}
+[5.654914] (-) TimerEvent: {}
+[5.755475] (-) TimerEvent: {}
+[5.856051] (-) TimerEvent: {}
+[5.956617] (-) TimerEvent: {}
+[6.057219] (-) TimerEvent: {}
+[6.157796] (-) TimerEvent: {}
+[6.258382] (-) TimerEvent: {}
+[6.358974] (-) TimerEvent: {}
+[6.459549] (-) TimerEvent: {}
+[6.560124] (-) TimerEvent: {}
+[6.660721] (-) TimerEvent: {}
+[6.761295] (-) TimerEvent: {}
+[6.861903] (-) TimerEvent: {}
+[6.965142] (-) TimerEvent: {}
+[7.065721] (-) TimerEvent: {}
+[7.166280] (-) TimerEvent: {}
+[7.266848] (-) TimerEvent: {}
+[7.367423] (-) TimerEvent: {}
+[7.468016] (-) TimerEvent: {}
+[7.568589] (-) TimerEvent: {}
+[7.669190] (-) TimerEvent: {}
+[7.769775] (-) TimerEvent: {}
+[7.870362] (-) TimerEvent: {}
+[7.970948] (-) TimerEvent: {}
+[8.071494] (-) TimerEvent: {}
+[8.172072] (-) TimerEvent: {}
+[8.272654] (-) TimerEvent: {}
+[8.373282] (-) TimerEvent: {}
+[8.473863] (-) TimerEvent: {}
+[8.574433] (-) TimerEvent: {}
+[8.675005] (-) TimerEvent: {}
+[8.775595] (-) TimerEvent: {}
+[8.876189] (-) TimerEvent: {}
+[8.978780] (-) TimerEvent: {}
+[9.079340] (-) TimerEvent: {}
+[9.179903] (-) TimerEvent: {}
+[9.280492] (-) TimerEvent: {}
+[9.381045] (-) TimerEvent: {}
+[9.481616] (-) TimerEvent: {}
+[9.582229] (-) TimerEvent: {}
+[9.683447] (-) TimerEvent: {}
+[9.784062] (-) TimerEvent: {}
+[9.884628] (-) TimerEvent: {}
+[9.985333] (-) TimerEvent: {}
+[10.085984] (-) TimerEvent: {}
+[10.186616] (-) TimerEvent: {}
+[10.287229] (-) TimerEvent: {}
+[10.387777] (-) TimerEvent: {}
+[10.488397] (-) TimerEvent: {}
+[10.588994] (-) TimerEvent: {}
+[10.689913] (-) TimerEvent: {}
+[10.790492] (-) TimerEvent: {}
+[10.891060] (-) TimerEvent: {}
+[10.991609] (-) TimerEvent: {}
+[11.092212] (-) TimerEvent: {}
+[11.193057] (-) TimerEvent: {}
+[11.293868] (-) TimerEvent: {}
+[11.394476] (-) TimerEvent: {}
+[11.495058] (-) TimerEvent: {}
+[11.595618] (-) TimerEvent: {}
+[11.696186] (-) TimerEvent: {}
+[11.796786] (-) TimerEvent: {}
+[11.897462] (-) TimerEvent: {}
+[11.998047] (-) TimerEvent: {}
+[12.098790] (-) TimerEvent: {}
+[12.199470] (-) TimerEvent: {}
+[12.300053] (-) TimerEvent: {}
+[12.400637] (-) TimerEvent: {}
+[12.501621] (-) TimerEvent: {}
+[12.602172] (-) TimerEvent: {}
+[12.702758] (-) TimerEvent: {}
+[12.803353] (-) TimerEvent: {}
+[12.903907] (-) TimerEvent: {}
+[13.004559] (-) TimerEvent: {}
+[13.105381] (-) TimerEvent: {}
+[13.206003] (-) TimerEvent: {}
+[13.306609] (-) TimerEvent: {}
+[13.407193] (-) TimerEvent: {}
+[13.511840] (-) TimerEvent: {}
+[13.612427] (-) TimerEvent: {}
+[13.713043] (-) TimerEvent: {}
+[13.813750] (-) TimerEvent: {}
+[13.914319] (-) TimerEvent: {}
+[14.014893] (-) TimerEvent: {}
+[14.115476] (-) TimerEvent: {}
+[14.216053] (-) TimerEvent: {}
+[14.316624] (-) TimerEvent: {}
+[14.417261] (-) TimerEvent: {}
+[14.517854] (-) TimerEvent: {}
+[14.618475] (-) TimerEvent: {}
+[14.719084] (-) TimerEvent: {}
+[14.819657] (-) TimerEvent: {}
+[14.920478] (-) TimerEvent: {}
+[15.021121] (-) TimerEvent: {}
+[15.122266] (-) TimerEvent: {}
+[15.222901] (-) TimerEvent: {}
+[15.323472] (-) TimerEvent: {}
+[15.424027] (-) TimerEvent: {}
+[15.524594] (-) TimerEvent: {}
+[15.625227] (-) TimerEvent: {}
+[15.725809] (-) TimerEvent: {}
+[15.826401] (-) TimerEvent: {}
+[15.926974] (-) TimerEvent: {}
+[16.027569] (-) TimerEvent: {}
+[16.128168] (-) TimerEvent: {}
+[16.228745] (-) TimerEvent: {}
+[16.329361] (-) TimerEvent: {}
+[16.430422] (-) TimerEvent: {}
+[16.531019] (-) TimerEvent: {}
+[16.631621] (-) TimerEvent: {}
+[16.732195] (-) TimerEvent: {}
+[16.832749] (-) TimerEvent: {}
+[16.933322] (-) TimerEvent: {}
+[17.033872] (-) TimerEvent: {}
+[17.134436] (-) TimerEvent: {}
+[17.235010] (-) TimerEvent: {}
+[17.335579] (-) TimerEvent: {}
+[17.436125] (-) TimerEvent: {}
+[17.536681] (-) TimerEvent: {}
+[17.637269] (-) TimerEvent: {}
+[17.737842] (-) TimerEvent: {}
+[17.838512] (-) TimerEvent: {}
+[17.939430] (-) TimerEvent: {}
+[18.040034] (-) TimerEvent: {}
+[18.140602] (-) TimerEvent: {}
+[18.241280] (-) TimerEvent: {}
+[18.341858] (-) TimerEvent: {}
+[18.442426] (-) TimerEvent: {}
+[18.543294] (-) TimerEvent: {}
+[18.643857] (-) TimerEvent: {}
+[18.744438] (-) TimerEvent: {}
+[18.845043] (-) TimerEvent: {}
+[18.945616] (-) TimerEvent: {}
+[19.047348] (-) TimerEvent: {}
+[19.147924] (-) TimerEvent: {}
+[19.248793] (-) TimerEvent: {}
+[19.349574] (-) TimerEvent: {}
+[19.450143] (-) TimerEvent: {}
+[19.550736] (-) TimerEvent: {}
+[19.651293] (-) TimerEvent: {}
+[19.751818] (-) TimerEvent: {}
+[19.852409] (-) TimerEvent: {}
+[19.953006] (-) TimerEvent: {}
+[20.053654] (-) TimerEvent: {}
+[20.154234] (-) TimerEvent: {}
+[20.254852] (-) TimerEvent: {}
+[20.355411] (-) TimerEvent: {}
+[20.455961] (-) TimerEvent: {}
+[20.556531] (-) TimerEvent: {}
+[20.657182] (-) TimerEvent: {}
+[20.759875] (-) TimerEvent: {}
+[20.860976] (-) TimerEvent: {}
+[20.961604] (-) TimerEvent: {}
+[21.062238] (-) TimerEvent: {}
+[21.162791] (-) TimerEvent: {}
+[21.263340] (-) TimerEvent: {}
+[21.364175] (-) TimerEvent: {}
+[21.464771] (-) TimerEvent: {}
+[21.566044] (-) TimerEvent: {}
+[21.666673] (-) TimerEvent: {}
+[21.767621] (-) TimerEvent: {}
+[21.868219] (-) TimerEvent: {}
+[21.969189] (-) TimerEvent: {}
+[22.069798] (-) TimerEvent: {}
+[22.170818] (-) TimerEvent: {}
+[22.272937] (-) TimerEvent: {}
+[22.373518] (-) TimerEvent: {}
+[22.474098] (-) TimerEvent: {}
+[22.574710] (-) TimerEvent: {}
+[22.675583] (-) TimerEvent: {}
+[22.776290] (-) TimerEvent: {}
+[22.876908] (-) TimerEvent: {}
+[22.977717] (-) TimerEvent: {}
+[23.078374] (-) TimerEvent: {}
+[23.181506] (-) TimerEvent: {}
+[23.282181] (-) TimerEvent: {}
+[23.383079] (-) TimerEvent: {}
+[23.483679] (-) TimerEvent: {}
+[23.584256] (-) TimerEvent: {}
+[23.685133] (-) TimerEvent: {}
+[23.785709] (-) TimerEvent: {}
+[23.886382] (-) TimerEvent: {}
+[23.988029] (-) TimerEvent: {}
+[24.088600] (-) TimerEvent: {}
+[24.189211] (-) TimerEvent: {}
+[24.289892] (-) TimerEvent: {}
+[24.391391] (-) TimerEvent: {}
+[24.491950] (-) TimerEvent: {}
+[24.592511] (-) TimerEvent: {}
+[24.693206] (-) TimerEvent: {}
+[24.793827] (-) TimerEvent: {}
+[24.894510] (-) TimerEvent: {}
+[24.995129] (-) TimerEvent: {}
+[25.095687] (-) TimerEvent: {}
+[25.196227] (-) TimerEvent: {}
+[25.296820] (-) TimerEvent: {}
+[25.397444] (-) TimerEvent: {}
+[25.498060] (-) TimerEvent: {}
+[25.598673] (-) TimerEvent: {}
+[25.699292] (-) TimerEvent: {}
+[25.799854] (-) TimerEvent: {}
+[25.900611] (-) TimerEvent: {}
+[26.001540] (-) TimerEvent: {}
+[26.102120] (-) TimerEvent: {}
+[26.202722] (-) TimerEvent: {}
+[26.303984] (-) TimerEvent: {}
+[26.404577] (-) TimerEvent: {}
+[26.505168] (-) TimerEvent: {}
+[26.605740] (-) TimerEvent: {}
+[26.706297] (-) TimerEvent: {}
+[26.806870] (-) TimerEvent: {}
+[26.907468] (-) TimerEvent: {}
+[27.008058] (-) TimerEvent: {}
+[27.108683] (-) TimerEvent: {}
+[27.209474] (-) TimerEvent: {}
+[27.310450] (-) TimerEvent: {}
+[27.411144] (-) TimerEvent: {}
+[27.511779] (-) TimerEvent: {}
+[27.612397] (-) TimerEvent: {}
+[27.712997] (-) TimerEvent: {}
+[27.814075] (-) TimerEvent: {}
+[27.914664] (-) TimerEvent: {}
+[28.015260] (-) TimerEvent: {}
+[28.115936] (-) TimerEvent: {}
+[28.216540] (-) TimerEvent: {}
+[28.317090] (-) TimerEvent: {}
+[28.417710] (-) TimerEvent: {}
+[28.518330] (-) TimerEvent: {}
+[28.621983] (-) TimerEvent: {}
+[28.722603] (-) TimerEvent: {}
+[28.823204] (-) TimerEvent: {}
+[28.923800] (-) TimerEvent: {}
+[29.024363] (-) TimerEvent: {}
+[29.124985] (-) TimerEvent: {}
+[29.225577] (-) TimerEvent: {}
+[29.326169] (-) TimerEvent: {}
+[29.433514] (-) TimerEvent: {}
+[29.534159] (-) TimerEvent: {}
+[29.634761] (-) TimerEvent: {}
+[29.735347] (-) TimerEvent: {}
+[29.835892] (-) TimerEvent: {}
+[29.936466] (-) TimerEvent: {}
+[30.038996] (-) TimerEvent: {}
+[30.139496] (-) TimerEvent: {}
+[30.240030] (-) TimerEvent: {}
+[30.340584] (-) TimerEvent: {}
+[30.441123] (-) TimerEvent: {}
+[30.541657] (-) TimerEvent: {}
+[30.642210] (-) TimerEvent: {}
+[30.742779] (-) TimerEvent: {}
+[30.846398] (-) TimerEvent: {}
+[30.953105] (-) TimerEvent: {}
+[31.054008] (-) TimerEvent: {}
+[31.154548] (-) TimerEvent: {}
+[31.255097] (-) TimerEvent: {}
+[31.355651] (-) TimerEvent: {}
+[31.456196] (-) TimerEvent: {}
+[31.556760] (-) TimerEvent: {}
+[31.659507] (-) TimerEvent: {}
+[31.760048] (-) TimerEvent: {}
+[31.860591] (-) TimerEvent: {}
+[31.961192] (-) TimerEvent: {}
+[32.061752] (-) TimerEvent: {}
+[32.162359] (-) TimerEvent: {}
+[32.262954] (-) TimerEvent: {}
+[32.363515] (-) TimerEvent: {}
+[32.464146] (-) TimerEvent: {}
+[32.564740] (-) TimerEvent: {}
+[32.665382] (-) TimerEvent: {}
+[32.765927] (-) TimerEvent: {}
+[32.869126] (-) TimerEvent: {}
+[32.969639] (-) TimerEvent: {}
+[33.070193] (-) TimerEvent: {}
+[33.170725] (-) TimerEvent: {}
+[33.271262] (-) TimerEvent: {}
+[33.371817] (-) TimerEvent: {}
+[33.472344] (-) TimerEvent: {}
+[33.572925] (-) TimerEvent: {}
+[33.681333] (-) TimerEvent: {}
+[33.781923] (-) TimerEvent: {}
+[33.829311] (cooperative_parking_robot) Command: {'cmd': ['/usr/bin/python3', '-W', 'ignore:setup.py install is deprecated', '-W', 'ignore:easy_install command is deprecated', 'setup.py', 'develop', '--editable', '--build-directory', '/home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/build', '--no-deps', 'symlink_data'], 'cwd': '/home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot', 'env': {'LESSOPEN': '| /usr/bin/lesspipe %s', 'CODEX_CI': '1', 'PIP_CONSTRAINT': '/home/guitest/pip-constraints.txt', 'USER': 'guitest', 'SSH_CLIENT': '10.16.13.200 65374 22', 'XDG_SESSION_TYPE': 'tty', 'GIT_ASKPASS': '/home/guitest/.cursor-server/bin/linux-arm64/ae3a2b7231dd56194447fe4570dfdc61640b1e90/extensions/git/dist/askpass.sh', 'SHLVL': '1', 'LD_LIBRARY_PATH': '/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/aarch64-linux-gnu:/opt/ros/humble/lib', 'BROWSER': '/home/guitest/.cursor-server/bin/linux-arm64/ae3a2b7231dd56194447fe4570dfdc61640b1e90/bin/helpers/browser.sh', 'MOTD_SHOWN': 'pam', 'HOME': '/home/guitest', 'TERM_PROGRAM_VERSION': '3.17.19', 'VSCODE_IPC_HOOK_CLI': '/run/user/1001/vscode-ipc-9a06c734-7d00-4689-83b4-fafa37cc610e.sock', 'ROS_PYTHON_VERSION': '3', 'PAGER': 'cat', 'VSCODE_GIT_ASKPASS_MAIN': '/home/guitest/.cursor-server/bin/linux-arm64/ae3a2b7231dd56194447fe4570dfdc61640b1e90/extensions/git/dist/askpass-main.js', 'VSCODE_GIT_ASKPASS_NODE': '/home/guitest/.cursor-server/bin/linux-arm64/ae3a2b7231dd56194447fe4570dfdc61640b1e90/node', 'LC_CTYPE': 'C.UTF-8', 'NO_COLOR': '1', 'DBUS_SESSION_BUS_ADDRESS': 'unix:path=/run/user/1001/bus', 'COLORTERM': '', 'COLCON_PREFIX_PATH': '/home/guitest/ros2_ws/install', 'ROS_DISTRO': 'humble', 'OVSX_REGISTRY_URL': 'https://open-vsx.org', 'LOGNAME': 'guitest', '_': '/usr/bin/colcon', 'ROS_VERSION': '2', 'XDG_SESSION_CLASS': 'user', 'TERM': 'dumb', 'XDG_SESSION_ID': '4', 'ROS_LOCALHOST_ONLY': '0', 'PATH': '/home/guitest/.local/bin:/home/guitest/.codex/packages/standalone/releases/0.150.1-aarch64-unknown-linux-musl/codex-path:/home/guitest/.codex/tmp/arg0/codex-arg0JG6Mqu:/home/guitest/.local/bin:/home/guitest/.local/bin:/home/guitest/.cursor-server/bin/linux-arm64/ae3a2b7231dd56194447fe4570dfdc61640b1e90/bin/remote-cli:/home/guitest/.local/bin:/opt/ros/humble/bin:/home/guitest/.local/bin:/home/guitest/.local/bin:/home/guitest/.cursor-server/bin/linux-arm64/ae3a2b7231dd56194447fe4570dfdc61640b1e90/bin/remote-cli:/home/guitest/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin', 'CODEX_SESSION_ID': '01a04245-3f92-7ff2-a9a7-648a2eefa79c', 'XDG_RUNTIME_DIR': '/run/user/1001', 'CODEX_SANDBOX_NETWORK_DISABLED': '1', 'LANG': 'C.UTF-8', 'GH_PAGER': 'cat', 'LS_COLORS': 'rs=0:di=01;34:ln=01;36:mh=00:pi=40;33:so=01;35:do=01;35:bd=40;33;01:cd=40;33;01:or=40;31;01:mi=00:su=37;41:sg=30;43:ca=30;41:tw=30;42:ow=34;42:st=37;44:ex=01;32:*.tar=01;31:*.tgz=01;31:*.arc=01;31:*.arj=01;31:*.taz=01;31:*.lha=01;31:*.lz4=01;31:*.lzh=01;31:*.lzma=01;31:*.tlz=01;31:*.txz=01;31:*.tzo=01;31:*.t7z=01;31:*.zip=01;31:*.z=01;31:*.dz=01;31:*.gz=01;31:*.lrz=01;31:*.lz=01;31:*.lzo=01;31:*.xz=01;31:*.zst=01;31:*.tzst=01;31:*.bz2=01;31:*.bz=01;31:*.tbz=01;31:*.tbz2=01;31:*.tz=01;31:*.deb=01;31:*.rpm=01;31:*.jar=01;31:*.war=01;31:*.ear=01;31:*.sar=01;31:*.rar=01;31:*.alz=01;31:*.ace=01;31:*.zoo=01;31:*.cpio=01;31:*.7z=01;31:*.rz=01;31:*.cab=01;31:*.wim=01;31:*.swm=01;31:*.dwm=01;31:*.esd=01;31:*.jpg=01;35:*.jpeg=01;35:*.mjpg=01;35:*.mjpeg=01;35:*.gif=01;35:*.bmp=01;35:*.pbm=01;35:*.pgm=01;35:*.ppm=01;35:*.tga=01;35:*.xbm=01;35:*.xpm=01;35:*.tif=01;35:*.tiff=01;35:*.png=01;35:*.svg=01;35:*.svgz=01;35:*.mng=01;35:*.pcx=01;35:*.mov=01;35:*.mpg=01;35:*.mpeg=01;35:*.m2v=01;35:*.mkv=01;35:*.webm=01;35:*.webp=01;35:*.ogm=01;35:*.mp4=01;35:*.m4v=01;35:*.mp4v=01;35:*.vob=01;35:*.qt=01;35:*.nuv=01;35:*.wmv=01;35:*.asf=01;35:*.rm=01;35:*.rmvb=01;35:*.flc=01;35:*.avi=01;35:*.fli=01;35:*.flv=01;35:*.gl=01;35:*.dl=01;35:*.xcf=01;35:*.xwd=01;35:*.yuv=01;35:*.cgm=01;35:*.emf=01;35:*.ogv=01;35:*.ogx=01;35:*.aac=00;36:*.au=00;36:*.flac=00;36:*.m4a=00;36:*.mid=00;36:*.midi=00;36:*.mka=00;36:*.mp3=00;36:*.mpc=00;36:*.ogg=00;36:*.ra=00;36:*.wav=00;36:*.oga=00;36:*.opus=00;36:*.spx=00;36:*.xspf=00;36:', 'VSCODE_GIT_IPC_HANDLE': '/run/user/1001/vscode-git-985a60c374.sock', 'TERM_PROGRAM': 'vscode', 'ROS_DOMAIN_ID': '42', 'AMENT_PREFIX_PATH': '/home/guitest/ros2_ws/install/rear_single_vehicle_experiment:/home/guitest/ros2_ws/install/cooperative_parking_robot:/opt/ros/humble', 'SHELL': '/bin/bash', 'LESSCLOSE': '/usr/bin/lesspipe %s %s', 'CODEX_THREAD_ID': '01a04245-3f92-7ff2-a9a7-648a2eefa79c', 'VSCODE_GIT_IPC_AUTH_TOKEN': '6a51327e771cb9efaeea53d920c4d63629c5a7177af7ca4ab5ab8314599e7286', 'VSCODE_GIT_ASKPASS_EXTRA_ARGS': '', 'GIT_PAGER': 'cat', 'PWD': '/home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot', 'LC_ALL': 'C.UTF-8', 'SSH_CONNECTION': '10.16.13.200 65374 10.16.13.21 22', 'XDG_DATA_DIRS': '/usr/share/gnome:/usr/local/share:/usr/share:/var/lib/snapd/desktop', 'PYTHONPATH': '/home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/python3.10/site-packages:/home/guitest/ros2_ws/build/rear_single_vehicle_experiment:/home/guitest/ros2_ws/install/rear_single_vehicle_experiment/lib/python3.10/site-packages:/home/guitest/ros2_ws/build/cooperative_parking_robot:/home/guitest/ros2_ws/install/cooperative_parking_robot/lib/python3.10/site-packages:/opt/ros/humble/lib/python3.10/site-packages:/opt/ros/humble/local/lib/python3.10/dist-packages', 'COLCON': '1'}, 'shell': False}
+[33.882186] (-) TimerEvent: {}
+[33.982785] (-) TimerEvent: {}
+[34.083913] (-) TimerEvent: {}
+[34.184704] (-) TimerEvent: {}
+[34.285279] (-) TimerEvent: {}
+[34.386264] (-) TimerEvent: {}
+[34.486806] (-) TimerEvent: {}
+[34.587339] (-) TimerEvent: {}
+[34.687900] (-) TimerEvent: {}
+[34.788466] (-) TimerEvent: {}
+[34.886450] (cooperative_parking_robot) StdoutLine: {'line': b'running develop\n'}
+[34.888551] (-) TimerEvent: {}
+[34.988950] (-) TimerEvent: {}
+[35.089469] (-) TimerEvent: {}
+[35.189992] (-) TimerEvent: {}
+[35.290527] (-) TimerEvent: {}
+[35.391059] (-) TimerEvent: {}
+[35.491611] (-) TimerEvent: {}
+[35.525952] (cooperative_parking_robot) StdoutLine: {'line': b'running egg_info\n'}
+[35.577238] (cooperative_parking_robot) StdoutLine: {'line': b'creating cooperative_parking_robot.egg-info\n'}
+[35.578132] (cooperative_parking_robot) StdoutLine: {'line': b'writing cooperative_parking_robot.egg-info/PKG-INFO\n'}
+[35.579531] (cooperative_parking_robot) StdoutLine: {'line': b'writing dependency_links to cooperative_parking_robot.egg-info/dependency_links.txt\n'}
+[35.587463] (cooperative_parking_robot) StdoutLine: {'line': b'writing entry points to cooperative_parking_robot.egg-info/entry_points.txt\n'}
+[35.588205] (cooperative_parking_robot) StdoutLine: {'line': b'writing requirements to cooperative_parking_robot.egg-info/requires.txt\n'}
+[35.588677] (cooperative_parking_robot) StdoutLine: {'line': b'writing top-level names to cooperative_parking_robot.egg-info/top_level.txt\n'}
+[35.588904] (cooperative_parking_robot) StdoutLine: {'line': b"writing manifest file 'cooperative_parking_robot.egg-info/SOURCES.txt'\n"}
+[35.591683] (-) TimerEvent: {}
+[35.692018] (-) TimerEvent: {}
+[35.696789] (cooperative_parking_robot) StdoutLine: {'line': b"reading manifest file 'cooperative_parking_robot.egg-info/SOURCES.txt'\n"}
+[35.709080] (cooperative_parking_robot) StdoutLine: {'line': b"writing manifest file 'cooperative_parking_robot.egg-info/SOURCES.txt'\n"}
+[35.758567] (cooperative_parking_robot) StdoutLine: {'line': b'running build_ext\n'}
+[35.759477] (cooperative_parking_robot) StdoutLine: {'line': b'Creating /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/python3.10/site-packages/cooperative-parking-robot.egg-link (link to .)\n'}
+[35.763320] (cooperative_parking_robot) StdoutLine: {'line': b'Installing aruco_tracker script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot\n'}
+[35.764471] (cooperative_parking_robot) StdoutLine: {'line': b'Installing bev_layout_calibrator script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot\n'}
+[35.765715] (cooperative_parking_robot) StdoutLine: {'line': b'Installing calibrate_camera script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot\n'}
+[35.766456] (cooperative_parking_robot) StdoutLine: {'line': b'Installing camera_preview script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot\n'}
+[35.767007] (cooperative_parking_robot) StdoutLine: {'line': b'Installing cctv_merge script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot\n'}
+[35.767608] (cooperative_parking_robot) StdoutLine: {'line': b'Installing cctv_rectify script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot\n'}
+[35.768020] (cooperative_parking_robot) StdoutLine: {'line': b'Installing cctv_robot_marker script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot\n'}
+[35.768354] (cooperative_parking_robot) StdoutLine: {'line': b'Installing cooperative_drive_test script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot\n'}
+[35.768498] (cooperative_parking_robot) StdoutLine: {'line': b'Installing fleet_manager script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot\n'}
+[35.768866] (cooperative_parking_robot) StdoutLine: {'line': b'Installing hardware_preflight script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot\n'}
+[35.769598] (cooperative_parking_robot) StdoutLine: {'line': b'Installing individual_move script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot\n'}
+[35.770119] (cooperative_parking_robot) StdoutLine: {'line': b'Installing jetson_vision_web script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot\n'}
+[35.770483] (cooperative_parking_robot) StdoutLine: {'line': b'Installing keyboard_follow script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot\n'}
+[35.770836] (cooperative_parking_robot) StdoutLine: {'line': b'Installing keyboard_teleop script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot\n'}
+[35.771156] (cooperative_parking_robot) StdoutLine: {'line': b'Installing opencv_camera script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot\n'}
+[35.771795] (cooperative_parking_robot) StdoutLine: {'line': b'Installing pose_fusion script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot\n'}
+[35.773022] (cooperative_parking_robot) StdoutLine: {'line': b'Installing rigid_body_sync script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot\n'}
+[35.773456] (cooperative_parking_robot) StdoutLine: {'line': b'Installing rigid_body_sync_legacy script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot\n'}
+[35.773924] (cooperative_parking_robot) StdoutLine: {'line': b'Installing rigid_body_sync_safe_baseline script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot\n'}
+[35.774524] (cooperative_parking_robot) StdoutLine: {'line': b'Installing show_map_ascii script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot\n'}
+[35.774685] (cooperative_parking_robot) StdoutLine: {'line': b'Installing state_machine script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot\n'}
+[35.774825] (cooperative_parking_robot) StdoutLine: {'line': b'Installing stm32_bridge script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot\n'}
+[35.775197] (cooperative_parking_robot) StdoutLine: {'line': b'Installing tile_homography script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot\n'}
+[35.775494] (cooperative_parking_robot) StdoutLine: {'line': b'Installing ultrasonic_edge script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot\n'}
+[35.775672] (cooperative_parking_robot) StdoutLine: {'line': b'Installing yolo_bev_map script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot\n'}
+[35.776124] (cooperative_parking_robot) StdoutLine: {'line': b'\n'}
+[35.776364] (cooperative_parking_robot) StdoutLine: {'line': b'Installed /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot\n'}
+[35.776503] (cooperative_parking_robot) StdoutLine: {'line': b'running symlink_data\n'}
+[35.777305] (cooperative_parking_robot) StdoutLine: {'line': b'creating /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/ament_index/resource_index/packages\n'}
+[35.778045] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/resource/cooperative_parking_robot -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/ament_index/resource_index/packages\n'}
+[35.778491] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/package.xml -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot\n'}
+[35.778907] (cooperative_parking_robot) StdoutLine: {'line': b'creating /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/launch\n'}
+[35.779254] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/launch/cctv_server_dual.launch.py -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/launch\n'}
+[35.779652] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/launch/front_robot.launch.py -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/launch\n'}
+[35.780231] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/launch/cctv_server.launch.py -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/launch\n'}
+[35.780772] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/launch/cooperative_drive_test_front.launch.py -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/launch\n'}
+[35.781192] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/launch/full_system.launch.py -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/launch\n'}
+[35.781830] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/launch/rear_aruco_static_check.launch.py -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/launch\n'}
+[35.782785] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/launch/cooperative_drive_test_rear.launch.py -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/launch\n'}
+[35.782986] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/launch/rear_robot.launch.py -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/launch\n'}
+[35.783146] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/launch/bev_layout_calibration.launch.py -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/launch\n'}
+[35.783280] (cooperative_parking_robot) StdoutLine: {'line': b'creating /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/config\n'}
+[35.783815] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/config/id0_calibration.yaml -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/config\n'}
+[35.783982] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/config/parking_layout.yaml -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/config\n'}
+[35.784115] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/config/safety_limits.yaml -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/config\n'}
+[35.784268] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/config/sync_params.yaml -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/config\n'}
+[35.784424] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/config/cctv2_camera_calibration.npz -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/config\n'}
+[35.786714] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/config/cctv0_camera_calibration.npz -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/config\n'}
+[35.787215] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/config/cctv_camera_calibration.npz -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/config\n'}
+[35.787852] (cooperative_parking_robot) StdoutLine: {'line': b'creating /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/models\n'}
+[35.788411] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/models/parking_vehicle_yolo11n_seg.pt -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/models\n'}
+[35.788719] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/models/parking_vehicle_yolo11n_seg.engine -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/models\n'}
+[35.789083] (cooperative_parking_robot) StdoutLine: {'line': b'creating /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs\n'}
+[35.789705] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/CCTV_CALIBRATION.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs\n'}
+[35.789887] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/UNDERBODY_ENTRY.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs\n'}
+[35.790382] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/localization_design.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs\n'}
+[35.790688] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/RUN_CCTV_PIPELINE.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs\n'}
+[35.790834] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/CHANGES_V1_10_UI_MISSION_RESET.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs\n'}
+[35.791122] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/PACKAGED_YOLO11_SEG_MODEL.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs\n'}
+[35.791313] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/DUAL_CCTV_MERGE_20260812.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs\n'}
+[35.791597] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/BEV_SLOT_REGISTRATION_AND_PARKING.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs\n'}
+[35.791742] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/HARDWARE_READINESS.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs\n'}
+[35.791996] (-) TimerEvent: {}
+[35.792049] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/P1_SAFETY_IMPLEMENTATION_20260724.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs\n'}
+[35.792199] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/CHANGES_V1_11_1_RELATIVE_SYNC.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs\n'}
+[35.793376] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/V9_COMPLETE_MERGE_20260803.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs\n'}
+[35.794279] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/MVP_MAIN_INTEGRATION_20260826.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs\n'}
+[35.794608] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/KEYBOARD_FOLLOW_TEST.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs\n'}
+[35.794755] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/GETTING_STARTED_CCTV_MAP.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs\n'}
+[35.794883] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/COOPERATIVE_DRIVE_TEST.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs\n'}
+[35.795005] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/JETSON_VISION_INTEGRATION.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs\n'}
+[35.795125] (cooperative_parking_robot) StdoutLine: {'line': b'creating /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/scripts\n'}
+[35.796060] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/scripts/export_engine.sh -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/scripts\n'}
+[35.796224] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/scripts/humble_topic_check.sh -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/scripts\n'}
+[35.796391] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/scripts/check_cameras.sh -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/scripts\n'}
+[35.796514] (cooperative_parking_robot) StdoutLine: {'line': b'symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/scripts/humble_build_check.sh -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/scripts\n'}
+[35.892275] (-) TimerEvent: {}
+[35.992859] (-) TimerEvent: {}
+[36.093518] (-) TimerEvent: {}
+[36.194102] (-) TimerEvent: {}
+[36.294715] (-) TimerEvent: {}
+[36.395309] (-) TimerEvent: {}
+[36.495896] (-) TimerEvent: {}
+[36.596523] (-) TimerEvent: {}
+[36.697147] (-) TimerEvent: {}
+[36.797735] (-) TimerEvent: {}
+[36.898327] (-) TimerEvent: {}
+[36.998942] (-) TimerEvent: {}
+[37.099542] (-) TimerEvent: {}
+[37.200100] (-) TimerEvent: {}
+[37.301909] (-) TimerEvent: {}
+[37.402508] (-) TimerEvent: {}
+[37.503086] (-) TimerEvent: {}
+[37.603892] (-) TimerEvent: {}
+[37.704494] (-) TimerEvent: {}
+[37.805439] (-) TimerEvent: {}
+[37.906390] (-) TimerEvent: {}
+[38.007294] (-) TimerEvent: {}
+[38.109472] (-) TimerEvent: {}
+[38.210040] (-) TimerEvent: {}
+[38.310596] (-) TimerEvent: {}
+[38.411153] (-) TimerEvent: {}
+[38.512079] (-) TimerEvent: {}
+[38.613951] (-) TimerEvent: {}
+[38.714530] (-) TimerEvent: {}
+[38.815099] (-) TimerEvent: {}
+[38.915674] (-) TimerEvent: {}
+[39.017156] (-) TimerEvent: {}
+[39.118353] (-) TimerEvent: {}
+[39.218983] (-) TimerEvent: {}
+[39.320119] (-) TimerEvent: {}
+[39.420798] (-) TimerEvent: {}
+[39.521740] (-) TimerEvent: {}
+[39.623050] (-) TimerEvent: {}
+[39.723646] (-) TimerEvent: {}
+[39.824281] (-) TimerEvent: {}
+[39.924875] (-) TimerEvent: {}
+[40.025478] (-) TimerEvent: {}
+[40.126018] (-) TimerEvent: {}
+[40.226579] (-) TimerEvent: {}
+[40.327141] (-) TimerEvent: {}
+[40.427715] (-) TimerEvent: {}
+[40.528254] (-) TimerEvent: {}
+[40.628825] (-) TimerEvent: {}
+[40.730598] (-) TimerEvent: {}
+[40.831151] (-) TimerEvent: {}
+[40.931722] (-) TimerEvent: {}
+[41.032273] (-) TimerEvent: {}
+[41.132828] (-) TimerEvent: {}
+[41.233397] (-) TimerEvent: {}
+[41.333979] (-) TimerEvent: {}
+[41.434567] (-) TimerEvent: {}
+[41.535465] (-) TimerEvent: {}
+[41.636030] (-) TimerEvent: {}
+[41.736560] (-) TimerEvent: {}
+[41.837122] (-) TimerEvent: {}
+[41.941820] (-) TimerEvent: {}
+[42.042347] (-) TimerEvent: {}
+[42.142893] (-) TimerEvent: {}
+[42.243439] (-) TimerEvent: {}
+[42.343983] (-) TimerEvent: {}
+[42.444567] (-) TimerEvent: {}
+[42.545098] (-) TimerEvent: {}
+[42.645652] (-) TimerEvent: {}
+[42.746236] (-) TimerEvent: {}
+[42.847742] (-) TimerEvent: {}
+[42.948469] (-) TimerEvent: {}
+[43.049074] (-) TimerEvent: {}
+[43.149946] (-) TimerEvent: {}
+[43.250545] (-) TimerEvent: {}
+[43.351163] (-) TimerEvent: {}
+[43.451955] (-) TimerEvent: {}
+[43.557741] (-) TimerEvent: {}
+[43.658396] (-) TimerEvent: {}
+[43.759039] (-) TimerEvent: {}
+[43.859671] (-) TimerEvent: {}
+[43.960271] (-) TimerEvent: {}
+[44.060982] (-) TimerEvent: {}
+[44.161687] (-) TimerEvent: {}
+[44.262327] (-) TimerEvent: {}
+[44.362938] (-) TimerEvent: {}
+[44.463619] (-) TimerEvent: {}
+[44.569126] (-) TimerEvent: {}
+[44.670068] (-) TimerEvent: {}
+[44.770680] (-) TimerEvent: {}
+[44.873194] (-) TimerEvent: {}
+[44.973791] (-) TimerEvent: {}
+[45.074413] (-) TimerEvent: {}
+[45.175155] (-) TimerEvent: {}
+[45.276849] (-) TimerEvent: {}
+[45.378621] (-) TimerEvent: {}
+[45.479205] (-) TimerEvent: {}
+[45.579727] (-) TimerEvent: {}
+[45.680330] (-) TimerEvent: {}
+[45.782798] (-) TimerEvent: {}
+[45.883419] (-) TimerEvent: {}
+[45.986314] (-) TimerEvent: {}
+[46.086898] (-) TimerEvent: {}
+[46.187556] (-) TimerEvent: {}
+[46.288830] (-) TimerEvent: {}
+[46.389809] (-) TimerEvent: {}
+[46.490399] (-) TimerEvent: {}
+[46.590983] (-) TimerEvent: {}
+[46.691797] (-) TimerEvent: {}
+[46.792366] (-) TimerEvent: {}
+[46.894692] (-) TimerEvent: {}
+[46.995279] (-) TimerEvent: {}
+[47.095878] (-) TimerEvent: {}
+[47.196535] (-) TimerEvent: {}
+[47.297182] (-) TimerEvent: {}
+[47.398090] (-) TimerEvent: {}
+[47.498710] (-) TimerEvent: {}
+[47.599382] (-) TimerEvent: {}
+[47.700094] (-) TimerEvent: {}
+[47.800668] (-) TimerEvent: {}
+[47.903245] (-) TimerEvent: {}
+[48.003836] (-) TimerEvent: {}
+[48.104389] (-) TimerEvent: {}
+[48.205126] (-) TimerEvent: {}
+[48.305808] (-) TimerEvent: {}
+[48.406393] (-) TimerEvent: {}
+[48.506999] (-) TimerEvent: {}
+[48.607634] (-) TimerEvent: {}
+[48.708208] (-) TimerEvent: {}
+[48.808780] (-) TimerEvent: {}
+[48.909645] (-) TimerEvent: {}
+[49.011309] (-) TimerEvent: {}
+[49.111865] (-) TimerEvent: {}
+[49.212459] (-) TimerEvent: {}
+[49.313157] (-) TimerEvent: {}
+[49.413672] (-) TimerEvent: {}
+[49.514218] (-) TimerEvent: {}
+[49.615406] (-) TimerEvent: {}
+[49.715989] (-) TimerEvent: {}
+[49.816578] (-) TimerEvent: {}
+[49.917220] (-) TimerEvent: {}
+[50.017815] (-) TimerEvent: {}
+[50.121100] (-) TimerEvent: {}
+[50.225355] (-) TimerEvent: {}
+[50.325982] (-) TimerEvent: {}
+[50.426600] (-) TimerEvent: {}
+[50.527174] (-) TimerEvent: {}
+[50.627756] (-) TimerEvent: {}
+[50.728372] (-) TimerEvent: {}
+[50.828996] (-) TimerEvent: {}
+[50.930276] (-) TimerEvent: {}
+[51.030843] (-) TimerEvent: {}
+[51.131991] (-) TimerEvent: {}
+[51.232601] (-) TimerEvent: {}
+[51.333192] (-) TimerEvent: {}
+[51.433929] (-) TimerEvent: {}
+[51.535531] (-) TimerEvent: {}
+[51.636116] (-) TimerEvent: {}
+[51.736730] (-) TimerEvent: {}
+[51.837375] (-) TimerEvent: {}
+[51.940260] (-) TimerEvent: {}
+[52.040832] (-) TimerEvent: {}
+[52.145131] (-) TimerEvent: {}
+[52.245669] (-) TimerEvent: {}
+[52.346218] (-) TimerEvent: {}
+[52.446835] (-) TimerEvent: {}
+[52.547434] (-) TimerEvent: {}
+[52.647994] (-) TimerEvent: {}
+[52.748701] (-) TimerEvent: {}
+[52.849337] (-) TimerEvent: {}
+[52.949923] (-) TimerEvent: {}
+[53.050538] (-) TimerEvent: {}
+[53.153038] (-) TimerEvent: {}
+[53.253600] (-) TimerEvent: {}
+[53.354150] (-) TimerEvent: {}
+[53.454746] (-) TimerEvent: {}
+[53.555450] (-) TimerEvent: {}
+[53.656190] (-) TimerEvent: {}
+[53.756797] (-) TimerEvent: {}
+[53.859187] (-) TimerEvent: {}
+[53.960045] (-) TimerEvent: {}
+[54.060602] (-) TimerEvent: {}
+[54.161216] (-) TimerEvent: {}
+[54.261763] (-) TimerEvent: {}
+[54.362926] (-) TimerEvent: {}
+[54.463536] (-) TimerEvent: {}
+[54.564109] (-) TimerEvent: {}
+[54.664689] (-) TimerEvent: {}
+[54.765247] (-) TimerEvent: {}
+[54.865856] (-) TimerEvent: {}
+[54.966760] (-) TimerEvent: {}
+[55.067641] (-) TimerEvent: {}
+[55.176163] (-) TimerEvent: {}
+[55.276731] (-) TimerEvent: {}
+[55.377346] (-) TimerEvent: {}
+[55.477898] (-) TimerEvent: {}
+[55.578499] (-) TimerEvent: {}
+[55.679074] (-) TimerEvent: {}
+[55.779651] (-) TimerEvent: {}
+[55.880260] (-) TimerEvent: {}
+[55.980829] (-) TimerEvent: {}
+[56.081464] (-) TimerEvent: {}
+[56.182032] (-) TimerEvent: {}
+[56.282651] (-) TimerEvent: {}
+[56.383461] (-) TimerEvent: {}
+[56.485397] (-) TimerEvent: {}
+[56.585970] (-) TimerEvent: {}
+[56.686541] (-) TimerEvent: {}
+[56.787119] (-) TimerEvent: {}
+[56.887724] (-) TimerEvent: {}
+[56.988303] (-) TimerEvent: {}
+[57.088903] (-) TimerEvent: {}
+[57.189477] (-) TimerEvent: {}
+[57.290044] (-) TimerEvent: {}
+[57.390597] (-) TimerEvent: {}
+[57.491211] (-) TimerEvent: {}
+[57.591917] (-) TimerEvent: {}
+[57.692536] (-) TimerEvent: {}
+[57.793199] (-) TimerEvent: {}
+[57.893768] (-) TimerEvent: {}
+[57.994334] (-) TimerEvent: {}
+[58.094935] (-) TimerEvent: {}
+[58.195549] (-) TimerEvent: {}
+[58.296279] (-) TimerEvent: {}
+[58.397002] (-) TimerEvent: {}
+[58.497584] (-) TimerEvent: {}
+[58.598176] (-) TimerEvent: {}
+[58.700597] (-) TimerEvent: {}
+[58.801439] (-) TimerEvent: {}
+[58.902010] (-) TimerEvent: {}
+[59.002545] (-) TimerEvent: {}
+[59.103168] (-) TimerEvent: {}
+[59.204017] (-) TimerEvent: {}
+[59.304606] (-) TimerEvent: {}
+[59.405216] (-) TimerEvent: {}
+[59.506098] (-) TimerEvent: {}
+[59.606744] (-) TimerEvent: {}
+[59.707377] (-) TimerEvent: {}
+[59.807967] (-) TimerEvent: {}
+[59.908643] (-) TimerEvent: {}
+[60.009351] (-) TimerEvent: {}
+[60.059253] (cooperative_parking_robot) CommandEnded: {'returncode': 0}
+[60.109749] (-) TimerEvent: {}
+[60.144529] (cooperative_parking_robot) JobEnded: {'identifier': 'cooperative_parking_robot', 'rc': 0}
+[60.147327] (-) EventReactorShutdown: {}

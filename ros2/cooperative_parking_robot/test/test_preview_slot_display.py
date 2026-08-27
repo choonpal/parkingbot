@@ -105,8 +105,10 @@ def _preview(now=100.0, confirm_frames=2):
         empty_confirm_frames=confirm_frames,
         occupied_hold_s=0.0, now=now)
     preview.cameras = [
-        {'label': 'cctv0', 'detections': [], 'detection_wall': now},
-        {'label': 'cctv2', 'detections': [], 'detection_wall': now},
+        {'label': 'cctv0', 'detections': [], 'detection_wall': now,
+         'inference_wall': now},
+        {'label': 'cctv2', 'detections': [], 'detection_wall': now,
+         'inference_wall': now},
     ]
     return preview
 
@@ -122,14 +124,19 @@ def _car_at(x, y, half=0.5):
 def _tick(preview, now, live=('cctv0', 'cctv2'), detections=None):
     """한 검출 주기를 흉내낸다.
 
-    ``live`` 에 든 카메라만 방금 검출을 냈다고 표시한다. 빠진 카메라는
-    detection_wall 이 그대로라 곧 stale 로 판정된다.
+    ``live`` 에 든 카메라만 방금 추론을 돌렸다고 표시한다. 빠진 카메라는
+    inference_wall 이 그대로라 곧 stale 로 판정된다.
+
+    관측 가능 판단은 detection_wall(뭔가 찾은 시각)이 아니라
+    inference_wall(추론이 돈 시각)을 쓴다. 빈 결과도 유효한 관측이다.
     """
     for camera in preview.cameras:
         if camera['label'] in live:
-            camera['detection_wall'] = now
+            camera['inference_wall'] = now
             camera['detections'] = list(
                 (detections or {}).get(camera['label'], []))
+            if camera['detections']:
+                camera['detection_wall'] = now
     preview._update_slots(now)
 
 

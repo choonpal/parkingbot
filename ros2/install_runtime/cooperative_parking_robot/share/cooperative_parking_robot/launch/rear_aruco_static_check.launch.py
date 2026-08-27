@@ -1,0 +1,1 @@
+/home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/launch/rear_aruco_static_check.launch.py

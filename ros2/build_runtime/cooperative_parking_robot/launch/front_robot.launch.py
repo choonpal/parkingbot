@@ -1,0 +1,1 @@
+/home/guitest/parkingbot/ros2/cooperative_parking_robot/launch/front_robot.launch.py

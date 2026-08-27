@@ -1,0 +1,88 @@
+running develop
+running egg_info
+creating cooperative_parking_robot.egg-info
+writing cooperative_parking_robot.egg-info/PKG-INFO
+writing dependency_links to cooperative_parking_robot.egg-info/dependency_links.txt
+writing entry points to cooperative_parking_robot.egg-info/entry_points.txt
+writing requirements to cooperative_parking_robot.egg-info/requires.txt
+writing top-level names to cooperative_parking_robot.egg-info/top_level.txt
+writing manifest file 'cooperative_parking_robot.egg-info/SOURCES.txt'
+reading manifest file 'cooperative_parking_robot.egg-info/SOURCES.txt'
+writing manifest file 'cooperative_parking_robot.egg-info/SOURCES.txt'
+running build_ext
+Creating /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/python3.10/site-packages/cooperative-parking-robot.egg-link (link to .)
+Installing aruco_tracker script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot
+Installing bev_layout_calibrator script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot
+Installing calibrate_camera script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot
+Installing camera_preview script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot
+Installing cctv_merge script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot
+Installing cctv_rectify script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot
+Installing cctv_robot_marker script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot
+Installing cooperative_drive_test script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot
+Installing fleet_manager script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot
+Installing hardware_preflight script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot
+Installing individual_move script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot
+Installing jetson_vision_web script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot
+Installing keyboard_follow script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot
+Installing keyboard_teleop script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot
+Installing opencv_camera script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot
+Installing pose_fusion script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot
+Installing rigid_body_sync script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot
+Installing rigid_body_sync_legacy script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot
+Installing rigid_body_sync_safe_baseline script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot
+Installing show_map_ascii script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot
+Installing state_machine script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot
+Installing stm32_bridge script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot
+Installing tile_homography script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot
+Installing ultrasonic_edge script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot
+Installing yolo_bev_map script to /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/lib/cooperative_parking_robot
+
+Installed /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot
+running symlink_data
+creating /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/ament_index/resource_index/packages
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/resource/cooperative_parking_robot -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/ament_index/resource_index/packages
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/package.xml -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot
+creating /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/launch
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/launch/cctv_server_dual.launch.py -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/launch
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/launch/front_robot.launch.py -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/launch
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/launch/cctv_server.launch.py -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/launch
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/launch/cooperative_drive_test_front.launch.py -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/launch
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/launch/full_system.launch.py -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/launch
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/launch/rear_aruco_static_check.launch.py -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/launch
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/launch/cooperative_drive_test_rear.launch.py -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/launch
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/launch/rear_robot.launch.py -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/launch
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/launch/bev_layout_calibration.launch.py -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/launch
+creating /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/config
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/config/id0_calibration.yaml -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/config
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/config/parking_layout.yaml -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/config
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/config/safety_limits.yaml -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/config
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/config/sync_params.yaml -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/config
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/config/cctv2_camera_calibration.npz -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/config
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/config/cctv0_camera_calibration.npz -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/config
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/config/cctv_camera_calibration.npz -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/config
+creating /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/models
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/models/parking_vehicle_yolo11n_seg.pt -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/models
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/models/parking_vehicle_yolo11n_seg.engine -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/models
+creating /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/CCTV_CALIBRATION.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/UNDERBODY_ENTRY.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/localization_design.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/RUN_CCTV_PIPELINE.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/CHANGES_V1_10_UI_MISSION_RESET.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/PACKAGED_YOLO11_SEG_MODEL.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/DUAL_CCTV_MERGE_20260812.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/BEV_SLOT_REGISTRATION_AND_PARKING.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/HARDWARE_READINESS.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/P1_SAFETY_IMPLEMENTATION_20260724.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/CHANGES_V1_11_1_RELATIVE_SYNC.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/V9_COMPLETE_MERGE_20260803.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/MVP_MAIN_INTEGRATION_20260826.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/KEYBOARD_FOLLOW_TEST.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/GETTING_STARTED_CCTV_MAP.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/COOPERATIVE_DRIVE_TEST.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/JETSON_VISION_INTEGRATION.md -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/docs
+creating /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/scripts
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/scripts/export_engine.sh -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/scripts
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/scripts/humble_topic_check.sh -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/scripts
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/scripts/check_cameras.sh -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/scripts
+symbolically linking /home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/scripts/humble_build_check.sh -> /home/guitest/parkingbot/ros2/install_runtime/cooperative_parking_robot/share/cooperative_parking_robot/scripts

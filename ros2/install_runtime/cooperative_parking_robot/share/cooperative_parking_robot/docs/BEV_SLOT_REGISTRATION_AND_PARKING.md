@@ -1,0 +1,1 @@
+/home/guitest/parkingbot/ros2/build_runtime/cooperative_parking_robot/docs/BEV_SLOT_REGISTRATION_AND_PARKING.md

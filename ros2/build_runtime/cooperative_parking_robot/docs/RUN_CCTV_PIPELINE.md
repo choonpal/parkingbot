@@ -1,0 +1,1 @@
+/home/guitest/parkingbot/ros2/cooperative_parking_robot/docs/RUN_CCTV_PIPELINE.md

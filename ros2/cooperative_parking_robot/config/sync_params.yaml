@@ -30,6 +30,43 @@ rigid_body_sync_node:
     cctv_marker_timeout_s: 0.50
     robot_length_m: 0.565
     minimum_inter_robot_gap_m: 0.22
+
+    # v1.11.1 상대필터: /wheel_odom 누적 dead-reckoning을 현재 map pose에
+    # anchor해 predict한다. CCTV correction이 섞인 /odom은 raw wheel stream이
+    # 끊긴 경우에만 fallback으로 쓴다.
+    use_raw_wheel_relative_predictor: true
+    wheel_relative_timeout_s: 0.50
+    cctv_pair_timeout_s: 0.50
+    cctv_pair_sync_slop_s: 0.12
+
+    # Q/R은 제어주기 횟수가 아니라 실제 새 odom의 시간·변화량으로 누적된다.
+    # 아래 값은 보수적 초기값이며 정지 ArUco 로그와 wheel-slip 실측으로 확정한다.
+    sync_dist_process_sigma_m_sqrt_s: 0.003
+    sync_yaw_process_sigma_deg_sqrt_s: 0.50
+    sync_dist_process_gain: 0.03
+    sync_yaw_process_gain: 0.03
+    sync_dist_measurement_sigma_m: 0.015
+    sync_yaw_measurement_sigma_deg: 3.0
+    sync_initial_covariance_scale: 4.0
+
+    # ID0 또는 상판 marker pair의 innovation/outlier gate.
+    # 단발 오측정은 폐기하고, 제한 범위 안에서 서로 일관된 관측 4개가
+    # 연속되면 필터 drift로 판단해 명시적으로 재획득한다.
+    aruco_distance_innovation_gate_m: 0.04
+    aruco_yaw_innovation_gate_deg: 5.0
+    aruco_innovation_sigma_gate: 4.0
+    aruco_reacquire_count: 4
+    aruco_reacquire_distance_m: 0.12
+    aruco_reacquire_yaw_deg: 15.0
+    aruco_consistency_distance_m: 0.015
+    aruco_consistency_yaw_deg: 2.0
+    aruco_lateral_envelope_m: 0.10
+
+    # 센서 잡음에 의한 모터 hunting 방지용 작은 제어 deadband.
+    # 안전 판정은 deadband 전 원시 오차로 계속 수행한다.
+    sync_dist_deadband_m: 0.003
+    sync_yaw_deadband_deg: 0.50
+
     # 차량 중심과 로봇 두 대 중점의 고정 장착 오프셋 초기화/보정
     initialize_offset_from_target_pose: true
     initial_target_offset_gate_m: 0.50

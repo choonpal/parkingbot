@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>cooperative_parking_robot</name>
-  <version>1.11.0</version>
+  <version>1.11.1</version>
   <description>ROS 2 Humble 기반 협동 자율 주차 로봇 시스템 (A* + 단방향 ArUco + 천장 CCTV 2대 병합)</description>
   <maintainer email="team@example.com">SW Team</maintainer>
   <license>MIT</license>

@@ -4,9 +4,12 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch.substitutions import (
+    LaunchConfiguration, PathJoinSubstitution, PythonExpression,
+)
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+from launch_ros.substitutions import FindPackageShare
 
 
 def _float(name):
@@ -51,12 +54,14 @@ def generate_launch_description():
     ultrasonic_yaw_limit = _float("max_sensor_yaw_error_deg")
     left_sensor_offset = _float("left_sensor_to_gripper_x_m")
     right_sensor_offset = _float("right_sensor_to_gripper_x_m")
-    aruco_offset = _float("aruco_distance_offset_m")
     enable_aruco = LaunchConfiguration("enable_aruco_tracker")
     # P0-1: aruco_tracker_node가 구독하는 rear 전면 카메라 토픽에는 v1.9까지
     # 발행자가 없었다. 외부 카메라 드라이버가 있으면 enable_rear_camera:=false로
     # 두고, 없으면 이 패키지의 opencv_camera_node가 유일한 발행자가 된다.
     enable_rear_camera = LaunchConfiguration("enable_rear_camera")
+    id0_calibration = PathJoinSubstitution([
+        FindPackageShare("cooperative_parking_robot"),
+        "config", "id0_calibration.yaml"])
 
     entry_parameters = {
         "vehicle_half_length_m": _float("vehicle_half_length_m"),
@@ -87,7 +92,6 @@ def generate_launch_description():
         "max_scan_retry": _int("max_scan_retry"),
         "substate_timeout_s": _float("substate_timeout_s"),
         "target_timeout_s": _float("target_timeout_s"),
-        "aruco_distance_offset_m": aruco_offset,
         "cctv_marker_timeout_s": _float("cctv_marker_timeout_s"),
         "relative_lateral_tolerance_m": _float(
             "relative_lateral_tolerance_m"),
@@ -203,8 +207,6 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "align_timeout_s", default_value="120.0"),
         DeclareLaunchArgument(
-            "aruco_distance_offset_m", default_value="0.565"),
-        DeclareLaunchArgument(
             "return_timeout_s", default_value="90.0"),
         DeclareLaunchArgument("waiting_x", default_value="3.60"),
         DeclareLaunchArgument("waiting_y", default_value="0.20"),
@@ -258,7 +260,7 @@ def generate_launch_description():
             package="cooperative_parking_robot",
             executable="individual_move",
             name="rear_individual_move",
-            parameters=[{
+            parameters=[id0_calibration, {
                 "role": "rear",
                 "default_wheelbase": wheelbase,
                 "use_vehicle_spec_wheelbase": True,

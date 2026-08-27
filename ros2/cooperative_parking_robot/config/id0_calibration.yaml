@@ -1,0 +1,7 @@
+# Rear camera -> Front ID0 longitudinal calibration.
+# Change this file after a new aligned measurement; do not edit Python code.
+# 2026-08-27 operator-confirmed basis:
+#   robot-centre distance 0.785 m - raw camera-to-marker about 0.215 m
+/**:
+  ros__parameters:
+    aruco_distance_offset_m: 0.570

@@ -78,6 +78,10 @@ aruco_distance_offset_m
     - solvePnP raw camera-to-marker 거리
 ```
 
+현재 실측 기준은 중심 `0.785m` - ID0 raw 약 `0.215m` = `0.570m`다.
+값은 `config/id0_calibration.yaml` 한 곳에서 관리하며, 로봇 외곽 길이
+`0.565m`를 대신 넣거나 Python 코드를 수정하지 않는다.
+
 실측 전에는 `use_aruco_distance:=false`로 두고 ArUco 상대 yaw만 사용한다. 실측 후:
 
 ```bash

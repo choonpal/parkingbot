@@ -25,9 +25,7 @@ rigid_body_sync_node:
     sync_lateral_stop_limit_m: 0.040
     sync_lateral_error_timeout_s: 1.0
 
-    # Front 후면 ID0와 Rear 전면 카메라가 각 로봇 끝면에 있다고 본 기본값.
-    # 중심거리 = raw camera-to-marker 거리 + 0.565m. 장착 후 실측 보정한다.
-    aruco_distance_offset_m: 0.565
+    # 거리 offset 값은 config/id0_calibration.yaml 한 곳에서 관리한다.
     use_aruco_distance: true
     aruco_min_distance_m: 0.05
     aruco_max_distance_m: 1.50

@@ -38,7 +38,6 @@ def generate_launch_description():
     encoder_ppr = _float("encoder_ppr")
     lx = _float("lx")
     ly = _float("ly")
-    aruco_offset = _float("aruco_distance_offset_m")
     use_aruco_distance = _bool("use_aruco_distance")
     enable_serial = _bool("enable_serial")
     require_serial = _bool("require_serial")
@@ -53,6 +52,9 @@ def generate_launch_description():
     sync_config = PathJoinSubstitution([
         FindPackageShare("cooperative_parking_robot"),
         "config", "sync_params.yaml"])
+    id0_calibration = PathJoinSubstitution([
+        FindPackageShare("cooperative_parking_robot"),
+        "config", "id0_calibration.yaml"])
 
     entry_parameters = {
         "vehicle_half_length_m": _float("vehicle_half_length_m"),
@@ -83,7 +85,6 @@ def generate_launch_description():
         "max_scan_retry": _int("max_scan_retry"),
         "substate_timeout_s": _float("substate_timeout_s"),
         "target_timeout_s": _float("target_timeout_s"),
-        "aruco_distance_offset_m": aruco_offset,
         "cctv_marker_timeout_s": _float("cctv_marker_timeout_s"),
         "relative_lateral_tolerance_m": _float(
             "relative_lateral_tolerance_m"),
@@ -196,15 +197,13 @@ def generate_launch_description():
         DeclareLaunchArgument("lx", default_value="0.10"),
         DeclareLaunchArgument("ly", default_value="0.10"),
         DeclareLaunchArgument(
-            "aruco_distance_offset_m", default_value="0.565"),
-        DeclareLaunchArgument(
             "use_aruco_distance", default_value="true"),
 
         Node(
             package="cooperative_parking_robot",
             executable="rigid_body_sync",
             name="rigid_body_sync_node",
-            parameters=[sync_config, {
+            parameters=[id0_calibration, sync_config, {
                 "wheelbase": wheelbase,
                 "max_speed": 0.08,
                 "max_omega": 0.30,
@@ -215,7 +214,6 @@ def generate_launch_description():
                 "final_approach_dist": 0.02,
                 "use_vehicle_spec_wheelbase": True,
                 "yaw_hold_kp": 1.0,
-                "aruco_distance_offset_m": aruco_offset,
                 "use_aruco_distance": use_aruco_distance,
                 "cctv_marker_timeout_s": _float(
                     "cctv_marker_timeout_s"),
@@ -228,7 +226,7 @@ def generate_launch_description():
             package="cooperative_parking_robot",
             executable="individual_move",
             name="front_individual_move",
-            parameters=[{
+            parameters=[id0_calibration, {
                 "role": "front",
                 "default_wheelbase": wheelbase,
                 "use_vehicle_spec_wheelbase": True,

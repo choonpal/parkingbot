@@ -90,7 +90,9 @@ class IndividualMoveNode(Node):
         # Front-rear ID0 relative observation. Longitudinal axle-center
         # authority remains ultrasonic; ArUco only keeps lateral/yaw alignment,
         # slows Rear's coarse scan, and validates the final separation.
-        self.declare_parameter("aruco_distance_offset_m", ROBOT_LENGTH_M)
+        # Calibration is supplied by config/id0_calibration.yaml in every
+        # production launch. Zero is an invalid fail-closed direct-run value.
+        self.declare_parameter("aruco_distance_offset_m", 0.0)
         self.declare_parameter("aruco_timeout_s", 0.30)
         self.declare_parameter("cctv_marker_timeout_s", 0.50)
         self.declare_parameter("marker_slowdown_s", 0.75)
@@ -169,6 +171,9 @@ class IndividualMoveNode(Node):
         self.scan_overshoot = float(gp("scan_overshoot_m").value)
         self.aruco_distance_offset = float(
             gp("aruco_distance_offset_m").value)
+        if self.aruco_distance_offset <= 0.0:
+            raise ValueError(
+                "aruco_distance_offset_m must come from ID0 calibration")
         self.aruco_timeout = float(gp("aruco_timeout_s").value)
         self.cctv_marker_timeout = float(
             gp("cctv_marker_timeout_s").value)

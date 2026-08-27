@@ -71,7 +71,7 @@ def test_last_top_marker_true_then_silence_slows_and_holds_without_fault(
     assert node.motion_speed_scale == 1.0
 
 
-def _pose(frame_id, stamp_ns, x=0.135, y=0.0, yaw=0.0, scale=1.0):
+def _pose(frame_id, stamp_ns, x=0.215, y=0.0, yaw=0.0, scale=1.0):
     msg = PoseStamped()
     msg.header.frame_id = frame_id
     msg.header.stamp.sec = stamp_ns // 1_000_000_000
@@ -85,7 +85,7 @@ def _pose(frame_id, stamp_ns, x=0.135, y=0.0, yaw=0.0, scale=1.0):
 
 def _individual_move_for_relative_pose(now_ns=10_000_000_000):
     node = object.__new__(IndividualMoveNode)
-    node.aruco_distance_offset = 0.565
+    node.aruco_distance_offset = 0.570
     node.relative_gate = StampGate(0.30, 0.10)
     node.relative_x = None
     node.relative_y = None
@@ -111,7 +111,7 @@ def test_relative_pose_rejects_wrong_frame_without_poisoning_stamp_gate(
     assert node.relative_x is None
 
     node.relative_pose_cb(_pose("rear_base", stamp, yaw=0.2, scale=2.0))
-    assert node.relative_x == pytest.approx(0.70)
+    assert node.relative_x == pytest.approx(0.785)
     assert node.relative_yaw == pytest.approx(0.2)
     assert node.relative_receipt_time == 100.0
 
@@ -133,21 +133,21 @@ def test_relative_pose_rejects_invalid_quaternion_stale_and_duplicate_samples(
     node.relative_pose_cb(stale)
     assert node.relative_x is None
 
-    fresh = _pose("rear_base", 9_900_000_000, x=0.135)
+    fresh = _pose("rear_base", 9_900_000_000, x=0.215)
     node.relative_pose_cb(fresh)
-    assert node.relative_x == pytest.approx(0.70)
+    assert node.relative_x == pytest.approx(0.785)
 
     receipt_time[0] = 101.0
     duplicate = _pose("rear_base", 9_900_000_000, x=0.50)
     node.relative_pose_cb(duplicate)
-    assert node.relative_x == pytest.approx(0.70)
+    assert node.relative_x == pytest.approx(0.785)
     assert node.relative_receipt_time == 100.0
 
 
 def _rigid_sync_for_relative_pose(now_ns=10_000_000_000):
     node = object.__new__(RigidBodySyncNode)
     node.stamp_gates = {"aruco": StampGate(0.30, 0.10)}
-    node.aruco_distance_offset = 0.565
+    node.aruco_distance_offset = 0.570
     node.aruco_min_distance = 0.05
     node.aruco_max_distance = 1.50
     node.aruco_raw_dist = None
@@ -180,7 +180,7 @@ def test_rigid_sync_rejects_wrong_frame_and_invalid_quaternion_before_stamp(
     assert node.aruco_dist is None
 
     node.aruco_cb(_pose("rear_base", stamp, yaw=-0.3, scale=3.0))
-    assert node.aruco_dist == pytest.approx(0.70)
+    assert node.aruco_dist == pytest.approx(0.785)
     assert node.aruco_yaw == pytest.approx(-0.3)
     assert node.aruco_receipt_time == 200.0
 

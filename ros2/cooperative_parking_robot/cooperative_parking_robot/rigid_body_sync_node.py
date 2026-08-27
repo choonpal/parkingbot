@@ -59,11 +59,11 @@ class RigidBodySyncNode(Node):
         self.declare_parameter('marker_slowdown_s', 1.0)
         self.declare_parameter('marker_stop_s', 2.0)
 
-        # solvePnP camera->marker 전방거리 -> robot-center 거리 보정
-        # ID0 is on Front rear face and the camera is on Rear front face.
-        # With both centres on axles, centre distance = raw gap + robot length.
-        self.declare_parameter('aruco_distance_offset_m', ROBOT_LENGTH_M)
-        self.declare_parameter('use_aruco_distance', True)
+        # Calibration is supplied by config/id0_calibration.yaml. A direct
+        # node run starts distance fusion disabled instead of guessing from
+        # the robot envelope length.
+        self.declare_parameter('aruco_distance_offset_m', 0.0)
+        self.declare_parameter('use_aruco_distance', False)
         self.declare_parameter('aruco_min_distance_m', 0.05)
         self.declare_parameter('aruco_max_distance_m', 1.50)
         self.declare_parameter('aruco_timeout_s', 0.30)
@@ -117,6 +117,9 @@ class RigidBodySyncNode(Node):
 
         self.aruco_distance_offset = float(gp('aruco_distance_offset_m').value)
         self.use_aruco_distance = bool(gp('use_aruco_distance').value)
+        if self.use_aruco_distance and self.aruco_distance_offset <= 0.0:
+            raise ValueError(
+                'use_aruco_distance=true requires ID0 calibration')
         self.aruco_min_distance = float(gp('aruco_min_distance_m').value)
         self.aruco_max_distance = float(gp('aruco_max_distance_m').value)
         self.aruco_timeout = float(gp('aruco_timeout_s').value)

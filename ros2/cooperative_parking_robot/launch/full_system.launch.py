@@ -49,6 +49,9 @@ def generate_launch_description():
     sync_config = PathJoinSubstitution([
         FindPackageShare('cooperative_parking_robot'),
         'config', 'sync_params.yaml'])
+    id0_calibration = PathJoinSubstitution([
+        FindPackageShare('cooperative_parking_robot'),
+        'config', 'id0_calibration.yaml'])
     runtime_config_dir = PathJoinSubstitution([
         EnvironmentVariable('HOME'), '.ros', 'adaptive_valet_bot'])
     default_homography = PathJoinSubstitution([
@@ -336,7 +339,7 @@ def generate_launch_description():
             package='cooperative_parking_robot',
             executable='rigid_body_sync',
             name='rigid_body_sync_node',
-            parameters=[sync_config, {
+            parameters=[id0_calibration, sync_config, {
                 'wheelbase': FIXED_WHEELBASE,
                 'use_vehicle_spec_wheelbase': True,
                 'max_speed': 0.08,
@@ -344,7 +347,6 @@ def generate_launch_description():
                 # 경로 중에는 yaw를 고정하고 슬롯 밖 staging에서만 회전한다.
                 'align_to_slot_yaw': True,
                 'final_approach_dist': 0.02,
-                'aruco_distance_offset_m': 0.565,
                 'use_aruco_distance': True,
                 'cctv_marker_timeout_s': _float(
                     'cctv_marker_timeout_s'),
@@ -391,7 +393,7 @@ def generate_launch_description():
             package='cooperative_parking_robot',
             executable='individual_move',
             name='front_individual_move',
-            parameters=[{
+            parameters=[id0_calibration, {
                 'role': 'front',
                 'simultaneous_entry': _bool('simultaneous_entry'),
                 'same_direction_exit': _bool('same_direction_exit'),
@@ -422,7 +424,6 @@ def generate_launch_description():
                 'entry_side_offset_m': 0.40,
                 'exit_distance_m': 0.50,
                 'substate_timeout_s': 60.0,
-                'aruco_distance_offset_m': 0.565,
                 'cctv_marker_timeout_s': _float(
                     'cctv_marker_timeout_s'),
                 'relative_lateral_tolerance_m': _float(
@@ -433,7 +434,7 @@ def generate_launch_description():
             package='cooperative_parking_robot',
             executable='individual_move',
             name='rear_individual_move',
-            parameters=[{
+            parameters=[id0_calibration, {
                 'role': 'rear',
                 'simultaneous_entry': _bool('simultaneous_entry'),
                 'same_direction_exit': _bool('same_direction_exit'),
@@ -464,7 +465,6 @@ def generate_launch_description():
                 'entry_side_offset_m': 0.40,
                 'exit_distance_m': 0.50,
                 'substate_timeout_s': 60.0,
-                'aruco_distance_offset_m': 0.565,
                 'cctv_marker_timeout_s': _float(
                     'cctv_marker_timeout_s'),
                 'relative_lateral_tolerance_m': _float(

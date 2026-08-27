@@ -6,7 +6,7 @@ package_name = 'cooperative_parking_robot'
 
 setup(
     name=package_name,
-    version='1.11.2',
+    version='1.11.3',
     packages=[package_name],
     package_data={package_name: ['web/*.html', 'web/*.css', 'web/*.js']},
     install_requires=['setuptools'],
@@ -19,16 +19,24 @@ setup(
             ('bev_layout_calibrator = '
              'cooperative_parking_robot.mvp_integration_nodes:'
              'bev_layout_calibrator_main'),
-            'yolo_bev_map = cooperative_parking_robot.mvp_integration_nodes:yolo_bev_map_main',
+            ('yolo_bev_map = '
+             'cooperative_parking_robot.yolo_bev_map_production_node:main'),
+            ('yolo_bev_map_baseline = '
+             'cooperative_parking_robot.mvp_integration_nodes:yolo_bev_map_main'),
             'fleet_manager = cooperative_parking_robot.fleet_manager_node:main',
             'ultrasonic_edge = cooperative_parking_robot.ultrasonic_edge_node:main',
             'aruco_tracker = cooperative_parking_robot.aruco_tracker_node:main',
-            'cctv_robot_marker = cooperative_parking_robot.cctv_robot_marker_node:main',
+            ('cctv_robot_marker = '
+             'cooperative_parking_robot.cctv_robot_marker_production_node:main'),
+            ('cctv_robot_marker_baseline = '
+             'cooperative_parking_robot.cctv_robot_marker_node:main'),
             'cctv_merge = cooperative_parking_robot.mvp_integration_nodes:cctv_merge_main',
             # Production entry point. The safe baseline remains importable for
             # regression comparison; this final layer adds lifecycle, wheel-pair
             # timing and lateral mechanical safety P0 guards.
             ('rigid_body_sync = '
+             'cooperative_parking_robot.rigid_body_sync_vision_node:main'),
+            ('rigid_body_sync_p0_baseline = '
              'cooperative_parking_robot.rigid_body_sync_production_node:main'),
             ('rigid_body_sync_safe_baseline = '
              'cooperative_parking_robot.rigid_body_sync_safe_node:main'),
@@ -39,7 +47,10 @@ setup(
             ('individual_move = '
              'cooperative_parking_robot.mvp_integration_nodes:'
              'individual_move_main'),
-            'pose_fusion = cooperative_parking_robot.pose_fusion_node:main',
+            ('pose_fusion = '
+             'cooperative_parking_robot.pose_fusion_production_node:main'),
+            ('pose_fusion_baseline = '
+             'cooperative_parking_robot.pose_fusion_node:main'),
             'hardware_preflight = cooperative_parking_robot.hardware_preflight:main',
             'keyboard_teleop = cooperative_parking_robot.keyboard_teleop_node:main',
             'cooperative_drive_test = cooperative_parking_robot.cooperative_drive_test_node:main',

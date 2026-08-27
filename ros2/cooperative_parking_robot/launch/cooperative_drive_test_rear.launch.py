@@ -33,6 +33,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'serial_port', default_value='/dev/ttyACM0',
             description='robot-1 Rear STM32 stable /dev/serial/by-id path'),
+        DeclareLaunchArgument('hardware_profile', default_value='robot-1'),
         DeclareLaunchArgument(
             'camera_device', default_value='',
             description='Stable /dev/v4l/by-path/...-video-index0 path'),
@@ -138,6 +139,7 @@ def generate_launch_description():
             name='rear_drive_test_bridge',
             parameters=[{
                 'role': 'rear',
+                'hardware_profile': LaunchConfiguration('hardware_profile'),
                 'serial_port': LaunchConfiguration('serial_port'),
                 'serial_baud': 115200,
                 'enable_serial': True,

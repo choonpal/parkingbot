@@ -40,6 +40,10 @@ import time
 from cooperative_parking_robot.uart_protocol import UartProtocol
 from cooperative_parking_robot.encoder_odometry import EncoderOdometry
 from cooperative_parking_robot.freshness import StampGate, stamp_to_ns
+from cooperative_parking_robot.hardware_profile import (
+    command_sign_for,
+    resolve_hardware_profile,
+)
 from cooperative_parking_robot.manual_control import VelocityCommandArbiter
 
 try:
@@ -54,6 +58,7 @@ class Stm32BridgeNode(Node):
         super().__init__('stm32_bridge_node')
 
         self.declare_parameter('role', 'front')
+        self.declare_parameter('hardware_profile', 'auto')
         self.declare_parameter('serial_port', '/dev/ttyACM0')
         self.declare_parameter('serial_baud', 115200)
         self.declare_parameter('enable_serial', True)
@@ -80,10 +85,11 @@ class Stm32BridgeNode(Node):
         self.role = self.get_parameter('role').value
         if self.role not in ('front', 'rear'):
             raise ValueError("role must be 'front' or 'rear'")
-        # 실차 수동 조작기에서 확인된 섀시 장착 방향 보정. STM32의 양의 축은
-        # 실차 firmware 기준이고, 여기서 ROS REP-103 명령축으로 변환한다.
-        self.command_sign = ((-1.0, -1.0, -1.0) if self.role == 'front'
-                             else (-1.0, 1.0, 1.0))
+        # role은 토픽 namespace이고 profile은 물리 기체다. 역할을 바꿔
+        # 단독 시험해도 실측 배선 보정이 함께 바뀌면 안 된다.
+        self.hardware_profile = resolve_hardware_profile(
+            self.role, self.get_parameter('hardware_profile').value)
+        self.command_sign = command_sign_for(self.hardware_profile)
         self.max_linear = float(self.get_parameter('max_linear_mps').value)
         self.max_angular = float(self.get_parameter('max_angular_rps').value)
         self.protocol = UartProtocol()
@@ -208,7 +214,9 @@ class Stm32BridgeNode(Node):
         self.create_timer(0.1, self.send_heartbeat)     # heartbeat 10Hz
         self.create_timer(0.2, self.publish_hardware_state)
 
-        self.get_logger().info(f'stm32_bridge_node 시작 [{self.role}]')
+        self.get_logger().info(
+            f'stm32_bridge_node 시작 [{self.role}] '
+            f'hardware={self.hardware_profile} sign={self.command_sign}')
 
     # ===== ROS2 → STM32 =====
     def cmd_vel_cb(self, msg):

@@ -202,6 +202,10 @@ def generate_launch_description():
         DeclareLaunchArgument('rear_lateral_sign', default_value='1.0'),
         DeclareLaunchArgument('front_serial_port', default_value='/dev/ttyACM0'),
         DeclareLaunchArgument('rear_serial_port', default_value='/dev/ttyACM0'),
+        DeclareLaunchArgument(
+            'front_hardware_profile', default_value='robot-2'),
+        DeclareLaunchArgument(
+            'rear_hardware_profile', default_value='robot-1'),
 
         Node(
             package='cooperative_parking_robot',
@@ -508,6 +512,8 @@ def generate_launch_description():
             name='front_bridge',
             parameters=[{
                 'role': 'front',
+                'hardware_profile': LaunchConfiguration(
+                    'front_hardware_profile'),
                 'serial_port': LaunchConfiguration('front_serial_port'),
                 'enable_serial': _bool('enable_serial'),
                 'require_serial': _bool('require_serial'),
@@ -569,6 +575,8 @@ def generate_launch_description():
             name='rear_bridge',
             parameters=[{
                 'role': 'rear',
+                'hardware_profile': LaunchConfiguration(
+                    'rear_hardware_profile'),
                 'serial_port': LaunchConfiguration('rear_serial_port'),
                 'enable_serial': _bool('enable_serial'),
                 'require_serial': _bool('require_serial'),

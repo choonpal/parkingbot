@@ -97,6 +97,9 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             "serial_port", default_value="/dev/ttyACM0"),
+        DeclareLaunchArgument(
+            "hardware_profile", default_value="robot-1",
+            description="Physical chassis profile; independent of rear role"),
         DeclareLaunchArgument("enable_serial", default_value="true"),
         DeclareLaunchArgument("require_serial", default_value="true"),
         DeclareLaunchArgument(
@@ -286,6 +289,7 @@ def generate_launch_description():
             name="rear_bridge",
             parameters=[{
                 "role": "rear",
+                "hardware_profile": LaunchConfiguration("hardware_profile"),
                 "serial_port": LaunchConfiguration("serial_port"),
                 "serial_baud": 115200,
                 "enable_serial": enable_serial,

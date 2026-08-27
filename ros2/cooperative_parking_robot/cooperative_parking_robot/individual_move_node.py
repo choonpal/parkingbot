@@ -30,6 +30,7 @@ from rclpy.qos import (
 )
 from std_msgs.msg import Bool, Float64, String
 
+from cooperative_parking_robot.command_qos import CMD_VEL_QOS
 from cooperative_parking_robot.vehicle_entry import (
     DEFAULT_WHEELBASE_M,
     MIN_INTER_ROBOT_GAP_M,
@@ -334,7 +335,7 @@ class IndividualMoveNode(Node):
                 Bool, "/align/front_done", self.front_done_cb, 10)
 
         self.pub_vel = self.create_publisher(
-            TwistStamped, f"/{self.role}/cmd_vel", 10)
+            TwistStamped, f"/{self.role}/cmd_vel", CMD_VEL_QOS)
         self.pub_scan_reset = self.create_publisher(
             Bool, f"/{self.role}/wheel_scan_reset", 10)
         self.pub_approach_done = self.create_publisher(

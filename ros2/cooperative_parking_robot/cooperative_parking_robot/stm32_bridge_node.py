@@ -37,12 +37,14 @@ from std_msgs.msg import String, Bool
 import math
 import time
 
+from cooperative_parking_robot.command_qos import CMD_VEL_QOS
 from cooperative_parking_robot.uart_protocol import UartProtocol
 from cooperative_parking_robot.encoder_odometry import EncoderOdometry
 from cooperative_parking_robot.freshness import StampGate, stamp_to_ns
 from cooperative_parking_robot.hardware_profile import (
     command_sign_for,
     resolve_hardware_profile,
+    servo_attach_pulses_for,
 )
 from cooperative_parking_robot.manual_control import VelocityCommandArbiter
 
@@ -54,8 +56,8 @@ except ImportError:
 
 
 class Stm32BridgeNode(Node):
-    def __init__(self):
-        super().__init__('stm32_bridge_node')
+    def __init__(self, **kwargs):
+        super().__init__('stm32_bridge_node', **kwargs)
 
         self.declare_parameter('role', 'front')
         self.declare_parameter('hardware_profile', 'auto')
@@ -82,6 +84,8 @@ class Stm32BridgeNode(Node):
         self.declare_parameter('command_source_timeout_s', 0.25)
         self.declare_parameter('command_future_tolerance_s', 0.10)
         self.declare_parameter('clock_reject_fault_count', 3)
+        # ACK가 유실되어도 UART를 flood하지 않는 attach 재시도 주기.
+        self.declare_parameter('servo_attach_retry_interval_s', 0.75)
 
         self.role = self.get_parameter('role').value
         if self.role not in ('front', 'rear'):
@@ -91,6 +95,13 @@ class Stm32BridgeNode(Node):
         self.hardware_profile = resolve_hardware_profile(
             self.role, self.get_parameter('hardware_profile').value)
         self.command_sign = command_sign_for(self.hardware_profile)
+        self.servo_attach_pulses = servo_attach_pulses_for(
+            self.hardware_profile)
+        self.servo_attach_retry_interval = float(
+            self.get_parameter('servo_attach_retry_interval_s').value)
+        if self.servo_attach_retry_interval < 0.5:
+            raise ValueError(
+                'servo_attach_retry_interval_s must be at least 0.5')
         self.max_linear = float(self.get_parameter('max_linear_mps').value)
         self.max_angular = float(self.get_parameter('max_angular_rps').value)
         self.protocol = UartProtocol()
@@ -137,6 +148,12 @@ class Stm32BridgeNode(Node):
         self.last_ultrasonic_frame = {'left': 0.0, 'right': 0.0}
         self.ultrasonic_stale_reported = False
         self.estop_latched = False
+        # 실제 배선 감지가 아니라 STM32 RAM과 RPi pulse 기준이
+        # ACK,SERVO_ATTACH로 동기화됐는지를 나타내는 protocol 상태.
+        self.servo_attached = False
+        self.servo_attach_blocked = False
+        self.last_servo_attach_request_time = None
+        self.hardware_ready = False
         # non-blocking serial.readline()은 newline 도착 전 부분 프레임을
         # 반환할 수 있으므로 직접 byte buffer를 유지한다.
         self.rx_buffer = bytearray()
@@ -173,7 +190,8 @@ class Stm32BridgeNode(Node):
 
         # ===== 구독 =====
         self.create_subscription(
-            TwistStamped, f'/{self.role}/cmd_vel', self.cmd_vel_cb, 10)
+            TwistStamped, f'/{self.role}/cmd_vel', self.cmd_vel_cb,
+            CMD_VEL_QOS)
         self.create_subscription(String, f'/{self.role}/grip_command',
                                  self.grip_cb, 10)
         self.create_subscription(
@@ -218,7 +236,12 @@ class Stm32BridgeNode(Node):
         self.create_timer(0.02, self.read_serial)       # UART 수신
         self.create_timer(0.02, self.send_velocity_loop)  # 속도 송신 50Hz (감쇠 포함)
         self.create_timer(0.1, self.send_heartbeat)     # heartbeat 10Hz
+        self.create_timer(0.1, self.send_servo_attach)  # bounded startup retry
         self.create_timer(0.2, self.publish_hardware_state)
+
+        # serial open 직후 먼저 attach를 요청한다. 이후 timer는
+        # ACK 유실 때만 제한된 주기로 재시도하고 ACK 후 멈춘다.
+        self.send_servo_attach()
 
         self.get_logger().info(
             f'stm32_bridge_node 시작 [{self.role}] '
@@ -326,6 +349,12 @@ class Stm32BridgeNode(Node):
         if self.estop_latched:
             self.get_logger().warn('ESTOP latch 상태에서 그리퍼 명령 거부')
             return
+        if not self.servo_attached:
+            self.get_logger().warn(
+                'servo attach ACK 전 그리퍼 명령 거부',
+                throttle_duration_sec=1.0)
+            self.publish_status('WARN,SERVO_NOT_READY')
+            return
         try:
             cmd = self.protocol.encode_servo(action)
         except ValueError as e:
@@ -333,9 +362,32 @@ class Stm32BridgeNode(Node):
             return
         self._write(cmd)
 
+    def send_servo_attach(self):
+        """Request STM32/RPi servo pulse synchronization at a bounded rate."""
+        if (not self.ser or self.servo_attached or self.estop_latched or
+                self.servo_attach_blocked):
+            return
+        now = time.monotonic()
+        if (self.last_servo_attach_request_time is not None and
+                now - self.last_servo_attach_request_time <
+                self.servo_attach_retry_interval):
+            return
+        self.last_servo_attach_request_time = now
+        pulse1, pulse2 = self.servo_attach_pulses
+        cmd = self.protocol.encode_servo_attach(pulse1, pulse2)
+        if self._write(cmd):
+            self.get_logger().info(
+                f'[{self.role}] servo attach 요청 '
+                f'hardware={self.hardware_profile} '
+                f'pulses=({pulse1},{pulse2})')
+            self.publish_status(
+                f'INFO,SERVO_ATTACH_REQUEST:{pulse1}:{pulse2}')
+
     def estop_cb(self, msg):
         if msg.data and not self.estop_latched:
             self.estop_latched = True
+            self.servo_attached = False
+            self.servo_attach_blocked = True
             self.command_arbiter.force_zero(time.monotonic())
             self._write(self.protocol.encode_estop())
             self.publish_status('ESTOP')
@@ -409,8 +461,36 @@ class Stm32BridgeNode(Node):
             self.pub_lift.publish(String(data=parsed['status']))
         elif parsed['type'] == 'ack':
             self.last_ack_time = time.monotonic()
+            if parsed['value'] == 'SERVO_ATTACH':
+                if self.estop_latched or self.servo_attach_blocked:
+                    self.get_logger().warn(
+                        'ESTOP/attach blocked 상태의 '
+                        'ACK,SERVO_ATTACH 무시')
+                elif not self.servo_attached:
+                    self.servo_attached = True
+                    self.get_logger().info(
+                        f'[{self.role}] ACK,SERVO_ATTACH; '
+                        'servo_attached=true')
             self.publish_status(f"ACK,{parsed['value']}")
         elif parsed['type'] == 'error':
+            if parsed['code'] == 'ESTOP_LATCHED':
+                first_report = not self.estop_latched
+                self.estop_latched = True
+                self.servo_attached = False
+                self.servo_attach_blocked = True
+                self.command_arbiter.force_zero(time.monotonic())
+                if first_report:
+                    self.get_logger().error(
+                        f'[{self.role}] STM32 ESTOP latch; servo attach '
+                        '재시도 중단. 수동 power-cycle/reset 후 '
+                        'bridge restart 필요')
+                    self.publish_status(
+                        'WARN,ESTOP_LATCHED_POWER_CYCLE_REQUIRED')
+            elif parsed['code'] == 'BAD_SERVO_ATTACH':
+                # 구성 오류를 주기적으로 반복해 실차 UART와
+                # state machine을 연속 fault로 만들지 않는다.
+                self.servo_attached = False
+                self.servo_attach_blocked = True
             self.get_logger().error(f"STM32 ERR: {parsed['code']}")
             self.publish_status(f"ERR,{parsed['code']}")
         elif parsed['type'] == 'telemetry':
@@ -467,6 +547,7 @@ class Stm32BridgeNode(Node):
     def publish_hardware_state(self):
         now = time.monotonic()
         uart_ready = (self.ser is not None and not self.estop_latched and
+                      self.servo_attached and
                       now - self.last_ack_time < 0.5)
         ultrasonic_ready = all(
             now - stamp < self.ultrasonic_frame_timeout
@@ -475,6 +556,11 @@ class Stm32BridgeNode(Node):
             ultrasonic_ready = True
 
         ready = uart_ready and ultrasonic_ready
+        if ready and not self.hardware_ready:
+            self.get_logger().info(f'[{self.role}] hardware_ready=true')
+        elif not ready and self.hardware_ready:
+            self.get_logger().warn(f'[{self.role}] hardware_ready=false')
+        self.hardware_ready = ready
         self.pub_ready.publish(Bool(data=ready))
         self.pub_manual_active.publish(Bool(
             data=self.command_arbiter.manual_enabled))

@@ -24,6 +24,7 @@ from rclpy.qos import (
 )
 from std_msgs.msg import Bool, String
 
+from cooperative_parking_robot.command_qos import CMD_VEL_QOS
 from cooperative_parking_robot.kalman_filter import ScalarKalman
 from cooperative_parking_robot.freshness import StampGate, stamp_to_ns
 from cooperative_parking_robot.mission_protocol import make_arrival_status
@@ -269,9 +270,9 @@ class RigidBodySyncNode(Node):
 
         # ===== 발행 =====
         self.pub_fc = self.create_publisher(
-            TwistStamped, '/front/cmd_vel', 10)
+            TwistStamped, '/front/cmd_vel', CMD_VEL_QOS)
         self.pub_rc = self.create_publisher(
-            TwistStamped, '/rear/cmd_vel', 10)
+            TwistStamped, '/rear/cmd_vel', CMD_VEL_QOS)
         self.pub_err = self.create_publisher(String, '/sync/error_state', 10)
         self.pub_estop = self.create_publisher(Bool, '/emergency_stop', 10)
 

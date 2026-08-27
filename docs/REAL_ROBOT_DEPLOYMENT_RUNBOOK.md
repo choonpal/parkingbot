@@ -254,6 +254,15 @@ robot_start
 robot_state --watch
 ```
 
+`robot_start`는 원격 process를 띄우기 전에 로컬 `ROS_SETUP`, snapshot helper,
+`OBSERVER_PYTHON`(기본 `/usr/bin/python3`)의 `rclpy`/표준 message/RMW 로딩을
+검증한다. Snapshot observer는 custom message를 사용하지 않으므로 control
+workspace overlay에 의존하지 않고 ROS underlay만 source한다. Graph 대기 중에는
+하나의 observer/DDS participant를 유지하며 process, observer, readiness 실패를
+서로 다른 상태로 출력한다. `[OBSERVER FAIL]`이면 원격 hardware보다 출력된 로컬
+Python/ROS/RMW 원인을 먼저 수정하고, `[PROCESS EXITED]`이면 해당
+`robot_logs <role>`을 확인한다.
+
 `robot_start`는 Jetson → Rear → Front 순서로 각 장비의
 `parkingbot-production` tmux session을 만들고, 이 절의 기존 production launch
 argument를 그대로 사용한다. PARK request는 자동 발행하지 않는다. 기동 후

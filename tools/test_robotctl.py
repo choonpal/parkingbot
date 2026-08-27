@@ -108,6 +108,84 @@ def test_missing_topics_timeout_is_bounded_and_becomes_blocker():
     assert "FLEET STATE UNAVAILABLE" in data["blockers"]
     assert len(runner.calls) == 1
     assert "parkingbot_ros_snapshot.py" in runner.calls[0][-1]
+    assert data["observer"]["observer_ok"] is True
+
+
+def test_observer_process_failures_are_not_reported_as_missing_topics():
+    exited = ops.parse_observer_output(
+        "partial output", returncode=1,
+        stderr="ModuleNotFoundError: No module named 'rclpy'")
+    timed_out = ops.parse_observer_output(
+        "partial output", returncode=124, stderr="", timed_out=True)
+    malformed = ops.parse_observer_output("not-json", returncode=0)
+
+    assert exited["observer_ok"] is False
+    assert exited["observer_error_type"] == "process_exit"
+    assert exited["observer_returncode"] == 1
+    assert "rclpy" in exited["observer_stderr"]
+    assert timed_out["observer_error_type"] == "timeout"
+    assert timed_out["observer_timed_out"] is True
+    assert malformed["observer_error_type"] == "malformed_output"
+
+
+def test_snapshot_preserves_observer_failure_in_status():
+    observer = ops.parse_observer_output(
+        "", returncode=1, stderr="rclpy import failed")
+    data = ops.snapshot(valid_config(), observer_result=observer)
+    assert data["observer"]["observer_ok"] is False
+    assert data["blockers"][0].startswith("OBSERVER FAILURE:")
+    assert "FAIL" in ops.format_snapshot(data)
+
+
+def test_observer_prerequisites_report_missing_setup_and_helper(tmp_path):
+    config = valid_config()
+    config["ROS_SETUP"] = str(tmp_path / "missing-ros.bash")
+    config["OBSERVER_PYTHON"] = "/usr/bin/python3"
+    errors = ops.observer_prerequisite_errors(
+        config, helper=tmp_path / "missing-helper.py")
+    assert any("ROS setup missing" in error for error in errors)
+    assert any("snapshot helper missing" in error for error in errors)
+
+
+def test_observer_prerequisite_reports_python_import_or_rmw_failure(tmp_path):
+    setup = tmp_path / "setup.bash"
+    helper = tmp_path / "parkingbot_ros_snapshot.py"
+    support = tmp_path / "parkingbot_ops.py"
+    python = tmp_path / "python3"
+    for path in (setup, helper, support, python):
+        path.write_text("# test\n")
+    python.chmod(0o755)
+    config = valid_config()
+    config.update({"ROS_SETUP": str(setup),
+                   "OBSERVER_PYTHON": str(python)})
+    runner = StaticRunner(Result(
+        returncode=1,
+        stderr="ModuleNotFoundError: No module named 'rclpy'"))
+    errors = ops.observer_prerequisite_errors(
+        config, runner=runner, helper=helper)
+    assert len(errors) == 1
+    assert "preflight failed rc=1" in errors[0]
+    assert "rclpy" in errors[0]
+
+
+def test_observer_environment_uses_underlay_without_control_overlay():
+    config = valid_config()
+    config.update({"ROS_SETUP": "/opt/ros/humble/setup.bash",
+                   "CONTROL_WORKSPACE": "/srv/parkingbot_ws",
+                   "OBSERVER_PYTHON": "/usr/bin/python3"})
+    command = ops.observer_argv(
+        config, [config["OBSERVER_PYTHON"], "snapshot.py"])[2]
+    assert "source /opt/ros/humble/setup.bash" in command
+    assert "/srv/parkingbot_ws/install/setup.bash" not in command
+    assert "exec /usr/bin/python3 snapshot.py" in command
+
+
+def test_startup_completion_ignores_non_startup_diagnostic_topics():
+    received = set(ops.STARTUP_REQUIRED_TOPIC_KEYS)
+    assert ops.observer_complete(received, "startup") is True
+    assert ops.observer_complete(received, "full") is False
+    received.remove("rear_hw")
+    assert ops.observer_complete(received, "startup") is False
 
 
 def test_status_format_uses_real_safety_fields():
@@ -330,6 +408,38 @@ def test_tmux_launch_retains_exit_status_and_startup_reports_each_gate():
     assert metadata["reason"] == "FRONT HARDWARE NOT READY"
     assert metadata["process_alive"] is True
     assert metadata["returncode"] is None
+
+
+def test_startup_detects_process_that_exits_during_graph_wait():
+    robotctl = runpy.run_path(str(Path(__file__).with_name("robotctl")))
+    processes = {
+        "jetson": {"state": "RUNNING"},
+        "rear": {"state": "EXITED", "returncode": 1},
+        "front": {"state": "RUNNING"},
+    }
+    role, status = robotctl["startup_process_failure"](processes)
+    assert role == "rear"
+    assert status["returncode"] == 1
+
+
+def test_robot_restart_stops_without_publishing_a_new_estop():
+    robotctl = runpy.run_path(str(Path(__file__).with_name("robotctl")))
+    calls = []
+
+    def fake_stop(args):
+        calls.append(("stop", args.no_estop))
+        return 0
+
+    def fake_start(_args):
+        calls.append(("start", None))
+        return 0
+
+    restart = robotctl["restart"]
+    restart.__globals__["stop"] = fake_stop
+    restart.__globals__["start"] = fake_start
+    args = type("Args", (), {})()
+    assert restart(args) == 0
+    assert calls == [("stop", True), ("start", None)]
 
 
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux unavailable")

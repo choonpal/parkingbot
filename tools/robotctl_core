@@ -5,16 +5,20 @@ import argparse
 import json
 import os
 from pathlib import Path
+import selectors
 import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 from parkingbot_ops import (
     REQUIRED, ROLES, SESSION, Runner, create_run_dir, format_snapshot,
     conditional_config_errors, incident_snapshot, invalid_paths,
     launch_command, load_env, missing_config,
+    observer_argv, observer_helper_path, observer_prerequisite_errors,
+    parse_observer_output,
     protocol_consistency_errors, protocol_source_check_command,
     remote_argv, remote_run, role_host, role_workspace, ros_prefix, run_root,
     snapshot, stack_process_status,
@@ -92,6 +96,30 @@ def process_status(runner, config, role):
         "launch_command": launch_command(config, role),
     })
     return status
+
+
+def startup_process_failure(processes):
+    for role in ROLES:
+        status = processes.get(role, {})
+        if status.get("state") in ("EXITED", "SESSION_MISSING"):
+            return role, status
+    return None
+
+
+def tool_installation_warnings(repository):
+    """Report copied command files that no longer match an available checkout."""
+    repository_tools = Path(repository) / "tools"
+    if HERE == repository_tools or not repository_tools.is_dir():
+        return []
+    warnings = []
+    for name in ("robotctl", "robotctl_core", "parkingbot_ops.py",
+                 "parkingbot_ros_snapshot.py"):
+        installed = HERE / name
+        source = repository_tools / name
+        if source.is_file() and installed.is_file():
+            if source.read_bytes() != installed.read_bytes():
+                warnings.append(f"installed tool differs from repository: {name}")
+    return warnings
 
 
 def manifest(config, role, launch):
@@ -181,6 +209,13 @@ def report_startup_progress(data, previous):
     return current, conditions
 
 
+def print_observer_failure(observer):
+    print(f"[OBSERVER FAIL] {observer['message']}")
+    detail = observer.get("observer_stderr") or observer.get("observer_stdout")
+    if detail:
+        print("  " + detail.replace("\n", "\n  "))
+
+
 def incident_metadata(role, reason, data, process=None, config=None):
     values = data.get("topics", {})
     process = process or {}
@@ -206,6 +241,16 @@ def start(args):
     config = checked_config(args)
     runner = Runner()
     print("ParkingBot Production Start\n===========================\n")
+    prerequisite_errors = observer_prerequisite_errors(config, runner=runner)
+    if prerequisite_errors:
+        for error in prerequisite_errors:
+            print(f"[OBSERVER FAIL] {error}")
+        return 1
+    print(
+        f"[OBSERVER OK] local ROS prerequisites "
+        f"({config.get('OBSERVER_PYTHON', '/usr/bin/python3')})")
+    for warning in tool_installation_warnings(repo_root()):
+        print(f"[WARN] {warning}; rerun tools/install_robot_commands.sh")
     protocol_errors = protocol_consistency_errors(repo_root())
     if protocol_errors:
         for error in protocol_errors:
@@ -271,7 +316,7 @@ def start(args):
                 f"{status['state']} returncode={status.get('returncode')}")
             stop_sessions(runner, config, publish_estop=False)
             return 1
-        print(f"[OK] {role.title()} stack pid={status['pid']}")
+        print(f"[PROCESS OK] {role.title()} stack pid={status['pid']}")
         if (role == "rear" and
                 config["REAR_ENABLE_INTERNAL_CAMERA"].lower() == "false"):
             camera_log = f"$HOME/.ros/parkingbot_logs/{run_id}/rear/rear_camera.log"
@@ -298,25 +343,87 @@ def start(args):
     data = None
     previous = {}
     conditions = {}
-    while time.monotonic() < deadline:
-        data = snapshot(config, timeout=6.0)
-        data["processes"] = processes
-        previous, conditions = report_startup_progress(data, previous)
-        fatal = startup_fatal_faults(data)
-        if fatal and time.monotonic() >= grace_until:
-            for reason in fatal:
-                print(f"[FAIL] {reason}")
-            role = "front" if fatal[0].startswith("FRONT") else "rear"
-            reason = f"{role.upper()}_STARTUP_HARDWARE_FAULT"
-            incident_snapshot(
-                run_dir, reason, data, config, runner,
-                incident_metadata(
-                    role, reason, data, processes.get(role), config))
-            print("Startup failed fast; processes remain available for robot_logs.")
-            return 1
-        if conditions and all(conditions.values()):
-            break
-        time.sleep(0.25)
+    observer_command = observer_argv(config, [
+        config.get("OBSERVER_PYTHON", "/usr/bin/python3"),
+        str(observer_helper_path()), "--mode", "startup", "--timeout", "120",
+        "--stream-interval", "1.0",
+    ])
+    observer_stderr = tempfile.TemporaryFile(mode="w+t")
+    observer_process = subprocess.Popen(
+        observer_command, text=True, stdout=subprocess.PIPE,
+        stderr=observer_stderr, bufsize=1)
+    selector = selectors.DefaultSelector()
+    selector.register(observer_process.stdout, selectors.EVENT_READ)
+    observer_announced = False
+    next_process_probe = started_at
+    try:
+        while time.monotonic() < deadline:
+            now = time.monotonic()
+            if now >= next_process_probe:
+                next_process_probe = now + 2.0
+                for role in ROLES:
+                    current = process_status(runner, config, role)
+                    processes[role] = current
+                process_failure = startup_process_failure(processes)
+                if process_failure:
+                    role, current = process_failure
+                    print(
+                        f"[PROCESS EXITED] {role.title()} stack "
+                        f"state={current['state']} "
+                        f"exit={current.get('returncode')}")
+                    print(f"Run: robot_logs {role}")
+                    return 1
+            events = selector.select(timeout=1.0)
+            if events:
+                line = observer_process.stdout.readline()
+                if line:
+                    observer = parse_observer_output(line)
+                    if not observer["observer_ok"]:
+                        print_observer_failure(observer)
+                        return 1
+                    if not observer_announced:
+                        print("[OBSERVER OK] ROS diagnostic observer active")
+                        observer_announced = True
+                    data = snapshot(config, observer_result=observer)
+                    data["processes"] = processes
+                    previous, conditions = report_startup_progress(data, previous)
+                    fatal = startup_fatal_faults(data)
+                    if fatal and time.monotonic() >= grace_until:
+                        for reason in fatal:
+                            print(f"[FAIL] {reason}")
+                        role = "front" if fatal[0].startswith("FRONT") else "rear"
+                        reason = f"{role.upper()}_STARTUP_HARDWARE_FAULT"
+                        incident_snapshot(
+                            run_dir, reason, data, config, runner,
+                            incident_metadata(
+                                role, reason, data, processes.get(role), config))
+                        print(
+                            "Startup failed fast; processes remain available "
+                            "for robot_logs.")
+                        return 1
+                    if conditions and all(conditions.values()):
+                        break
+            if observer_process.poll() is not None:
+                observer_stderr.seek(0)
+                stderr = observer_stderr.read()
+                if not (conditions and all(conditions.values())):
+                    observer = parse_observer_output(
+                        "", observer_process.returncode, stderr)
+                    print_observer_failure(observer)
+                    return 1
+    finally:
+        selector.close()
+        if observer_process.poll() is None:
+            observer_process.terminate()
+            try:
+                observer_process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                observer_process.kill()
+                observer_process.wait()
+        observer_stderr.close()
+    if data is None:
+        print("[OBSERVER FAIL] observer timeout after 120 seconds; no progress received")
+        return 1
     if not conditions or not all(conditions.values()):
         for label, ok in conditions.items():
             if not ok:
@@ -359,6 +466,12 @@ def stop(args):
     print("[OK] Production stack stopped")
     print("Safety/STM32 ESTOP latches are not reset; MANUAL RESET MAY BE REQUIRED.")
     return 0
+
+
+def restart(args):
+    args.no_estop = True
+    code = stop(args)
+    return code or start(args)
 
 
 def state(args):
@@ -444,6 +557,12 @@ def doctor(args):
     config = checked_config(args)
     runner = Runner()
     blockers = []
+    blockers.extend(
+        f"control observer: {error}"
+        for error in observer_prerequisite_errors(config, runner=runner))
+    blockers.extend(
+        f"control tooling: {warning}"
+        for warning in tool_installation_warnings(repo_root()))
     blockers.extend(
         f"control: protocol consistency: {error}"
         for error in protocol_consistency_errors(repo_root()))
@@ -572,9 +691,7 @@ def main():
         argv.insert(0, invoked.removeprefix("robot_"))
     args = parser.parse_args(argv)
     if args.command == "restart":
-        args.no_estop = True
-        code = stop(args)
-        return code or start(args)
+        return restart(args)
     return globals()[args.command](args)
 
 

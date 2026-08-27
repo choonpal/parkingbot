@@ -2,8 +2,13 @@
 set -eu
 cd "$(dirname "$0")"
 MODE="all"
+COPY_LAYOUT="false"
 if [ "${1:-}" = "--cam2-only" ]; then
   MODE="cam2"
+  shift
+fi
+if [ "${1:-}" = "--include-layout" ]; then
+  COPY_LAYOUT="true"
   shift
 fi
 DEST="${1:-$HOME/.ros/adaptive_valet_bot}"
@@ -42,12 +47,24 @@ fi
 for f in \
   output/homography_cam0_rectified.npy \
   output/homography_cam2_rectified.npy \
-  output/dual_homography_summary.json \
-  output/parking_layout.yaml; do
+  output/dual_homography_summary.json; do
   [ -f "$f" ] || { echo "missing: $f"; exit 1; }
 done
 cp output/homography_cam0_rectified.npy "$DEST/"
 cp output/homography_cam2_rectified.npy "$DEST/"
 cp output/dual_homography_summary.json "$DEST/"
-cp output/parking_layout.yaml "$DEST/"
+if [ "$COPY_LAYOUT" = "true" ]; then
+  [ -f output/parking_layout.yaml ] || {
+    echo "missing: output/parking_layout.yaml"; exit 1;
+  }
+  STAMP="$(date +%Y%m%d_%H%M%S)"
+  if [ -f "$DEST/parking_layout.yaml" ]; then
+    cp -p "$DEST/parking_layout.yaml" \
+      "$DEST/parking_layout.backup_${STAMP}.yaml"
+  fi
+  cp output/parking_layout.yaml "$DEST/"
+  echo "layout copied explicitly (previous layout backed up)"
+else
+  echo "runtime parking_layout.yaml preserved; use --include-layout to replace it"
+fi
 echo "copied to: $DEST"

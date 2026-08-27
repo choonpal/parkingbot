@@ -146,6 +146,7 @@ class CctvMergeNode(Node):
         self.declare_parameter('vehicle_length_range_m', [0.30, 6.50])
         self.declare_parameter('vehicle_width_range_m', [0.20, 2.80])
         self.declare_parameter('vehicle_dimension_ema_alpha', 0.20)
+        self.declare_parameter('vehicle_spec_republish_s', 1.0)
         self.declare_parameter('yaw_ema_alpha', 0.15)
         self.declare_parameter('waiting_yaw_deg', 0.0)
 
@@ -343,6 +344,11 @@ class CctvMergeNode(Node):
         self.latest_wall = {camera_id: 0.0 for camera_id in self.camera_ids}
         self.robot_pose = {'front': None, 'rear': None}
         self.spec_sent = False
+        self.spec_last_publish_wall = None
+        self.spec_republish_s = float(
+            self.get_parameter('vehicle_spec_republish_s').value)
+        if self.spec_republish_s <= 0.0:
+            raise ValueError('vehicle_spec_republish_s must be positive')
         self.latest_vehicle_class = 'default'
         self.latest_classified_wheelbase = self.fixed_wheelbase
         self._last_target_ready = None
@@ -456,6 +462,7 @@ class CctvMergeNode(Node):
         self.target_tracker.reset()
         self.dimension_tracker.reset()
         self.spec_sent = False
+        self.spec_last_publish_wall = None
         self.latest_vehicle_class = 'default'
         self.latest_classified_wheelbase = self.fixed_wheelbase
         self.pub_target_ready.publish(Bool(data=False))
@@ -558,7 +565,9 @@ class CctvMergeNode(Node):
             self.pub_target_ready.publish(Bool(data=True))
         if latched is not None:
             self._publish_target(latched)
-            if not self.spec_sent:
+            if (not self.spec_sent or self.spec_last_publish_wall is None or
+                    now - self.spec_last_publish_wall >=
+                    self.spec_republish_s):
                 self._publish_vehicle_spec()
 
         # 3) 슬롯 점유 — 관측 자격이 있는 카메라가 있는 슬롯만 판정
@@ -602,6 +611,7 @@ class CctvMergeNode(Node):
         self.target_tracker.reset()
         self.dimension_tracker.reset()
         self.spec_sent = False
+        self.spec_last_publish_wall = None
         self.latest_vehicle_class = 'default'
         self.latest_classified_wheelbase = self.fixed_wheelbase
         self.pub_target_ready.publish(Bool(data=False))
@@ -668,6 +678,7 @@ class CctvMergeNode(Node):
     def _publish_vehicle_spec(self):
         if not self.dimension_tracker.dimension_valid:
             return False
+        first_publish = not self.spec_sent
         wheelbase = (
             self.fixed_wheelbase if self.use_fixed_wheelbase
             else self.latest_classified_wheelbase)
@@ -686,10 +697,13 @@ class CctvMergeNode(Node):
         })
         self.pub_spec.publish(msg)
         self.spec_sent = True
-        self.get_logger().info(
-            f'차종={self.latest_vehicle_class}, wheelbase={wheelbase:.3f}m, '
-            f'size={self.dimension_tracker.length_m:.3f}x'
-            f'{self.dimension_tracker.width_m:.3f}m (merge)')
+        self.spec_last_publish_wall = time.monotonic()
+        if first_publish:
+            self.get_logger().info(
+                f'차종={self.latest_vehicle_class}, '
+                f'wheelbase={wheelbase:.3f}m, '
+                f'size={self.dimension_tracker.length_m:.3f}x'
+                f'{self.dimension_tracker.width_m:.3f}m (merge)')
         return True
 
     def _publish_empty_slots(self, force_empty=False):

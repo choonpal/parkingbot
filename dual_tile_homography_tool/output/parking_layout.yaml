@@ -12,8 +12,11 @@
   ros__parameters:
     layout_registered: true
     map_resolution: 0.050000
-    map_width_m: 4.400000
-    map_height_m: 3.830000
+    map_origin_x_m: -0.400000
+    map_origin_y_m: -0.800000
+    map_width_m: 4.800000
+    map_height_m: 4.630000
+    waiting_yaw_deg: 180.000000
     car_size_m: 0.900000
 
     # 차량 중심 detection ROI. 꼭짓점은 자기교차가 없도록 CCW로 정렬했다.
@@ -47,7 +50,7 @@ fleet_manager_node:
     map_resolution: 0.050000
     waiting_x: 0.600000
     waiting_y: 0.400000
-    waiting_yaw_deg: 180.000000
+    require_valid_vehicle_spec: true
     waiting_polygon: [0.000000, 0.000000, 1.200000, 0.000000, 1.200000, 0.800000, 0.000000, 0.800000]
     source_vehicle_fallback_mask_m: 0.900000
     slot_ids: ["P1", "P2", "P3", "P4"]
@@ -81,8 +84,10 @@ cctv_merge_node:
   ros__parameters:
     layout_registered: true
     map_resolution: 0.050000
-    map_width_m: 4.400000
-    map_height_m: 3.830000
+    map_origin_x_m: -0.400000
+    map_origin_y_m: -0.800000
+    map_width_m: 4.800000
+    map_height_m: 4.630000
     robot_odom_freshness_s: 0.500000
     static_obstacle_polygons_json: "[]"
     car_size_m: 0.900000

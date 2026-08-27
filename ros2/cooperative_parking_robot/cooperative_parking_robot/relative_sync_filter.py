@@ -196,13 +196,13 @@ class MissionReferenceCapture:
         median_x = statistics.median(xs) if x_enabled else None
         median_y = statistics.median(ys)
         median_yaw, std_yaw = self._yaw_median_and_std(yaws)
-        std_x = statistics.pstdev(xs) if x_enabled else 0.0
+        std_x = statistics.pstdev(xs) if x_enabled else None
         std_y = statistics.pstdev(ys)
         errors = (
             0.0 if median_x is None else abs(median_x - self.nominal[0]),
             abs(median_y - self.nominal[1]),
             abs(normalize_angle(median_yaw - self.nominal[2])))
-        stds = (std_x, std_y, std_yaw)
+        stds = ((0.0 if std_x is None else std_x), std_y, std_yaw)
         if any(value > limit for value, limit in zip(errors, self.max_error)):
             self._schedule_retry(
                 self.started_at if now is None else now,

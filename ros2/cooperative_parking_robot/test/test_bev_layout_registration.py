@@ -41,7 +41,8 @@ def test_checked_in_site_layout_matches_measured_map_and_zones():
         [3.2, 0.0, 4.0, 0.0, 4.0, 0.8, 3.2, 0.8])
     assert vision['front_start_pose'] == pytest.approx([3.6, 0.6, 180.0])
     assert vision['rear_start_pose'] == pytest.approx([3.6, 0.2, 180.0])
-    assert fleet['waiting_yaw_deg'] == pytest.approx(180.0)
+    assert vision['waiting_yaw_deg'] == pytest.approx(180.0)
+    assert 'waiting_yaw_deg' not in fleet
     assert vision['slot_ids'] == ['P1', 'P2', 'P3', 'P4']
     assert vision['slot_coords'] == pytest.approx(
         [1.2, 2.2, 2.0, 2.2, 2.8, 2.2, 3.6, 2.2])
@@ -110,7 +111,8 @@ def test_generated_layout_is_valid_ros_parameter_yaml():
     assert fleet['simultaneous_entry'] is False
     assert fleet['waiting_x'] == pytest.approx(2.3)
     assert fleet['waiting_y'] == pytest.approx(0.6)
-    assert fleet['waiting_yaw_deg'] == pytest.approx(0.0)
+    assert vision['waiting_yaw_deg'] == pytest.approx(0.0)
+    assert 'waiting_yaw_deg' not in fleet
     assert vision['car_size_m'] == pytest.approx(0.90)
     assert fleet['source_vehicle_fallback_mask_m'] == pytest.approx(
         vision['car_size_m'])
@@ -149,13 +151,38 @@ def test_generated_waiting_yaw_is_explicit_and_finite():
         map_width_m=6.0, map_height_m=4.0, map_resolution_m=0.05,
         waiting_yaw_deg=180.0)
 
-    fleet = yaml.safe_load(text)['fleet_manager_node']['ros__parameters']
-    assert fleet['waiting_yaw_deg'] == pytest.approx(180.0)
+    parsed = yaml.safe_load(text)
+    assert parsed['/**']['ros__parameters'][
+        'waiting_yaw_deg'] == pytest.approx(180.0)
     with pytest.raises(ValueError, match='waiting_yaw_deg'):
         render_parking_layout_yaml(
             [slot], [(2.1, 0.3), (2.5, 0.3), (2.5, 0.9), (2.1, 0.9)],
             map_width_m=6.0, map_height_m=4.0, map_resolution_m=0.05,
             waiting_yaw_deg=float('nan'))
+
+
+def test_homography_output_matches_canonical_negative_map_geometry():
+    canonical = yaml.safe_load(
+        (ROOT / 'config' / 'parking_layout.yaml').read_text())
+    generated = yaml.safe_load(
+        (ROOT.parent.parent / 'dual_tile_homography_tool' / 'output' /
+         'parking_layout.yaml').read_text())
+    keys = ('map_origin_x_m', 'map_origin_y_m',
+            'map_width_m', 'map_height_m', 'waiting_yaw_deg')
+    canonical_params = canonical['/**']['ros__parameters']
+    generated_params = generated['/**']['ros__parameters']
+    assert {key: generated_params[key] for key in keys} == pytest.approx(
+        {key: canonical_params[key] for key in keys})
+    assert generated_params['map_origin_x_m'] < 0.0
+    assert generated_params['map_origin_y_m'] < 0.0
+
+
+def test_calibration_copy_preserves_runtime_layout_by_default():
+    script = (ROOT.parent.parent / 'dual_tile_homography_tool' /
+              'copy_results_to_project.sh').read_text()
+    assert 'COPY_LAYOUT="false"' in script
+    assert 'if [ "$COPY_LAYOUT" = "true" ]' in script
+    assert 'parking_layout.backup_' in script
 
 
 def test_layout_rejects_slot_outside_zero_origin_occupancy_grid():

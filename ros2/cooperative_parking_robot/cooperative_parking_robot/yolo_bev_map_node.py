@@ -1083,6 +1083,7 @@ class YoloBevMapNode(Node):
             'dimension_source': (
                 'segmentation_mask' if self.vehicle_dimension_valid
                 else 'configured_default'),
+            'dimension_valid': bool(self.vehicle_dimension_valid),
             'sequence': 1,
             'stamp_ns': self.get_clock().now().nanoseconds,
         })

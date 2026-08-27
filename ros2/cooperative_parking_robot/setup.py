@@ -31,11 +31,10 @@ setup(
             ('cctv_robot_marker_baseline = '
              'cooperative_parking_robot.cctv_robot_marker_node:main'),
             'cctv_merge = cooperative_parking_robot.mvp_integration_nodes:cctv_merge_main',
-            # Production entry point. The safe baseline remains importable for
-            # regression comparison; this final layer adds lifecycle, wheel-pair
-            # timing and lateral mechanical safety P0 guards.
+            # Production entry point plus the minimal MVP command-owner layer.
             ('rigid_body_sync = '
-             'cooperative_parking_robot.rigid_body_sync_vision_node:main'),
+             'cooperative_parking_robot.mvp_runtime_nodes:'
+             'rigid_body_sync_main'),
             ('rigid_body_sync_p0_baseline = '
              'cooperative_parking_robot.rigid_body_sync_production_node:main'),
             ('rigid_body_sync_safe_baseline = '
@@ -45,7 +44,7 @@ setup(
             'state_machine = cooperative_parking_robot.robot_state_machine_node:main',
             'stm32_bridge = cooperative_parking_robot.stm32_bridge_node:main',
             ('individual_move = '
-             'cooperative_parking_robot.mvp_integration_nodes:'
+             'cooperative_parking_robot.mvp_runtime_nodes:'
              'individual_move_main'),
             ('pose_fusion = '
              'cooperative_parking_robot.pose_fusion_production_node:main'),

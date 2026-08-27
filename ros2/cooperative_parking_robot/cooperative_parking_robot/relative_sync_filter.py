@@ -17,6 +17,28 @@ def normalize_angle(angle: float) -> float:
     return math.atan2(math.sin(float(angle)), math.cos(float(angle)))
 
 
+def visual_safety_state(*, now: float, marker_lost_since: Optional[float],
+                        correction_times: dict, slowdown_s: float,
+                        stop_s: float, correction_grace_s: float = 0.0):
+    """Classify visual loss separately from per-axis correction staleness."""
+    if marker_lost_since is not None:
+        age = max(0.0, now - marker_lost_since)
+        return ('MARKER_HOLD' if age > stop_s else
+                'MARKER_SLOW' if age > slowdown_s else 'MARKER_GRACE',
+                age, ())
+    stale = tuple(
+        axis for axis, stamp in correction_times.items()
+        if stamp is None or now - stamp > correction_grace_s)
+    if not stale:
+        return 'OK', 0.0, ()
+    ages = [stop_s + 1.0 if correction_times[axis] is None else
+            max(0.0, now - correction_times[axis] - correction_grace_s)
+            for axis in stale]
+    age = max(ages)
+    return ('CORRECTION_HOLD' if age > stop_s else 'CORRECTION_STALE',
+            age, stale)
+
+
 class DeltaKalman1D:
     """One-dimensional delta-propagated Kalman filter.
 
@@ -146,6 +168,86 @@ class OncePerStamp:
             return False
         self.last_stamp_ns = stamp
         return True
+
+
+@dataclass(frozen=True)
+class ScalarGateDecision:
+    """Decision for one independently gated relative-state axis."""
+
+    action: str
+    residual: Optional[float]
+    reason: str
+
+    @property
+    def accepted(self) -> bool:
+        return self.action in ('ACCEPT', 'REACQUIRE')
+
+
+class ScalarObservationGate:
+    """Scalar innovation gate with consistency-based re-acquisition.
+
+    Keeping one instance per axis prevents an unreliable solvePnP yaw from
+    discarding a sound distance or lateral observation.
+    """
+
+    def __init__(self, *, innovation_limit: float, sigma_limit: float,
+                 reacquire_count: int, reacquire_limit: float,
+                 consistency_limit: float, angle: bool = False):
+        self.innovation_limit = float(innovation_limit)
+        self.sigma_limit = float(sigma_limit)
+        self.reacquire_count = int(reacquire_count)
+        self.reacquire_limit = float(reacquire_limit)
+        self.consistency_limit = float(consistency_limit)
+        self.angle = bool(angle)
+        if any(value <= 0.0 for value in (
+                self.innovation_limit, self.sigma_limit,
+                self.reacquire_limit, self.consistency_limit)):
+            raise ValueError('gate limits must be positive')
+        if self.reacquire_count < 2:
+            raise ValueError('reacquire_count must be at least 2')
+        self._candidate: Optional[float] = None
+        self._candidate_count = 0
+
+    def reset(self) -> None:
+        self._candidate = None
+        self._candidate_count = 0
+
+    def _difference(self, lhs: float, rhs: float) -> float:
+        value = float(lhs) - float(rhs)
+        return normalize_angle(value) if self.angle else value
+
+    def evaluate(self, measurement: float,
+                 state_filter: DeltaKalman1D) -> ScalarGateDecision:
+        residual = state_filter.innovation(measurement)
+        variance = state_filter.innovation_variance()
+        within_sigma = (
+            variance > 0.0 and math.isfinite(variance) and
+            residual * residual <= self.sigma_limit ** 2 * variance)
+        if abs(residual) <= self.innovation_limit and within_sigma:
+            self.reset()
+            return ScalarGateDecision('ACCEPT', residual, 'innovation_ok')
+
+        if abs(residual) > self.reacquire_limit:
+            self.reset()
+            return ScalarGateDecision(
+                'REJECT', residual, 'outside_reacquire_envelope')
+
+        consistent = (
+            self._candidate is not None and
+            abs(self._difference(measurement, self._candidate)) <=
+            self.consistency_limit)
+        if consistent:
+            self._candidate_count += 1
+        else:
+            self._candidate = float(measurement)
+            self._candidate_count = 1
+        if self._candidate_count >= self.reacquire_count:
+            self.reset()
+            return ScalarGateDecision(
+                'REACQUIRE', residual, 'consistent_bounded_observations')
+        return ScalarGateDecision(
+            'REJECT', residual,
+            f'candidate_{self._candidate_count}/{self.reacquire_count}')
 
 
 @dataclass(frozen=True)

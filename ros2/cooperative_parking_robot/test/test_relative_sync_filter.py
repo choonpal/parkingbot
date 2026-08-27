@@ -10,8 +10,10 @@ from cooperative_parking_robot.relative_sync_filter import (
     DeltaKalman1D,
     OncePerStamp,
     RelativeObservationGate,
+    ScalarObservationGate,
     anchored_pose,
     normalize_angle,
+    visual_safety_state,
 )
 
 
@@ -21,6 +23,97 @@ def test_once_per_stamp_consumes_one_measurement_once():
     assert not consumer.consume(100)
     assert not consumer.consume(99)
     assert consumer.consume(101)
+
+
+def test_same_visual_stamp_updates_filter_exactly_once():
+    consumer = OncePerStamp()
+    filt = DeltaKalman1D(init=0.70, measurement_variance=0.01 ** 2)
+    filt.reset(0.70, raw_value=0.70, covariance=0.01 ** 2)
+    updates = 0
+    for _ in range(5):
+        if consumer.consume(123):
+            filt.update(0.71)
+            updates += 1
+    assert updates == 1
+
+
+def _scalar_gate(*, angle=False):
+    return ScalarObservationGate(
+        innovation_limit=(math.radians(5.0) if angle else 0.04),
+        sigma_limit=4.0,
+        reacquire_count=3,
+        reacquire_limit=(math.radians(15.0) if angle else 0.12),
+        consistency_limit=(math.radians(1.0) if angle else 0.01),
+        angle=angle)
+
+
+def test_distance_acceptance_is_independent_of_bad_yaw():
+    distance = DeltaKalman1D(init=0.70, measurement_variance=0.01 ** 2)
+    yaw = DeltaKalman1D(
+        init=0.0, measurement_variance=math.radians(2.0) ** 2,
+        angle=True)
+    distance.reset(0.70, raw_value=0.70, covariance=0.01 ** 2)
+    yaw.reset(0.0, raw_value=0.0, covariance=math.radians(2.0) ** 2)
+    distance_decision = _scalar_gate().evaluate(0.705, distance)
+    yaw_decision = _scalar_gate(angle=True).evaluate(math.radians(30.0), yaw)
+    if distance_decision.accepted:
+        distance.update(0.705)
+    if yaw_decision.accepted:
+        yaw.update(math.radians(30.0))
+    assert distance_decision.action == 'ACCEPT'
+    assert yaw_decision.action == 'REJECT'
+    assert distance.x > 0.70
+    assert yaw.x == pytest.approx(0.0)
+
+
+def test_yaw_acceptance_is_independent_of_bad_distance():
+    distance = DeltaKalman1D(init=0.70, measurement_variance=0.01 ** 2)
+    yaw = DeltaKalman1D(
+        init=0.0, measurement_variance=math.radians(2.0) ** 2,
+        angle=True)
+    distance.reset(0.70, raw_value=0.70, covariance=0.01 ** 2)
+    yaw.reset(0.0, raw_value=0.0, covariance=math.radians(2.0) ** 2)
+    distance_decision = _scalar_gate().evaluate(0.90, distance)
+    yaw_decision = _scalar_gate(angle=True).evaluate(math.radians(1.0), yaw)
+    if yaw_decision.accepted:
+        yaw.update(math.radians(1.0))
+    assert distance_decision.action == 'REJECT'
+    assert yaw_decision.action == 'ACCEPT'
+    assert yaw.x > 0.0
+
+
+def test_lateral_visual_update_corrects_wheel_prediction_drift():
+    lateral = DeltaKalman1D(
+        init=0.0, measurement_variance=0.015 ** 2,
+        process_variance_rate=0.003 ** 2)
+    lateral.reset(0.0, raw_value=0.0, stamp_s=1.0)
+    assert lateral.predict_from_raw(0.02, stamp_s=1.1)
+    before = lateral.x
+    decision = _scalar_gate().evaluate(0.005, lateral)
+    assert decision.action == 'ACCEPT'
+    lateral.update(0.005)
+    assert abs(lateral.x - 0.005) < abs(before - 0.005)
+
+
+def test_visible_marker_with_rejected_yaw_is_correction_degraded_not_lost():
+    state, age, axes = visual_safety_state(
+        now=12.0, marker_lost_since=None,
+        correction_times={'distance': 11.9, 'lateral': 11.9, 'yaw': 10.5},
+        slowdown_s=1.0, stop_s=2.0, correction_grace_s=0.5)
+    assert state == 'CORRECTION_STALE'
+    assert age == pytest.approx(1.0)
+    assert axes == ('yaw',)
+
+
+def test_actual_visual_loss_still_progresses_slowdown_then_hold():
+    slow = visual_safety_state(
+        now=11.5, marker_lost_since=10.0, correction_times={},
+        slowdown_s=1.0, stop_s=2.0)
+    hold = visual_safety_state(
+        now=12.1, marker_lost_since=10.0, correction_times={},
+        slowdown_s=1.0, stop_s=2.0)
+    assert slow[0] == 'MARKER_SLOW'
+    assert hold[0] == 'MARKER_HOLD'
 
 
 def test_cached_predict_does_not_grow_covariance():
@@ -119,7 +212,23 @@ def test_production_entrypoint_and_parameters_are_wired():
     for name in (
             'use_raw_wheel_relative_predictor',
             'sync_dist_measurement_sigma_m',
+            'sync_lateral_measurement_sigma_m',
             'aruco_distance_innovation_gate_m',
+            'aruco_lateral_innovation_gate_m',
             'aruco_reacquire_count',
-            'sync_dist_deadband_m'):
+            'sync_dist_deadband_m',
+            'sync_lateral_deadband_m',
+            'sync_target_lateral_m'):
         assert name in config_text
+
+
+def test_production_predictor_keeps_raw_wheel_priority_and_fused_fallback():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / 'cooperative_parking_robot' /
+              'rigid_body_sync_safe_node.py').read_text()
+    predictor = source.split('def _relative_predictor', 1)[1].split(
+        'def _initialize_sync_filters', 1)[0]
+    assert predictor.index('self._raw_wheel_relative(now)') < predictor.index(
+        "'FUSED_ODOM_FALLBACK'")
+    assert "'RAW_WHEEL_ODOM'" in source
+    assert 'raw_lateral' in source

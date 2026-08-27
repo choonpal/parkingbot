@@ -43,10 +43,13 @@ rigid_body_sync_node:
     # 아래 값은 보수적 초기값이며 정지 ArUco 로그와 wheel-slip 실측으로 확정한다.
     sync_dist_process_sigma_m_sqrt_s: 0.003
     sync_yaw_process_sigma_deg_sqrt_s: 0.50
+    sync_lateral_process_sigma_m_sqrt_s: 0.003
     sync_dist_process_gain: 0.03
     sync_yaw_process_gain: 0.03
+    sync_lateral_process_gain: 0.03
     sync_dist_measurement_sigma_m: 0.015
     sync_yaw_measurement_sigma_deg: 3.0
+    sync_lateral_measurement_sigma_m: 0.015
     sync_initial_covariance_scale: 4.0
 
     # ID0 또는 상판 marker pair의 innovation/outlier gate.
@@ -61,11 +64,20 @@ rigid_body_sync_node:
     aruco_consistency_distance_m: 0.015
     aruco_consistency_yaw_deg: 2.0
     aruco_lateral_envelope_m: 0.10
+    aruco_lateral_innovation_gate_m: 0.04
+    aruco_reacquire_lateral_m: 0.10
+    aruco_consistency_lateral_m: 0.015
 
     # 센서 잡음에 의한 모터 hunting 방지용 작은 제어 deadband.
     # 안전 판정은 deadband 전 원시 오차로 계속 수행한다.
     sync_dist_deadband_m: 0.003
     sync_yaw_deadband_deg: 0.50
+    sync_lateral_deadband_m: 0.003
+    sync_target_lateral_m: 0.0
+    sync_lateral_kp: 1.2
+    sync_lateral_ki: 0.1
+    sync_lateral_kd: 0.05
+    sync_lateral_max_correction_mps: 0.08
 
     # 차량 중심과 로봇 두 대 중점의 고정 장착 오프셋 초기화/보정
     initialize_offset_from_target_pose: true

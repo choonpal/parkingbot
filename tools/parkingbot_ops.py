@@ -120,7 +120,10 @@ def protocol_source_check_command(repository_root) -> str:
     # 루트에만 있다. 여기서 펌웨어까지 찾으면 어떤 장비에서도 통과할 수
     # 없다. 펌웨어 대조는 제어 장비의 protocol_consistency_errors() 가
     # 이미 수행하므로, 원격에서는 배포된 ROS 소스만 확인한다.
-    package = shlex.quote(str(repository_root))
+    # 호출부는 패키지 루트(.../src/cooperative_parking_robot)를 넘긴다.
+    # 파이썬 모듈은 그 아래 같은 이름의 폴더에 있다.
+    package = shlex.quote(
+        str(repository_root) + "/cooperative_parking_robot")
     return (
         f"grep -Eq 'PROTOCOL_VERSION[[:space:]]*=[[:space:]]*"
         f"{EXPECTED_UART_PROTOCOL_VERSION}' {package}/uart_protocol.py && "

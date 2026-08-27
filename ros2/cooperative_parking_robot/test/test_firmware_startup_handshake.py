@@ -28,6 +28,26 @@ static char tx_frames[128][256];
 static uint32_t tx_timeouts[128];
 static int tx_count;
 
+static void test_profile_constants(void) {
+    assert((int)kServoOpenPulseUs[0] == EXPECTED_SERVO1_OPEN);
+    assert((int)kServoGripPulseUs[0] == EXPECTED_SERVO1_GRIP);
+    assert((int)kServoMinPulseUs[0] == EXPECTED_SERVO1_MIN);
+    assert((int)kServoMaxPulseUs[0] == EXPECTED_SERVO1_MAX);
+    assert((int)kServoOpenPulseUs[1] == EXPECTED_SERVO2_OPEN);
+    assert((int)kServoGripPulseUs[1] == EXPECTED_SERVO2_GRIP);
+    assert((int)kServoMinPulseUs[1] == EXPECTED_SERVO2_MIN);
+    assert((int)kServoMaxPulseUs[1] == EXPECTED_SERVO2_MAX);
+#if PARKING_ROBOT_PROFILE == PARKING_ROBOT_PROFILE_FRONT
+    assert(&ENCODER_RL_TIMER == &htim4);
+    assert(&ENCODER_RR_TIMER == &htim3);
+#elif PARKING_ROBOT_PROFILE == PARKING_ROBOT_PROFILE_REAR
+    assert(&ENCODER_RL_TIMER == &htim3);
+    assert(&ENCODER_RR_TIMER == &htim4);
+#else
+#error "test requires a production firmware profile"
+#endif
+}
+
 uint32_t HAL_GetTick(void) { return test_tick; }
 int HAL_TIM_Encoder_Start(TIM_HandleTypeDef *h, uint32_t c) {
     (void)h; (void)c; return 0;
@@ -112,9 +132,32 @@ static void test_fresh_boot_sequence(void) {
     assert(g_robot.heartbeat_seen == 1U);
     assert(g_robot.command_seen == 1U);
     assert(g_robot.servo_attached == 0U);
-    command("S,attach,2600,400");
+    char attach[64];
+    snprintf(attach, sizeof(attach), "S,attach,%d,%d",
+             EXPECTED_SERVO1_OPEN, EXPECTED_SERVO2_OPEN);
+    command(attach);
     expect_last("ACK,SERVO_ATTACH\n");
     assert(g_robot.servo_attached == 1U);
+    command("S,grip");
+    expect_last("ACK,GRIP\n");
+    assert((int)g_robot.servo_target[0] == EXPECTED_SERVO1_GRIP);
+    assert((int)g_robot.servo_target[1] == EXPECTED_SERVO2_GRIP);
+    command("S,release");
+    expect_last("ACK,RELEASE\n");
+    assert((int)g_robot.servo_target[0] == EXPECTED_SERVO1_OPEN);
+    assert((int)g_robot.servo_target[1] == EXPECTED_SERVO2_OPEN);
+}
+
+static void test_other_profile_attach_is_rejected(void) {
+    reset_robot();
+    establish("aaaaaaaaaaaaaaaa");
+#if PARKING_ROBOT_PROFILE == PARKING_ROBOT_PROFILE_FRONT
+    command("S,attach,400,2600");
+#else
+    command("S,attach,2600,400");
+#endif
+    expect_last("ERR,BAD_SERVO_ATTACH\n");
+    assert(g_robot.servo_attached == 0U);
 }
 
 static void test_previous_heartbeat_session_and_current_latch(void) {
@@ -196,7 +239,9 @@ static void test_complete_line_transport(void) {
 }
 
 int main(void) {
+    test_profile_constants();
     test_fresh_boot_sequence();
+    test_other_profile_attach_is_rejected();
     test_previous_heartbeat_session_and_current_latch();
     test_current_command_timeout_latches();
     test_estop_and_noncommunication_fault_survive_hello();
@@ -206,15 +251,36 @@ int main(void) {
 '''
 
 
-def test_authoritative_firmware_startup_and_uart_transport(tmp_path):
+@pytest.mark.parametrize(
+    ('profile', 'expected'),
+    (
+        pytest.param(
+            1, (2600, 1550, 1550, 2600, 400, 1450, 400, 1450),
+            id='front-robot-2'),
+        pytest.param(
+            2, (400, 1600, 400, 1600, 2600, 1400, 1400, 2600),
+            id='rear-robot-1'),
+    ),
+)
+def test_authoritative_firmware_startup_and_uart_transport(
+        tmp_path, profile, expected):
     compiler = shutil.which('gcc')
     if compiler is None:
         pytest.skip('host gcc unavailable')
-    harness = tmp_path / 'firmware_handshake_harness.c'
-    binary = tmp_path / 'firmware_handshake_harness'
+    harness = tmp_path / f'firmware_handshake_harness_{profile}.c'
+    binary = tmp_path / f'firmware_handshake_harness_{profile}'
     harness.write_text(HARNESS, encoding='utf-8')
+    names = (
+        'SERVO1_OPEN', 'SERVO1_GRIP', 'SERVO1_MIN', 'SERVO1_MAX',
+        'SERVO2_OPEN', 'SERVO2_GRIP', 'SERVO2_MIN', 'SERVO2_MAX',
+    )
+    expected_defines = [
+        f'-DEXPECTED_{name}={value}'
+        for name, value in zip(names, expected)
+    ]
     compile_result = subprocess.run([
         compiler, '-std=c11', '-D_GNU_SOURCE', '-Wall', '-Wextra', '-Werror',
+        f'-DPARKING_ROBOT_PROFILE={profile}', *expected_defines,
         '-I', str(STUB_DIR), '-I', str(FIRMWARE_DIR),
         '-I', str(REPOSITORY / 'stm32/parking_robot/Core/Inc'),
         str(harness), '-lm', '-o', str(binary),
@@ -223,6 +289,39 @@ def test_authoritative_firmware_startup_and_uart_transport(tmp_path):
     run_result = subprocess.run(
         [str(binary)], text=True, capture_output=True, timeout=10)
     assert run_result.returncode == 0, run_result.stderr
+
+
+def test_firmware_profile_has_no_silent_default(tmp_path):
+    compiler = shutil.which('gcc')
+    if compiler is None:
+        pytest.skip('host gcc unavailable')
+    source = tmp_path / 'profile_must_be_explicit.c'
+    source.write_text(
+        '#include "parking_robot_firmware.h"\nint main(void) { return 0; }\n',
+        encoding='utf-8')
+    result = subprocess.run([
+        compiler, '-std=c11', '-Wall', '-Werror',
+        '-I', str(REPOSITORY / 'stm32/parking_robot/Core/Inc'),
+        '-c', str(source), '-o', str(tmp_path / 'profile.o'),
+    ], text=True, capture_output=True)
+    assert result.returncode != 0
+    assert 'must be explicitly defined' in result.stderr
+
+
+def test_production_build_defines_two_named_profile_artifacts():
+    project = REPOSITORY / 'stm32/parking_robot'
+    cmake = (project / 'CMakeLists.txt').read_text(encoding='utf-8')
+    presets = (project / 'CMakePresets.json').read_text(encoding='utf-8')
+    build_script = (
+        REPOSITORY / 'tools/build_stm32_firmware.sh').read_text(
+            encoding='utf-8')
+    assert 'parking_robot_front parking_robot_front 1' in cmake
+    assert 'parking_robot_rear parking_robot_rear 2' in cmake
+    assert 'build_front_firmware' in cmake
+    assert 'build_rear_firmware' in cmake
+    assert '"name": "front"' in presets
+    assert '"name": "rear"' in presets
+    assert 'front|rear|all' in build_script
 
 
 def test_firmware_has_one_serialized_uart_writer():

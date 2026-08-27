@@ -1,0 +1,32 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "production",
+      "displayName": "ParkingBot STM32 production profiles",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/production",
+      "toolchainFile": "${sourceDir}/cmake/gcc-arm-none-eabi.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "front",
+      "configurePreset": "production",
+      "targets": ["build_front_firmware"]
+    },
+    {
+      "name": "rear",
+      "configurePreset": "production",
+      "targets": ["build_rear_firmware"]
+    },
+    {
+      "name": "all-profiles",
+      "configurePreset": "production",
+      "targets": ["build_front_firmware", "build_rear_firmware"]
+    }
+  ]
+}

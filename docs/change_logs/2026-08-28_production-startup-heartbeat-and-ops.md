@@ -182,8 +182,11 @@ SERIAL_CONNECTED
 
 ## 배포 및 실차 확인
 
-1. Front/Rear firmware와 ROS package를 같은 release로 배포한다. 구 firmware는
-   HELLO를 `UNKNOWN_COMMAND`로 거부하므로 혼합 배포는 fail-safe지만 기동 불가다.
+1. Front/Rear firmware와 ROS package를 같은 release로 배포하되, firmware
+   source가 같다는 이유로 같은 image를 flash하지 않는다. Front/robot-2에는
+   `parking_robot_front.bin`, Rear/robot-1에는 `parking_robot_rear.bin`을 사용한다.
+   서보 목표/범위와 rear encoder mapping은 compile-time profile이다. 구 firmware는
+   HELLO를 `UNKNOWN_COMMAND`로 거부하므로 혼합 release는 fail-safe지만 기동 불가다.
 2. 현재 STM32가 이미 ESTOP을 받은 상태라면 모터를 받침대에 올리고 물리 안전을
    확보한 뒤 MCU reset/power-cycle한다. 새 firmware flash/reset도 RAM latch를
    초기화한다.

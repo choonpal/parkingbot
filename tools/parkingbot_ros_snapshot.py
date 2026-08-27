@@ -17,7 +17,9 @@ from rclpy.qos import (
 )
 from std_msgs.msg import Bool, String
 
-from parkingbot_ops import PRESENCE_TOPICS, TOPICS
+from parkingbot_ops import (
+    observer_complete, PRESENCE_TOPICS, TOPICS,
+)
 
 
 BOOL_KEYS = {
@@ -76,20 +78,41 @@ class SnapshotNode(Node):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--timeout", type=float, default=1.2)
+    parser.add_argument("--mode", choices=("full", "startup"), default="full")
+    parser.add_argument(
+        "--stream-interval", type=float, default=0.0,
+        help="emit JSON-lines progress at this interval; zero emits only final")
     args = parser.parse_args()
     if args.timeout <= 0.0:
         parser.error("--timeout must be positive")
+    if args.stream_interval < 0.0:
+        parser.error("--stream-interval must be non-negative")
 
     rclpy.init(args=[])
     node = SnapshotNode()
     deadline = time.monotonic() + args.timeout
+    next_emit = time.monotonic() + args.stream_interval
     try:
         while time.monotonic() < deadline:
             rclpy.spin_once(
                 node, timeout_sec=min(0.05, deadline - time.monotonic()))
-            if len(node.received) == len(node.values):
+            complete = observer_complete(node.received, args.mode)
+            if args.stream_interval and time.monotonic() >= next_emit:
+                print(json.dumps({
+                    "topics": node.values, "complete": complete,
+                    "mode": args.mode,
+                }, ensure_ascii=False), flush=True)
+                next_emit = time.monotonic() + args.stream_interval
+            # Streaming startup mode keeps this participant alive so changing
+            # readiness values (not merely topic discovery) remain observable.
+            # One-shot callers may return as soon as their required keys arrive.
+            if complete and not args.stream_interval:
                 break
-        print(json.dumps({"topics": node.values}, ensure_ascii=False))
+        print(json.dumps({
+            "topics": node.values,
+            "complete": observer_complete(node.received, args.mode),
+            "mode": args.mode,
+        }, ensure_ascii=False), flush=True)
     finally:
         node.destroy_node()
         rclpy.shutdown()

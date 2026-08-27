@@ -61,6 +61,10 @@ PRESENCE_TOPICS = {
     "relative_pose": "/sync/relative_pose",
     "map_stream": "/parking/map",
 }
+STARTUP_REQUIRED_TOPIC_KEYS = (
+    "fleet", "front_state", "rear_state", "merge", "id0_marker",
+    "front_hw", "rear_hw",
+)
 EXPECTED_UART_PROTOCOL_VERSION = 2
 EXPECTED_UART_BAUD_RATE = 115200
 
@@ -156,6 +160,7 @@ def load_env(path: Path) -> dict[str, str]:
     values.setdefault("ROS_LOCALHOST_ONLY", "0")
     values.setdefault("RMW_IMPLEMENTATION", "rmw_fastrtps_cpp")
     values.setdefault("ROS_SETUP", "/opt/ros/humble/setup.bash")
+    values.setdefault("OBSERVER_PYTHON", "/usr/bin/python3")
     values.setdefault("REAR_CAMERA_TOPIC", "/rear/marker_camera/image")
     values.setdefault("REAR_ENABLE_INTERNAL_CAMERA", "false")
     return values
@@ -276,11 +281,68 @@ def local_ros_prefix(config):
     return ros_environment_prefix(config, config["CONTROL_WORKSPACE"])
 
 
+def observer_environment_prefix(config):
+    """ROS environment for the standard-message-only diagnostic observer."""
+    return (
+        f"source {shlex.quote(config['ROS_SETUP'])} && "
+        f"export ROS_DOMAIN_ID={shlex.quote(config['ROS_DOMAIN_ID'])} && "
+        f"export ROS_LOCALHOST_ONLY={shlex.quote(config['ROS_LOCALHOST_ONLY'])} && "
+        f"export RMW_IMPLEMENTATION={shlex.quote(config['RMW_IMPLEMENTATION'])}")
+
+
 def local_ros_argv(config, argv):
     """Run a controller-side ROS command after sourcing underlay + overlay."""
     command = local_ros_prefix(config) + " && exec " + shlex.join(
         [str(item) for item in argv])
     return ["bash", "-lc", command]
+
+
+def observer_argv(config, argv):
+    """Run an observer command with the ROS underlay, without a project overlay."""
+    command = observer_environment_prefix(config) + " && exec " + shlex.join(
+        [str(item) for item in argv])
+    return ["bash", "-lc", command]
+
+
+def observer_helper_path():
+    return Path(__file__).with_name("parkingbot_ros_snapshot.py")
+
+
+def observer_prerequisite_errors(config, runner=None, helper=None):
+    """Validate the local observer before any remote production process starts."""
+    runner = runner or Runner()
+    helper = Path(helper or observer_helper_path())
+    python = Path(config.get("OBSERVER_PYTHON", "/usr/bin/python3"))
+    errors = []
+    if not Path(config["ROS_SETUP"]).is_file():
+        errors.append(f"ROS setup missing: {config['ROS_SETUP']}")
+    if not helper.is_file() or not os.access(helper, os.R_OK):
+        errors.append(f"snapshot helper missing: {helper}")
+    ops_path = helper.with_name("parkingbot_ops.py")
+    if not ops_path.is_file() or not os.access(ops_path, os.R_OK):
+        errors.append(f"snapshot support module missing: {ops_path}")
+    if not python.is_absolute():
+        errors.append("OBSERVER_PYTHON must be an absolute path")
+    elif not python.is_file() or not os.access(python, os.X_OK):
+        errors.append(f"observer Python is not executable: {python}")
+    if errors:
+        return errors
+    probe = (
+        f"import sys; sys.path.insert(0, {str(helper.parent)!r}); "
+        "import parkingbot_ops; import rclpy; "
+        "import geometry_msgs.msg; import nav_msgs.msg; "
+        "import std_msgs.msg; "
+        "rclpy.init(args=[]); "
+        "n=rclpy.create_node('parkingbot_observer_preflight'); "
+        "n.destroy_node(); rclpy.shutdown()")
+    result = runner.run(
+        observer_argv(config, [str(python), "-c", probe]), timeout=12)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "no diagnostic output").strip()
+        errors.append(
+            f"observer Python/ROS/RMW preflight failed rc={result.returncode}: "
+            f"{detail[-1200:]}")
+    return errors
 
 
 def q(value):
@@ -411,35 +473,78 @@ def topic_present(config, runner, topic, timeout=1.2):
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
-def _snapshot_topics(config, runner, timeout):
-    helper = Path(__file__).with_name("parkingbot_ros_snapshot.py")
-    result = runner.run(
-        local_ros_argv(config, [
-            "python3", str(helper), "--timeout", str(float(timeout))]),
-        timeout=float(timeout) + 2.0)
-    if result.returncode != 0:
-        return None
-    for line in reversed(result.stdout.splitlines()):
+def parse_observer_output(stdout, returncode=0, stderr="", timed_out=False):
+    """Turn helper output into an explicit observer result contract."""
+    lines = str(stdout or "").splitlines()
+    payload = None
+    for line in reversed(lines):
         try:
-            payload = json.loads(line)
+            candidate = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if isinstance(payload, dict) and isinstance(
-                payload.get("topics"), dict):
-            return payload["topics"]
-    return None
+        if isinstance(candidate, dict) and isinstance(
+                candidate.get("topics"), dict):
+            payload = candidate
+            break
+    if timed_out:
+        error_type = "timeout"
+        message = "snapshot helper timed out"
+    elif returncode != 0:
+        error_type = "process_exit"
+        message = f"snapshot helper exited rc={returncode}"
+    elif payload is None:
+        error_type = "malformed_output"
+        message = "snapshot helper returned no valid JSON topic payload"
+    else:
+        return {
+            "observer_ok": True, "observer_error_type": None,
+            "observer_returncode": returncode, "observer_stderr": "",
+            "observer_stdout": "", "observer_timed_out": False,
+            "topics": payload["topics"],
+            "complete": bool(payload.get("complete", False)),
+        }
+    return {
+        "observer_ok": False, "observer_error_type": error_type,
+        "observer_returncode": returncode,
+        "observer_stderr": str(stderr or "").strip()[-2000:],
+        "observer_stdout": str(stdout or "").strip()[-2000:],
+        "observer_timed_out": bool(timed_out), "topics": {},
+        "complete": False, "message": message,
+    }
 
 
-def snapshot(config, runner=None, timeout=1.2, hosts=None):
+def observer_complete(received, mode):
+    required = (set(STARTUP_REQUIRED_TOPIC_KEYS) if mode == "startup"
+                else set((*TOPICS, *PRESENCE_TOPICS)))
+    return required.issubset(set(received))
+
+
+def _snapshot_topics(config, runner, timeout, mode="full"):
+    helper = observer_helper_path()
+    python = config.get("OBSERVER_PYTHON", "/usr/bin/python3")
+    result = runner.run(
+        observer_argv(config, [
+            python, str(helper), "--timeout", str(float(timeout)),
+            "--mode", mode]),
+        timeout=float(timeout) + 2.0)
+    return parse_observer_output(
+        result.stdout, result.returncode, result.stderr,
+        timed_out=result.returncode == 124)
+
+
+def snapshot(config, runner=None, timeout=1.2, hosts=None, mode="full",
+             observer_result=None):
     runner = runner or Runner()
     # One bounded observer subscribes to every field.  The previous design
     # kept three ros2 topic echo processes alive at a time for up to 12 s and
     # serialized 23 probes, producing minute-long snapshots and continuous
     # DDS participant churn on the RPis.
-    sampled = _snapshot_topics(config, runner, timeout)
+    observer = observer_result or _snapshot_topics(
+        config, runner, timeout, mode=mode)
     values = {key: None for key in TOPICS}
     values.update({key: False for key in PRESENCE_TOPICS})
-    if sampled is not None:
+    sampled = observer["topics"]
+    if observer["observer_ok"]:
         for key in values:
             if key in sampled:
                 values[key] = sampled[key]
@@ -488,11 +593,15 @@ def snapshot(config, runner=None, timeout=1.2, hosts=None):
             blockers.append(f"{camera.upper()} NOT FRESH")
     if not values["map_stream"]:
         blockers.append("MAP NOT FRESH")
+    if not observer["observer_ok"]:
+        blockers.insert(0, "OBSERVER FAILURE: " + observer["message"])
     data = {
         "timestamp": dt.datetime.now(dt.timezone.utc).astimezone().isoformat(),
         "hosts": hosts or {}, "topics": values, "fleet_state": fleet.get("state", "UNKNOWN"),
         "mission_id": fleet.get("mission_id", ""), "empty_slots": fleet.get("empty_count"),
         "blockers": blockers, "overall": "READY FOR PARK" if not blockers else "NOT READY",
+        "observer": {key: value for key, value in observer.items()
+                     if key != "topics"},
     }
     return data
 
@@ -514,8 +623,18 @@ def format_snapshot(data):
     sync = v["sync"] if isinstance(v["sync"], dict) else {}
     merge = v["merge"] if isinstance(v["merge"], dict) else {}
     cameras = merge.get("cameras", {})
+    observer = data.get("observer", {"observer_ok": True})
+    if observer.get("observer_ok"):
+        observer_line = "OK"
+    else:
+        detail = observer.get("observer_stderr") or observer.get("observer_stdout")
+        observer_line = "FAIL: " + observer.get(
+            "message", "unknown observer error")
+        if detail:
+            observer_line += " | " + detail.splitlines()[-1]
     lines = [
         f"PARKINGBOT STATUS  {data['timestamp']}", "=" * 56, "",
+        "OBSERVER", observer_line, "",
         "HOSTS",
         f"Jetson       {data.get('hosts', {}).get('jetson', 'UNKNOWN')}",
         f"Front RPi    {data.get('hosts', {}).get('front', 'UNKNOWN')}",

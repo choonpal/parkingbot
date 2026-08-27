@@ -111,8 +111,17 @@ def conditional_config_errors(config: dict[str, str]) -> list[str]:
 
 class Runner:
     def run(self, argv, *, timeout=10, check=False):
-        return subprocess.run(
-            argv, text=True, capture_output=True, timeout=timeout, check=check)
+        try:
+            return subprocess.run(
+                argv, text=True, capture_output=True,
+                timeout=timeout, check=check)
+        except subprocess.TimeoutExpired as exc:
+            # 원격이 느리다고 진단 도구가 죽으면 무엇이 느린지도 못 본다.
+            # 실패한 결과로 바꿔 돌려주고 판단은 호출부에 맡긴다.
+            return subprocess.CompletedProcess(
+                argv, returncode=124,
+                stdout=(exc.stdout or "") if isinstance(exc.stdout, str) else "",
+                stderr=f"timeout after {timeout}s")
 
 
 def remote_argv(host: str, command: str) -> list[str]:
@@ -194,6 +203,9 @@ def launch_command(config, role):
             "left_sensor_to_gripper_x_m": config[f"{p}_LEFT_SENSOR_X"],
             "right_sensor_to_gripper_x_m": config[f"{p}_RIGHT_SENSOR_X"],
             "simultaneous_entry": "false",
+            # 벤치 시험용 완화값. 실주행 전 0.25 로 되돌린다.
+            "command_source_timeout_s": config.get(
+                "COMMAND_SOURCE_TIMEOUT_S", "0.25"),
         }
         if role == "front":
             args["use_aruco_distance"] = "true"
@@ -232,7 +244,12 @@ def create_run_dir(base=None, timestamp=None):
 
 
 def parse_scalar(raw):
-    text = raw.strip()
+    # `ros2 topic echo` 는 메시지마다 구분선 '---' 를 덧붙인다. 그대로 두면
+    # JSON 파싱이 실패해 값이 문자열로 남고, 멀쩡한 토픽이 UNAVAILABLE 로
+    # 보인다. 구분선 줄만 걷어낸 뒤 파싱한다.
+    text = "\n".join(
+        line for line in str(raw).splitlines()
+        if line.strip() != "---").strip()
     if text in ("true", "false"):
         return text == "true"
     if (len(text) >= 2 and text[0] == text[-1] and text[0] in "'\""):
@@ -243,7 +260,7 @@ def parse_scalar(raw):
         return text
 
 
-def topic_once(runner, topic, timeout=1.2):
+def topic_once(runner, topic, timeout=12.0):
     try:
         result = runner.run(
             ["ros2", "topic", "echo", "--once", "--field", "data", topic],
@@ -253,7 +270,7 @@ def topic_once(runner, topic, timeout=1.2):
     return parse_scalar(result.stdout) if result.returncode == 0 else None
 
 
-def topic_present(runner, topic, timeout=1.2):
+def topic_present(runner, topic, timeout=12.0):
     try:
         result = runner.run(
             ["ros2", "topic", "echo", "--once", topic], timeout=timeout)
@@ -262,16 +279,16 @@ def topic_present(runner, topic, timeout=1.2):
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
-def snapshot(runner=None, timeout=1.2, hosts=None):
+def snapshot(runner=None, timeout=12.0, hosts=None):
     runner = runner or Runner()
     # Every topic has its own bounded subprocess, sampled concurrently so a
     # dead topic cannot turn one field into a 20-second sequential delay.
-    with ThreadPoolExecutor(max_workers=len(TOPICS)) as pool:
+    with ThreadPoolExecutor(max_workers=3) as pool:
         pending = {
             key: pool.submit(topic_once, runner, topic, timeout)
             for key, topic in TOPICS.items()}
         values = {key: future.result() for key, future in pending.items()}
-    with ThreadPoolExecutor(max_workers=len(PRESENCE_TOPICS)) as pool:
+    with ThreadPoolExecutor(max_workers=3) as pool:
         pending = {
             key: pool.submit(topic_present, runner, topic, timeout)
             for key, topic in PRESENCE_TOPICS.items()}

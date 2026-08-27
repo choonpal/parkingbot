@@ -100,6 +100,9 @@ from cooperative_parking_robot.aruco_utils import ArucoDetectorCompat
 # 프리뷰가 자체 규칙으로 판정하면 화면과 실제 발행값이 어긋난다.
 from cooperative_parking_robot.bev_fusion_core import (
     SlotOccupancyTracker,
+    # 런타임 merge_detections 와 **같은** 중복 판정을 쓰기 위해 가져온다.
+    # 프리뷰가 자체 규칙으로 합치면 화면과 실제 발행값이 달라진다.
+    _mutual_overlap,
     image_corner_coverage,
     polygon_centroid,
     slot_observability,
@@ -267,6 +270,8 @@ async function tick(){
     }
     if(img) img.classList.remove('dead');
     let size = c.width + '×' + c.height;
+    if(c.infer_ms) size += ' · yolo ' + c.infer_ms.toFixed(0) + 'ms';
+    if(c.held) size += ' · <span class="warn">직전 검출 유지</span>';
     let cls = 'ok';
     let note = '';
     if(c.calib_width &&
@@ -577,7 +582,9 @@ function renderDetections(i, dets){
         const mv = (d.moved_m != null)
           ? `<b>${(d.moved_m*100).toFixed(1)}</b> / ${(d.path_m*100).toFixed(1)}`
           : '—';
-        return `<tr><td>${esc(d.name)}</td>`
+        const dup = (d.merged_count > 1)
+          ? ` <span class="warn">(중복 ${d.merged_count}개 합침)</span>` : '';
+        return `<tr><td>${esc(d.name)}${dup}</td>`
           + `<td>${d.confidence.toFixed(2)}</td>`
           + `<td class="${d.center_source==='mask'?'ok':'warn'}">${esc(d.center_source)}</td>`
           + (w ? `<td class="ok">${w[0].toFixed(3)}</td><td class="ok">${w[1].toFixed(3)}</td>`
@@ -829,6 +836,72 @@ ROBOT_AXIS_COLOUR = (255, 160, 60)   # 하늘 — 두 로봇을 잇는 축
 ROBOT_ROLES = ('front', 'rear')
 
 
+def box_iou(a, b):
+    """픽셀 bbox 두 개의 IoU. world 좌표가 없을 때의 대비책."""
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    inter_w = max(0.0, min(ax2, bx2) - max(ax1, bx1))
+    inter_h = max(0.0, min(ay2, by2) - max(ay1, by1))
+    intersection = inter_w * inter_h
+    if intersection <= 0.0:
+        return 0.0
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    union = area_a + area_b - intersection
+    return 0.0 if union <= 0.0 else intersection / union
+
+
+def dedupe_detections(detections, center_gate_m=0.35, overlap_ratio=0.30):
+    """같은 차량이 여러 번 잡힌 것을 하나로 합친다.
+
+    NMS 를 통과하고도 남는 중복이 있다. segmentation 모델이 한 차량을 앞뒤로
+    나눠 잡거나, 신뢰도 문턱을 낮추면 특히 자주 생긴다.
+
+    판정 규칙은 런타임 ``merge_detections`` 와 같다.
+
+      * 월드 중심거리가 ``center_gate_m`` 이내이거나
+      * 폴리곤 상호 겹침률이 ``overlap_ratio`` 이상이면
+
+    같은 차량으로 본다. 실물 크기상 차량 두 대의 중심이 35 cm 안에 들어올 수
+    없다는 전제다. 월드 좌표가 없으면(homography 미등록) 픽셀 bbox IoU 로
+    대신 판단한다 — 없는 것보다는 낫다.
+
+    남기는 쪽은 **신뢰도가 높은 것**이고, 몇 개가 합쳐졌는지 ``merged_count``
+    에 남긴다. 합친 사실을 숨기면 모델이 잘 맞추는 것처럼 보인다.
+    """
+    gate = float(center_gate_m)
+    threshold = float(overlap_ratio)
+    if gate < 0.0:
+        raise ValueError('center_gate_m must be non-negative')
+    if not 0.0 <= threshold <= 1.0:
+        raise ValueError('overlap_ratio must be in [0,1]')
+
+    kept = []
+    for item in sorted(detections, key=lambda d: -d['confidence']):
+        duplicate_of = None
+        for chosen in kept:
+            here, there = item.get('world'), chosen.get('world')
+            if (here is not None and there is not None
+                    and math.dist(here, there) <= gate):
+                duplicate_of = chosen
+                break
+            mine, other = item.get('world_polygon'), chosen.get('world_polygon')
+            if mine and other and _mutual_overlap(other, mine) >= threshold:
+                duplicate_of = chosen
+                break
+            if (here is None or there is None) and threshold > 0.0:
+                if box_iou(item['box'], chosen['box']) >= threshold:
+                    duplicate_of = chosen
+                    break
+        if duplicate_of is None:
+            item['merged_count'] = 1
+            kept.append(item)
+        else:
+            duplicate_of['merged_count'] = duplicate_of.get(
+                'merged_count', 1) + 1
+    return kept
+
+
 def parse_robot_markers(text):
     """``'front:2, rear:1'`` 을 ``{역할: 마커ID}`` 로 바꾼다."""
     mapping = {}
@@ -1073,6 +1146,21 @@ class CameraPreviewNode(Node):
         self.declare_parameter('guidance_default_mission', '')
         # 마커가 이보다 오래됐으면 로봇을 못 보고 있는 것으로 친다.
         self.declare_parameter('robot_marker_stale_s', 2.0)
+        # --- 검출 깜빡임 완화 ---
+        # 추론 한 번이 아무것도 못 찾았다고 바로 박스를 지우면, 다음 추론까지
+        # (yolo_every_n / fps) 초 동안 화면이 빈다. 신뢰도가 문턱 근처에서
+        # 흔들릴 때 이게 깜빡임으로 보인다. 이 시간 안에는 직전 결과를
+        # 유지하되, 유지 중이라는 것을 화면에 표시한다.
+        self.declare_parameter('detection_hold_s', 0.6)
+        # --- 중복 검출 제거 ---
+        # NMS IoU. 낮출수록 겹친 박스를 더 공격적으로 지운다.
+        self.declare_parameter('yolo_iou', 0.45)
+        # 한 프레임에서 남길 최대 검출 수. 0 이면 제한 없음.
+        self.declare_parameter('yolo_max_det', 0)
+        # NMS 를 통과하고도 남는 중복을 world 좌표에서 한 번 더 합친다.
+        # 런타임 merge_detections 와 같은 기본값.
+        self.declare_parameter('duplicate_center_gate_m', 0.35)
+        self.declare_parameter('duplicate_overlap_ratio', 0.30)
         # --- 차량 중심점 이동 추적 ---
         # 직전 위치에서 이 거리를 넘으면 다른 차량으로 본다.
         self.declare_parameter('track_gate_m', 1.0)
@@ -1213,6 +1301,18 @@ class CameraPreviewNode(Node):
             self.get_parameter('robot_marker_ids_csv').value)
         self.robot_marker_stale_s = float(
             self.get_parameter('robot_marker_stale_s').value)
+        self.detection_hold_s = float(
+            self.get_parameter('detection_hold_s').value)
+        if self.detection_hold_s < 0.0:
+            raise ValueError('detection_hold_s must be >= 0')
+        self.yolo_iou = float(self.get_parameter('yolo_iou').value)
+        if not 0.0 < self.yolo_iou <= 1.0:
+            raise ValueError('yolo_iou must be in (0,1]')
+        self.yolo_max_det = int(self.get_parameter('yolo_max_det').value)
+        self.duplicate_center_gate_m = float(
+            self.get_parameter('duplicate_center_gate_m').value)
+        self.duplicate_overlap_ratio = float(
+            self.get_parameter('duplicate_overlap_ratio').value)
         forced = str(
             self.get_parameter('guidance_default_mission').value).strip().lower()
         if forced and forced not in (MISSION_PARK, MISSION_RETRIEVE):
@@ -1259,6 +1359,10 @@ class CameraPreviewNode(Node):
                 'wall': 0.0, 'count': 0, 'fps': 0.0, 'fps_wall': time.monotonic(),
                 'fps_count': 0, 'markers': [], 'marker_wall': 0.0,
                 'detections': [], 'detection_wall': 0.0,
+                # inference_wall: 결과가 비었더라도 '추론이 돌았다'는 사실.
+                #   카메라가 살아 있는지 판단할 때 이걸 쓴다.
+                # detection_wall: 마지막으로 **뭔가 찾은** 시각. 유지 시간 계산용.
+                'inference_wall': 0.0, 'held': False, 'infer_ms': 0.0,
             }
             self.cameras.append(state)
             self.create_subscription(
@@ -1360,8 +1464,7 @@ class CameraPreviewNode(Node):
                 state['markers'] = markers
                 state['marker_wall'] = now
             if detections is not None:
-                state['detections'] = detections
-                state['detection_wall'] = now
+                self._apply_detection_result(state, detections, now)
             state['count'] += 1
             state['fps_count'] += 1
             elapsed = now - state['fps_wall']
@@ -1374,6 +1477,35 @@ class CameraPreviewNode(Node):
             # empty_confirm_frames 가 실제로는 훨씬 짧은 시간이 되어
             # 런타임(cctv_merge)과 판정 타이밍이 어긋난다.
             self._update_slots(now)
+
+    def _apply_detection_result(self, state, detections, now):
+        """추론 결과를 카메라 상태에 반영한다.
+
+        핵심은 **빈 결과를 어떻게 다룰 것인가**다. 곧바로 지우면 다음 추론까지
+        (yolo_every_n / fps) 초 동안 화면이 비어서 깜빡임으로 보인다. 신뢰도가
+        문턱 근처에서 흔들릴 때 특히 심하다. 그래서 ``detection_hold_s`` 안에는
+        직전 결과를 유지하되 ``held`` 로 표시해 화면에 알린다.
+
+        ``inference_wall`` 은 결과가 비었더라도 갱신한다. "차를 못 찾았다"도
+        "이 카메라가 지금 보고 있다"는 유효한 관측이라, 슬롯 관측 가능 판단은
+        이 값을 써야 한다.
+        """
+        state['inference_wall'] = now
+        if detections:
+            state['detections'] = detections
+            state['detection_wall'] = now
+            state['held'] = False
+            return state
+        holding = (bool(state.get('detections'))
+                   and self.detection_hold_s > 0.0
+                   and (now - state.get('detection_wall', 0.0))
+                   <= self.detection_hold_s)
+        if holding:
+            state['held'] = True
+        else:
+            state['detections'] = []
+            state['held'] = False
+        return state
 
     def _detect_markers(self, frame, state):
         """프레임에서 ArUco를 찾아 찌그러짐 지표까지 계산해 돌려준다."""
@@ -1487,9 +1619,15 @@ class CameraPreviewNode(Node):
 
     def _detect_vehicles(self, frame, state):
         """YOLO 검출 + 각 검출의 world 좌표까지 계산해 돌려준다."""
+        started = time.monotonic()
         try:
-            results = self.yolo(frame, conf=self.yolo_conf,
-                                imgsz=self.yolo_imgsz, verbose=False)
+            predict_kwargs = {'conf': self.yolo_conf,
+                              'imgsz': self.yolo_imgsz,
+                              'iou': self.yolo_iou,
+                              'verbose': False}
+            if self.yolo_max_det > 0:
+                predict_kwargs['max_det'] = self.yolo_max_det
+            results = self.yolo(frame, **predict_kwargs)
         except Exception as exc:
             self.get_logger().warn(
                 f"[{state['label']}] YOLO 추론 실패: {exc}",
@@ -1540,13 +1678,22 @@ class CameraPreviewNode(Node):
                 }
                 if geometry is not None:
                     item['geometry'] = geometry
+                    # 중복 판정과 슬롯 겹침 계산에 쓰려고 여기서 한 번만 낸다.
+                    corners = [self._pixel_to_world(state['label'], x, y)
+                               for x, y in geometry['corners']]
+                    item['world_polygon'] = (
+                        None if any(c is None for c in corners)
+                        else [tuple(c) for c in corners])
                     # 중심선 양 끝의 world 좌표로 실제 길이/폭(m)을 낸다.
                     item['length_m'] = self._world_length(
                         state['label'], geometry['axes'][0])
                     item['width_m'] = self._world_length(
                         state['label'], geometry['axes'][1])
                 found.append(item)
-        found.sort(key=lambda d: -d['confidence'])
+        found = dedupe_detections(
+            found, self.duplicate_center_gate_m, self.duplicate_overlap_ratio)
+        # 추론에 얼마나 걸리는지 알아야 yolo_every_n 을 근거 있게 정할 수 있다.
+        state['infer_ms'] = round((time.monotonic() - started) * 1000.0, 1)
         return found
 
     def _world_length(self, label, segment):
@@ -1825,16 +1972,8 @@ class CameraPreviewNode(Node):
     # ------------------------------------------------------------------
     def _detection_world_polygon(self, label, detection):
         """검출의 회전사각형 네 꼭짓점을 map 좌표로 옮긴다."""
-        geometry = detection.get('geometry')
-        if not geometry:
-            return None
-        corners = geometry.get('corners')
-        if not corners:
-            return None
-        points = [self._pixel_to_world(label, x, y) for x, y in corners]
-        if any(point is None for point in points):
-            return None
-        return [tuple(point) for point in points]
+        # _detect_vehicles 에서 이미 계산해 둔다. 프레임마다 다시 낼 이유가 없다.
+        return detection.get('world_polygon')
 
     def _update_slots(self, now):
         """모든 카메라의 최근 검출로 슬롯 점유를 갱신한다.
@@ -1851,7 +1990,9 @@ class CameraPreviewNode(Node):
         with self._lock:
             snapshot = [(state['label'],
                          state.get('detections') or [],
-                         state.get('detection_wall', 0.0))
+                         # '검출이 있었나'가 아니라 '추론이 돌았나'로 본다.
+                         # 빈 결과도 "저 칸에 차가 없다"는 유효한 관측이다.
+                         state.get('inference_wall', 0.0))
                         for state in self.cameras]
         for label, found, wall in snapshot:
             if wall <= 0.0 or (now - wall) > self.slot_detection_stale_s:
@@ -2606,6 +2747,10 @@ class CameraPreviewNode(Node):
         cv2.line(canvas, (cx - 18, cy), (cx + 18, cy), (0, 200, 255), 1)
         cv2.line(canvas, (cx, cy - 18), (cx, cy + 18), (0, 200, 255), 1)
         label = f"{state['label']}  {width}x{height}  {state['fps']:.1f}fps"
+        if state.get('infer_ms'):
+            label += f"  yolo {state['infer_ms']:.0f}ms"
+        if state.get('held'):
+            label += '  [HOLD]'
         cv2.putText(canvas, label, (8, 22), cv2.FONT_HERSHEY_SIMPLEX,
                     0.6, (0, 0, 0), 3, cv2.LINE_AA)
         cv2.putText(canvas, label, (8, 22), cv2.FONT_HERSHEY_SIMPLEX,
@@ -2679,6 +2824,11 @@ class CameraPreviewNode(Node):
                             state['detections']
                             if now - state['detection_wall'] <= self.stale_after
                             else []),
+                        'held': bool(state.get('held')),
+                        'infer_ms': float(state.get('infer_ms') or 0.0),
+                        'infer_age_s': (
+                            None if not state.get('inference_wall')
+                            else round(now - state['inference_wall'], 2)),
                     })
                 pose = None if self.relative_pose is None \
                     else dict(self.relative_pose)

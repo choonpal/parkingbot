@@ -6,7 +6,7 @@ package_name = 'cooperative_parking_robot'
 
 setup(
     name=package_name,
-    version='1.11.1',
+    version='1.11.2',
     packages=[package_name],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -24,10 +24,12 @@ setup(
             'aruco_tracker = cooperative_parking_robot.aruco_tracker_node:main',
             'cctv_robot_marker = cooperative_parking_robot.cctv_robot_marker_node:main',
             'cctv_merge = cooperative_parking_robot.mvp_integration_nodes:cctv_merge_main',
-            # Production entry point. The legacy implementation remains
-            # importable for regression comparison, but launch files use this
-            # hardened one-frame/one-update estimator.
+            # Production entry point. The safe baseline remains importable for
+            # regression comparison; this final layer adds lifecycle, wheel-pair
+            # timing and lateral mechanical safety P0 guards.
             ('rigid_body_sync = '
+             'cooperative_parking_robot.rigid_body_sync_production_node:main'),
+            ('rigid_body_sync_safe_baseline = '
              'cooperative_parking_robot.rigid_body_sync_safe_node:main'),
             ('rigid_body_sync_legacy = '
              'cooperative_parking_robot.rigid_body_sync_node:main'),

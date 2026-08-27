@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PID 제어기 (거리/yaw 오차 보정용)"""
+"""PID controller used by rigid-body distance/lateral/yaw correction."""
 
 
 class PID:
@@ -10,6 +10,13 @@ class PID:
         self.out_limit = out_limit
 
     def compute(self, error, dt):
+        error = float(error)
+        # Rigid-body callers apply a deadband before PID. An exact zero means
+        # the mechanical error is intentionally ignored; retaining integral
+        # output here would keep pushing the vehicle after entering deadband.
+        if abs(error) <= 1.0e-12:
+            self.reset()
+            return 0.0
         p = self.Kp * error
         self.integral += error * dt
         self.integral = max(-1.0, min(1.0, self.integral))  # anti-windup

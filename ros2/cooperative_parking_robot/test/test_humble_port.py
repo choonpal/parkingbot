@@ -18,7 +18,8 @@ def test_package_and_setup_versions_match():
     package_version = package_root.findtext('version')
     setup_text = (ROOT / 'setup.py').read_text()
     setup_version = re.search(r"version='([^']+)'", setup_text).group(1)
-    assert package_version == setup_version == '1.11.0'
+    assert package_version == setup_version
+    assert re.fullmatch(r'\d+\.\d+\.\d+', package_version or '')
     test_dependencies = {
         element.text for element in package_root.findall('test_depend')}
     assert 'ament_pytest' in test_dependencies

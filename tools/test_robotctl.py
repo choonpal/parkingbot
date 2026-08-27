@@ -185,6 +185,40 @@ def test_local_ros_commands_always_source_underlay_and_control_overlay():
     assert "exec ros2 node list" in command
 
 
+def test_release_protocol_sources_are_consistent():
+    repository = Path(__file__).resolve().parents[1]
+    assert ops.EXPECTED_UART_PROTOCOL_VERSION == 2
+    assert ops.protocol_consistency_errors(repository) == []
+
+
+def test_release_protocol_check_fails_closed_on_mixed_source(tmp_path):
+    firmware = tmp_path / 'stm32/parking_robot/Core/Src'
+    package = tmp_path / (
+        'ros2/cooperative_parking_robot/cooperative_parking_robot')
+    firmware.mkdir(parents=True)
+    package.mkdir(parents=True)
+    (firmware / 'parking_robot_firmware.c').write_text(
+        '#define UART_PROTOCOL_VERSION 2U\n"HELLO:%u:%s"\n'
+        'protocol_session_active\n')
+    (package / 'uart_protocol.py').write_text(
+        'PROTOCOL_VERSION = 2\ndef encode_hello(): pass\n'
+        'def encode_zero_velocity(): pass\n')
+    (package / 'stm32_bridge_node.py').write_text(
+        'hello_acknowledged = False\nzero_command_acknowledged = False\n')
+    errors = ops.protocol_consistency_errors(tmp_path)
+    assert errors
+    assert any('bridge' in error and 'encode_hello' in error
+               for error in errors)
+
+
+def test_remote_protocol_doctor_checks_all_three_sources():
+    command = ops.protocol_source_check_command('/srv/parkingbot')
+    assert 'parking_robot_firmware.c' in command
+    assert 'uart_protocol.py' in command
+    assert 'stm32_bridge_node.py' in command
+    assert 'UART_PROTOCOL_VERSION' in command
+
+
 @pytest.mark.parametrize("arguments", (
     ["node", "list"],
     ["topic", "list", "-t"],

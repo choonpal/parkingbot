@@ -15,6 +15,7 @@ from parkingbot_ops import (
     REQUIRED, ROLES, SESSION, Runner, create_run_dir, format_snapshot,
     conditional_config_errors, incident_snapshot, invalid_paths,
     launch_command, load_env, missing_config,
+    protocol_consistency_errors, protocol_source_check_command,
     remote_argv, remote_run, role_host, role_workspace, ros_prefix, run_root,
     snapshot, stack_process_status,
 )
@@ -183,6 +184,11 @@ def start(args):
     config = checked_config(args)
     runner = Runner()
     print("ParkingBot Production Start\n===========================\n")
+    protocol_errors = protocol_consistency_errors(HERE.parent)
+    if protocol_errors:
+        for error in protocol_errors:
+            print(f"[FAIL] protocol consistency: {error}")
+        return 1
     if shutil.which("tmux") is None:
         print("[FAIL] tmux is not installed on the control machine")
         return 1
@@ -196,6 +202,19 @@ def start(args):
         print("\nProduction stack is already running.")
         print("Use: robot_state | robot_restart | robot_stop")
         return 2
+    # Check every deployment before starting the first process. A mixed
+    # firmware/bridge release fails without disrupting any running stack.
+    for role in ROLES:
+        remote_repository = (
+            role_workspace(config, role) + '/src/cooperative_parking_robot')
+        protocol_check = remote_run(
+            runner, role_host(config, role),
+            protocol_source_check_command(remote_repository), timeout=7)
+        if protocol_check.returncode:
+            print(
+                f"[FAIL] {role.title()} firmware/ROS protocol capability "
+                "mismatch")
+            return 1
     run_dir = create_run_dir()
     run_id = run_dir.name
     processes = {}
@@ -253,12 +272,12 @@ def start(args):
     print("\nWaiting for ROS graph...")
     started_at = time.monotonic()
     grace_until = started_at + 3.0
-    deadline = started_at + 30.0
+    deadline = started_at + 120.0
     data = None
     previous = {}
     conditions = {}
     while time.monotonic() < deadline:
-        data = snapshot(config, timeout=1.0)
+        data = snapshot(config, timeout=6.0)
         data["processes"] = processes
         previous, conditions = report_startup_progress(data, previous)
         fatal = startup_fatal_faults(data)
@@ -403,6 +422,9 @@ def doctor(args):
     config = checked_config(args)
     runner = Runner()
     blockers = []
+    blockers.extend(
+        f"control: protocol consistency: {error}"
+        for error in protocol_consistency_errors(HERE.parent))
     if shutil.which("tmux") is None:
         blockers.append("control: tmux missing")
     if not Path(config["ROS_SETUP"]).is_file():
@@ -421,6 +443,9 @@ def doctor(args):
             (f"test -f {shlex.quote(workspace + '/src/cooperative_parking_robot/launch/' + ('cctv_server_dual.launch.py' if role == 'jetson' else role + '_robot.launch.py'))}", "launch file missing"),
             (ros_prefix(config, role) + " && ros2 pkg prefix cooperative_parking_robot >/dev/null", "ROS package unavailable"),
             ("test \"$(timedatectl show -p NTPSynchronized --value 2>/dev/null)\" = yes", "clock not NTP synchronized"),
+            (protocol_source_check_command(
+                workspace + '/src/cooperative_parking_robot'),
+             "firmware/ROS protocol capability mismatch"),
         ]
         if role == "jetson":
             checks.extend((

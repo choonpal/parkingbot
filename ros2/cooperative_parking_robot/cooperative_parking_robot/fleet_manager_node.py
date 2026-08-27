@@ -526,9 +526,9 @@ class FleetManagerNode(Node):
             self._set_request_status(
                 payload, 'REJECTED', 'ROBOT_NOT_IDLE')
             return
-        identity_keys = (
-            'vehicle_number', 'password', 'destination_slot_id')
+        identity_keys = ('vehicle_number', 'password')
         has_identity = any(key in payload for key in identity_keys)
+        has_identity = has_identity or 'destination_slot_id' in payload
         if has_identity:
             if not all(key in payload for key in identity_keys):
                 self._set_request_status(
@@ -554,22 +554,28 @@ class FleetManagerNode(Node):
                 return
             destination_slot_id = str(
                 payload.get('destination_slot_id', '')).strip()
-            slot = self._slot_by_id(destination_slot_id)
-            if slot is None:
-                self._set_request_status(
-                    payload, 'REJECTED', 'DESTINATION_SLOT_NOT_FOUND')
-                return
-            if self.registry.lifecycle(
-                    destination_slot_id) is not SlotLifecycle.EMPTY:
-                self._set_request_status(
-                    payload, 'REJECTED', 'DESTINATION_SLOT_NOT_EMPTY')
-                return
             perceived_empty = {
                 candidate.slot_id for candidate in self.empty_slots}
-            if destination_slot_id not in perceived_empty:
-                self._set_request_status(
-                    payload, 'REJECTED', 'DESTINATION_SLOT_UNAVAILABLE')
-                return
+            if destination_slot_id:
+                slot = self._slot_by_id(destination_slot_id)
+                if slot is None:
+                    self._set_request_status(
+                        payload, 'REJECTED', 'DESTINATION_SLOT_NOT_FOUND')
+                    return
+                if self.registry.lifecycle(
+                        destination_slot_id) is not SlotLifecycle.EMPTY:
+                    self._set_request_status(
+                        payload, 'REJECTED', 'DESTINATION_SLOT_NOT_EMPTY')
+                    return
+                if destination_slot_id not in perceived_empty:
+                    self._set_request_status(
+                        payload, 'REJECTED', 'DESTINATION_SLOT_UNAVAILABLE')
+                    return
+            else:
+                if not self._available_park_slot_ids():
+                    self._set_request_status(
+                        payload, 'REJECTED', 'DESTINATION_SLOT_UNAVAILABLE')
+                    return
             self.requested_destination_slot_id = destination_slot_id
             self.active_vehicle_number = vehicle_number
             self.active_parking_credential = credential
@@ -1282,13 +1288,21 @@ class FleetManagerNode(Node):
         elif self.state == 'NAVIGATING':
             pass  # rigid_body_sync가 주행
 
+    def _available_park_slot_ids(self):
+        '''Return slots that both Registry and CCTV currently consider empty.'''
+        perceived_empty = {slot.slot_id for slot in self.empty_slots}
+        return [
+            slot_id for slot_id in self.registry.empty_slot_ids()
+            if slot_id in perceived_empty
+        ]
+
     def _eligible_park_slots(self):
-        '''Intersect perceived-empty slots with Registry and UI selection.'''
-        registry_empty = set(self.registry.empty_slot_ids())
+        '''Apply an optional operator selection to currently available slots.'''
+        available = set(self._available_park_slot_ids())
         requested = getattr(self, 'requested_destination_slot_id', '')
         return [
             slot for slot in self.empty_slots
-            if slot.slot_id in registry_empty and
+            if slot.slot_id in available and
             (not requested or slot.slot_id == requested)
         ]
 
@@ -1681,6 +1695,7 @@ class FleetManagerNode(Node):
 
     def publish_state(self):
         self.status_sequence += 1
+        available_slot_ids = self._available_park_slot_ids()
         msg = String()
         msg.data = json.dumps({
             'state': self.state,
@@ -1688,7 +1703,8 @@ class FleetManagerNode(Node):
             'mission_type': self.mission_type,
             'sequence': self.status_sequence,
             'stamp_ns': self.get_clock().now().nanoseconds,
-            'empty_count': len(self.empty_slots),
+            'empty_count': len(available_slot_ids),
+            'available_slot_ids': available_slot_ids,
             'lifted': self.car_lifted,
             'has_map': self.grid is not None,
             'has_target': self.target_pose is not None,

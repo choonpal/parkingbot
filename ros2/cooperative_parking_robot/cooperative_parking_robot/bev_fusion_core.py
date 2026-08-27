@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections import deque
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from cooperative_parking_robot.parking_geometry import polygon_overlap_ratio
@@ -583,16 +584,21 @@ class TargetLatchTracker:
     def __init__(self,
                  stationary_tolerance_m: float = 0.02,
                  stationary_hold_s: float = 2.0,
-                 detection_timeout_s: float = 0.5):
+                 detection_timeout_s: float = 0.5,
+                 position_filter_window: int = 1):
         if float(stationary_tolerance_m) <= 0.0:
             raise ValueError('stationary_tolerance_m must be positive')
         if float(stationary_hold_s) < 0.0:
             raise ValueError('stationary_hold_s must be non-negative')
         if float(detection_timeout_s) < 0.0:
             raise ValueError('detection_timeout_s must be non-negative')
+        if int(position_filter_window) <= 0:
+            raise ValueError('position_filter_window must be positive')
         self.tolerance = float(stationary_tolerance_m)
         self.hold_s = float(stationary_hold_s)
         self.timeout_s = float(detection_timeout_s)
+        self.position_filter_window = int(position_filter_window)
+        self._position_history = deque(maxlen=self.position_filter_window)
         self.latched: Optional[Tuple[float, float]] = None
         self.candidate: Optional[Tuple[float, float]] = None
         self.anchor: Optional[Tuple[float, float]] = None
@@ -607,6 +613,25 @@ class TargetLatchTracker:
         self.stable_since = None
         self.last_seen = 0.0
         self.just_latched = False
+        self._position_history.clear()
+
+    def _filtered_point(
+            self, target: Sequence[float]) -> Tuple[float, float]:
+        """Median-filter recent world centres without hiding long motion."""
+        point = (float(target[0]), float(target[1]))
+        self._position_history.append(point)
+
+        def median(values):
+            ordered = sorted(values)
+            middle = len(ordered) // 2
+            if len(ordered) % 2:
+                return ordered[middle]
+            return 0.5 * (ordered[middle - 1] + ordered[middle])
+
+        return (
+            median([value[0] for value in self._position_history]),
+            median([value[1] for value in self._position_history]),
+        )
 
     def update(self, target: Optional[Sequence[float]],
                now: float, preserve_latched: bool = False
@@ -616,22 +641,27 @@ class TargetLatchTracker:
             if preserve_latched:
                 return self.latched
             if target is not None:
+                # A visible target that actually moved must revoke READY
+                # immediately. detection_timeout_s is only a grace period for
+                # missed frames, not permission for a moving car to stay READY.
                 point = (float(target[0]), float(target[1]))
                 if math.hypot(
                         point[0] - self.latched[0],
                         point[1] - self.latched[1]) <= self.tolerance:
                     self.last_seen = float(now)
                     return self.latched
-            if float(now) - self.last_seen <= self.timeout_s:
+                self.reset()
+            elif float(now) - self.last_seen <= self.timeout_s:
                 return self.latched
-            self.reset()
+            else:
+                self.reset()
         if target is None:
             if float(now) - self.last_seen > self.timeout_s:
                 self.candidate = None
                 self.anchor = None
                 self.stable_since = None
             return None
-        point = (float(target[0]), float(target[1]))
+        point = self._filtered_point(target)
         self.last_seen = float(now)
         if self.anchor is None or math.hypot(
                 point[0] - self.anchor[0],

@@ -1,0 +1,297 @@
+#!/usr/bin/env python3
+"""Relative Front/Rear state helpers used by the rigid-body sync controller.
+
+The helpers are ROS-independent so the estimator math can be regression tested
+without a running ROS graph.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import math
+from typing import Optional, Tuple
+
+
+def normalize_angle(angle: float) -> float:
+    """Return ``angle`` wrapped to [-pi, pi]."""
+    return math.atan2(math.sin(float(angle)), math.cos(float(angle)))
+
+
+class DeltaKalman1D:
+    """One-dimensional delta-propagated Kalman filter.
+
+    ``raw_value`` is an external dead-reckoning absolute value. Only its delta
+    is propagated, so a visual correction is not overwritten on the next
+    predict. Process uncertainty grows with elapsed time and motion instead of
+    with the controller-loop call count.
+    """
+
+    def __init__(
+            self,
+            init: float = 0.0,
+            *,
+            measurement_variance: float = 0.0004,
+            process_variance_rate: float = 1.0e-5,
+            process_gain: float = 0.0,
+            angle: bool = False):
+        self.x = float(init)
+        self.R = float(measurement_variance)
+        self.process_variance_rate = float(process_variance_rate)
+        self.process_gain = float(process_gain)
+        self.angle = bool(angle)
+        if self.R <= 0.0:
+            raise ValueError('measurement_variance must be positive')
+        if self.process_variance_rate < 0.0 or self.process_gain < 0.0:
+            raise ValueError('process noise values must be non-negative')
+        self.P = max(4.0 * self.R, 1.0e-9)
+        self._prev_raw: Optional[float] = None
+        self._prev_stamp_s: Optional[float] = None
+
+    def _difference(self, lhs: float, rhs: float) -> float:
+        value = float(lhs) - float(rhs)
+        return normalize_angle(value) if self.angle else value
+
+    def _normalize_state(self) -> None:
+        if self.angle:
+            self.x = normalize_angle(self.x)
+
+    def reset(
+            self,
+            value: float = 0.0,
+            raw_value: Optional[float] = None,
+            covariance: Optional[float] = None,
+            stamp_s: Optional[float] = None) -> None:
+        self.x = float(value)
+        self._normalize_state()
+        self.P = float(
+            max(4.0 * self.R, 1.0e-9)
+            if covariance is None else covariance)
+        if self.P <= 0.0 or not math.isfinite(self.P):
+            raise ValueError('covariance must be finite and positive')
+        raw = self.x if raw_value is None else float(raw_value)
+        self._prev_raw = normalize_angle(raw) if self.angle else raw
+        self._prev_stamp_s = (
+            None if stamp_s is None else float(stamp_s))
+
+    def predict_from_raw(
+            self,
+            raw_value: float,
+            stamp_s: Optional[float] = None) -> bool:
+        """Propagate one new dead-reckoning observation.
+
+        Returns ``True`` only when a new propagation was applied. Equal or
+        backwards timestamps are ignored, preventing covariance growth from a
+        cached raw value being reused by a faster control loop.
+        """
+        raw = float(raw_value)
+        stamp = None if stamp_s is None else float(stamp_s)
+        if not math.isfinite(raw) or (stamp is not None and not math.isfinite(stamp)):
+            return False
+        if self._prev_raw is None:
+            self._prev_raw = normalize_angle(raw) if self.angle else raw
+            self._prev_stamp_s = stamp
+            return False
+        if (stamp is not None and self._prev_stamp_s is not None and
+                stamp <= self._prev_stamp_s):
+            return False
+
+        delta = self._difference(raw, self._prev_raw)
+        self.x += delta
+        self._normalize_state()
+
+        if stamp is not None and self._prev_stamp_s is not None:
+            dt = min(max(stamp - self._prev_stamp_s, 0.0), 1.0)
+        else:
+            dt = 0.02
+        self.P += (
+            self.process_variance_rate * max(dt, 1.0e-3) +
+            (self.process_gain * abs(delta)) ** 2)
+        self._prev_raw = normalize_angle(raw) if self.angle else raw
+        self._prev_stamp_s = stamp
+        return True
+
+    # Compatibility with the legacy ScalarKalman call pattern.
+    def predict(self, raw_value: float) -> bool:
+        return self.predict_from_raw(raw_value)
+
+    def innovation(self, measured: float) -> float:
+        return self._difference(float(measured), self.x)
+
+    def innovation_variance(self) -> float:
+        return self.P + self.R
+
+    def update(self, measured: float) -> float:
+        residual = self.innovation(measured)
+        gain = self.P / self.innovation_variance()
+        self.x += gain * residual
+        self._normalize_state()
+        self.P = max((1.0 - gain) * self.P, 1.0e-12)
+        return gain
+
+
+class OncePerStamp:
+    """Consume each positive timestamp at most once and in order."""
+
+    def __init__(self) -> None:
+        self.last_stamp_ns = 0
+
+    def reset(self) -> None:
+        self.last_stamp_ns = 0
+
+    def consume(self, stamp_ns: Optional[int]) -> bool:
+        if stamp_ns is None:
+            return False
+        stamp = int(stamp_ns)
+        if stamp <= 0 or stamp <= self.last_stamp_ns:
+            return False
+        self.last_stamp_ns = stamp
+        return True
+
+
+@dataclass(frozen=True)
+class GateDecision:
+    action: str
+    distance_residual: Optional[float]
+    yaw_residual: Optional[float]
+    reason: str
+
+    @property
+    def accepted(self) -> bool:
+        return self.action in ('ACCEPT', 'REACQUIRE')
+
+
+class RelativeObservationGate:
+    """Innovation gate with bounded, consistency-based re-acquisition."""
+
+    def __init__(
+            self,
+            *,
+            distance_limit: float,
+            yaw_limit: float,
+            sigma_limit: float,
+            reacquire_count: int,
+            reacquire_distance_limit: float,
+            reacquire_yaw_limit: float,
+            consistency_distance: float,
+            consistency_yaw: float):
+        self.distance_limit = float(distance_limit)
+        self.yaw_limit = float(yaw_limit)
+        self.sigma_limit = float(sigma_limit)
+        self.reacquire_count = int(reacquire_count)
+        self.reacquire_distance_limit = float(reacquire_distance_limit)
+        self.reacquire_yaw_limit = float(reacquire_yaw_limit)
+        self.consistency_distance = float(consistency_distance)
+        self.consistency_yaw = float(consistency_yaw)
+        values = (
+            self.distance_limit, self.yaw_limit, self.sigma_limit,
+            self.reacquire_distance_limit, self.reacquire_yaw_limit,
+            self.consistency_distance, self.consistency_yaw)
+        if any(value <= 0.0 for value in values):
+            raise ValueError('gate limits must be positive')
+        if self.reacquire_count < 2:
+            raise ValueError('reacquire_count must be at least 2')
+        self._candidate: Optional[Tuple[Optional[float], float]] = None
+        self._candidate_count = 0
+
+    def reset(self) -> None:
+        self._candidate = None
+        self._candidate_count = 0
+
+    @staticmethod
+    def _within_sigma(residual: float, variance: float, sigma: float) -> bool:
+        if variance <= 0.0 or not math.isfinite(variance):
+            return False
+        return residual * residual <= sigma * sigma * variance
+
+    def _consistent(
+            self,
+            distance: Optional[float],
+            yaw: float) -> bool:
+        if self._candidate is None:
+            return False
+        candidate_distance, candidate_yaw = self._candidate
+        distance_ok = (
+            distance is None or candidate_distance is None or
+            abs(distance - candidate_distance) <= self.consistency_distance)
+        yaw_ok = abs(normalize_angle(yaw - candidate_yaw)) <= self.consistency_yaw
+        return distance_ok and yaw_ok
+
+    def evaluate(
+            self,
+            *,
+            distance_measurement: Optional[float],
+            yaw_measurement: float,
+            distance_filter: Optional[DeltaKalman1D],
+            yaw_filter: DeltaKalman1D) -> GateDecision:
+        distance_residual = (
+            None if distance_measurement is None or distance_filter is None
+            else distance_filter.innovation(distance_measurement))
+        yaw_residual = yaw_filter.innovation(yaw_measurement)
+
+        distance_accept = (
+            distance_residual is None or
+            (abs(distance_residual) <= self.distance_limit and
+             self._within_sigma(
+                 distance_residual,
+                 distance_filter.innovation_variance(),
+                 self.sigma_limit)))
+        yaw_accept = (
+            abs(yaw_residual) <= self.yaw_limit and
+            self._within_sigma(
+                yaw_residual, yaw_filter.innovation_variance(),
+                self.sigma_limit))
+        if distance_accept and yaw_accept:
+            self.reset()
+            return GateDecision(
+                'ACCEPT', distance_residual, yaw_residual, 'innovation_ok')
+
+        bounded = (
+            (distance_residual is None or
+             abs(distance_residual) <= self.reacquire_distance_limit) and
+            abs(yaw_residual) <= self.reacquire_yaw_limit)
+        if not bounded:
+            self.reset()
+            return GateDecision(
+                'REJECT', distance_residual, yaw_residual,
+                'outside_reacquire_envelope')
+
+        if self._consistent(distance_measurement, yaw_measurement):
+            self._candidate_count += 1
+        else:
+            self._candidate = (distance_measurement, yaw_measurement)
+            self._candidate_count = 1
+
+        if self._candidate_count >= self.reacquire_count:
+            self.reset()
+            return GateDecision(
+                'REACQUIRE', distance_residual, yaw_residual,
+                'consistent_bounded_observations')
+        return GateDecision(
+            'REJECT', distance_residual, yaw_residual,
+            f'candidate_{self._candidate_count}/{self.reacquire_count}')
+
+
+def anchored_pose(
+        anchor_world: Tuple[float, float, float],
+        anchor_local: Tuple[float, float, float],
+        current_local: Tuple[float, float, float]) -> Tuple[float, float, float]:
+    """Map a local wheel-odometry pose onto a world-frame anchor pose."""
+    lx0, ly0, lyaw0 = anchor_local
+    lx, ly, lyaw = current_local
+    dx = lx - lx0
+    dy = ly - ly0
+    c0 = math.cos(lyaw0)
+    s0 = math.sin(lyaw0)
+    # Translation expressed in the local anchor body frame.
+    rel_x = c0 * dx + s0 * dy
+    rel_y = -s0 * dx + c0 * dy
+    rel_yaw = normalize_angle(lyaw - lyaw0)
+
+    wx0, wy0, wyaw0 = anchor_world
+    cw = math.cos(wyaw0)
+    sw = math.sin(wyaw0)
+    return (
+        wx0 + cw * rel_x - sw * rel_y,
+        wy0 + sw * rel_x + cw * rel_y,
+        normalize_angle(wyaw0 + rel_yaw),
+    )

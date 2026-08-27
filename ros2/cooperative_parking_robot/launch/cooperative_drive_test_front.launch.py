@@ -26,6 +26,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'serial_port', default_value='/dev/ttyACM0',
             description='robot-2 Front STM32 stable /dev/serial/by-id path'),
+        DeclareLaunchArgument('hardware_profile', default_value='robot-2'),
         DeclareLaunchArgument('wheel_radius', default_value='0.05'),
         DeclareLaunchArgument('encoder_ppr', default_value='5182.0'),
         DeclareLaunchArgument('lx', default_value='0.10'),
@@ -41,6 +42,7 @@ def generate_launch_description():
             name='front_drive_test_bridge',
             parameters=[{
                 'role': 'front',
+                'hardware_profile': LaunchConfiguration('hardware_profile'),
                 'serial_port': LaunchConfiguration('serial_port'),
                 'serial_baud': 115200,
                 'enable_serial': True,

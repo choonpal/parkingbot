@@ -94,6 +94,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "serial_port", default_value="/dev/ttyACM0",
             description="Front STM32 UART; /dev/serial/by-id path recommended"),
+        DeclareLaunchArgument(
+            "hardware_profile", default_value="robot-2",
+            description="Physical chassis profile; independent of front role"),
         DeclareLaunchArgument("enable_serial", default_value="true"),
         DeclareLaunchArgument("require_serial", default_value="true"),
         DeclareLaunchArgument(
@@ -256,6 +259,7 @@ def generate_launch_description():
             name="front_bridge",
             parameters=[{
                 "role": "front",
+                "hardware_profile": LaunchConfiguration("hardware_profile"),
                 "serial_port": LaunchConfiguration("serial_port"),
                 "serial_baud": 115200,
                 "enable_serial": enable_serial,

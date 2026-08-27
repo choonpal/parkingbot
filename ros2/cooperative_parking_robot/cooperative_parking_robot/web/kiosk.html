@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <title>ParkingBot</title>
+  <link rel="stylesheet" href="/assets/kiosk.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">P</span>
+      <div><strong>ParkingBot</strong><small>협동 로봇 주차 서비스</small></div>
+    </div>
+    <div id="banner" class="banner">시스템 연결 중</div>
+    <div id="connection" class="connection"><i></i><span>확인 중</span></div>
+  </header>
+
+  <main class="screen">
+    <section class="vision" aria-label="실시간 주차장 영상">
+      <div class="camera">
+        <img src="/video_feed" alt="실시간 천장 카메라 영상">
+        <div class="camera-label"><i></i> LIVE · 주차장 전체 화면</div>
+        <div id="cameraWaiting" class="camera-message">카메라 연결 대기 중</div>
+      </div>
+      <div class="progress" aria-label="입출차 진행 상태">
+        <div class="progress-copy"><small>현재 단계</small><strong id="progressTitle">차량 대기</strong></div>
+        <ol id="progressSteps">
+          <li class="active">차량 확인</li>
+          <li>로봇 접근</li>
+          <li>차량 이동</li>
+          <li>완료</li>
+        </ol>
+      </div>
+    </section>
+
+    <aside class="service">
+      <div class="mode-tabs" role="tablist" aria-label="서비스 선택">
+        <button id="parkTab" class="active" type="button" role="tab" aria-selected="true">입차</button>
+        <button id="retrieveTab" type="button" role="tab" aria-selected="false">출차</button>
+      </div>
+
+      <section id="parkPanel" class="service-panel">
+        <div class="panel-heading">
+          <div><small>자동 주차</small><h1>차량 정보를 입력해 주세요</h1></div>
+          <span id="spaceCount" class="space-count">확인 중</span>
+        </div>
+        <div class="fields">
+          <label>차량번호
+            <input id="parkVehicle" maxlength="32" autocomplete="off" placeholder="예: 12가 3456">
+          </label>
+          <label>주차 비밀번호
+            <input id="parkPassword" type="password" minlength="4" maxlength="64" autocomplete="new-password" inputmode="numeric" placeholder="4자 이상">
+          </label>
+        </div>
+        <div id="developerControls" class="developer-controls" hidden>
+          <span>개발자 목적지</span>
+          <select id="developerSlot" aria-label="개발자용 목적지 주차면">
+            <option value="">자동 배정</option>
+          </select>
+          <small>안전 검증은 동일하게 적용됩니다</small>
+        </div>
+        <div class="layout-card">
+          <div class="layout-title"><strong>주차공간 현황</strong><span>카메라와 같은 방향</span></div>
+          <svg id="sitePlan" viewBox="0 0 100 100" role="img" aria-label="실제 배치 기반 주차공간 현황"></svg>
+          <div class="layout-legend"><span class="entry">입차 구역</span><span class="available">주차 가능</span><span class="occupied">사용 중</span><span class="assigned">배정 위치</span></div>
+        </div>
+        <button id="park" class="primary" type="button" disabled>빈 공간에 자동 입차</button>
+        <p class="footnote">주차 위치는 차량 크기와 이동 경로를 확인해 자동 배정됩니다.</p>
+      </section>
+
+      <section id="retrievePanel" class="service-panel hidden">
+        <div class="panel-heading">
+          <div><small>차량 찾기</small><h1>입차 때 등록한 정보를 입력해 주세요</h1></div>
+        </div>
+        <div class="fields retrieve-fields">
+          <label>차량번호
+            <input id="retrieveVehicle" maxlength="32" autocomplete="off" placeholder="예: 12가 3456">
+          </label>
+          <label>주차 비밀번호
+            <input id="retrievePassword" type="password" minlength="4" maxlength="64" autocomplete="current-password" inputmode="numeric" placeholder="입차 때 설정한 번호">
+          </label>
+        </div>
+        <div class="retrieve-guide">
+          <span aria-hidden="true">↗</span>
+          <strong>차량번호로 주차 위치를 찾습니다</strong>
+          <p>고객이 주차공간 번호를 기억할 필요가 없습니다.</p>
+        </div>
+        <button id="retrieve" class="primary" type="button" disabled>출차 요청</button>
+      </section>
+    </aside>
+  </main>
+
+  <div id="toast" class="toast" role="status"></div>
+  <div id="offline" class="offline"><strong>UI 서버와 연결이 끊겼습니다</strong><span>잠시 후 자동으로 다시 연결합니다</span></div>
+  <script src="/assets/kiosk.js"></script>
+</body>
+</html>

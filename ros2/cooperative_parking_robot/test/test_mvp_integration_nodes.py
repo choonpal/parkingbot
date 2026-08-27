@@ -4,7 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from cooperative_parking_robot.bev_fusion_core import CameraDetection
+from cooperative_parking_robot.bev_fusion_core import (
+    CameraDetection, MergedDetection,
+)
 from cooperative_parking_robot.mvp_integration_nodes import (
     HomeAwareIndividualMoveNode,
     _OriginPublisher,
@@ -42,6 +44,18 @@ def test_negative_map_origin_translates_world_coordinates_to_local_grid():
     assert shifted.yaw == pytest.approx(math.pi)
 
 
+def test_negative_map_origin_translates_merged_detections():
+    merged = MergedDetection(CameraDetection(
+        camera_id='cam2', center=(0.6, 0.4),
+        polygon=[(0.0, 0.0), (1.2, 0.0), (1.2, 0.8)]))
+
+    shifted = _shift_detection(merged, -0.4, -0.8)
+
+    assert isinstance(shifted, MergedDetection)
+    assert shifted.center == pytest.approx((1.0, 1.2))
+    assert shifted.sources == ['cam2']
+
+
 def test_origin_publisher_preserves_delegate_and_sets_metadata():
     delegate = _RecordingPublisher()
     owner = SimpleNamespace(map_origin_x_m=-0.4, map_origin_y_m=-0.8)
@@ -53,6 +67,14 @@ def test_origin_publisher_preserves_delegate_and_sets_metadata():
     assert delegate.messages == [message]
     assert message.info.origin.position.x == pytest.approx(-0.4)
     assert message.info.origin.position.y == pytest.approx(-0.8)
+
+
+def test_origin_aware_merge_preserves_camera_coverage_mapping():
+    source = (PACKAGE_ROOT / 'cooperative_parking_robot' /
+              'mvp_integration_nodes.py').read_text()
+
+    assert 'for camera_id, polygon in coverage_polygons.items()' in source
+    assert 'camera_id: _shift_polygon' in source
 
 
 def test_origin_aware_calibrator_ui_exposes_registered_map_geometry():

@@ -133,6 +133,22 @@ def test_park_request_binds_vehicle_password_and_requested_empty_slot():
     assert 'password' not in fleet.request_status
 
 
+def test_park_request_accepts_credentials_and_defers_slot_assignment():
+    fleet = park_request_harness()
+
+    fleet._handle_park_request({
+        'type': 'park',
+        'request_id': 'ui-auto-park',
+        'vehicle_number': '12가 3456',
+        'password': '2468',
+    })
+
+    assert fleet.request_status['status'] == 'ACCEPTED'
+    assert fleet.requested_destination_slot_id == ''
+    assert fleet.active_vehicle_number == VEHICLE_NUMBER
+    assert fleet.active_parking_credential.verify(PASSWORD)
+
+
 def test_park_request_rejects_duplicate_vehicle_or_unavailable_slot():
     registry = occupied()
     fleet = park_request_harness(registry)
@@ -163,6 +179,21 @@ def test_park_planning_candidates_are_limited_to_requested_empty_slot():
     candidates = FleetManagerNode._eligible_park_slots(fleet)
 
     assert [slot.slot_id for slot in candidates] == ['A2']
+
+
+def test_available_slots_intersect_registry_and_cctv_empty_results():
+    registry = ParkingRegistry(['A1', 'A2'])
+    registry.reserve_park(
+        'A1', 'park-occupied', VEHICLE_NUMBER,
+        ParkingCredential.create(PASSWORD))
+    registry.complete_park(
+        'A1', 'park-occupied', POSE, 'forward', SPEC)
+    fleet = park_request_harness(registry)
+    # CCTV reports both geometrically empty; Registry still protects A1.
+    fleet.empty_slots = [
+        SimpleNamespace(slot_id='A1'), SimpleNamespace(slot_id='A2')]
+
+    assert fleet._available_park_slot_ids() == ['A2']
 
 
 def request(slot_id='A1', request_id='ui-1'):

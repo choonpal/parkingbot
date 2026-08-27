@@ -268,6 +268,21 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'require_full_slot_coverage', default_value='false',
             description='true면 슬롯 네 모서리가 한 카메라에 다 들어와야 판정'),
+        DeclareLaunchArgument(
+            'stationary_tolerance_m', default_value='0.04',
+            description='정차로 볼 filtered 차량 중심의 최대 흔들림'),
+        DeclareLaunchArgument(
+            'stationary_hold_s', default_value='2.0',
+            description='READY 전 정차 상태 유지 시간'),
+        DeclareLaunchArgument(
+            'target_detection_timeout_s', default_value='1.2',
+            description='간헐 미검출 때 READY 후보를 보존할 시간'),
+        DeclareLaunchArgument(
+            'target_presence_timeout_s', default_value='1.2',
+            description='UI에서 차량 감지 중 상태를 보존할 시간'),
+        DeclareLaunchArgument(
+            'target_position_filter_window', default_value='3',
+            description='차량 중심 median filter 표본 수'),
 
         # ============================================================
         # 상판 마커 (노드 1개가 두 영상 구독)
@@ -447,6 +462,15 @@ def generate_launch_description():
                 'duplicate_center_blend': _float('duplicate_center_blend'),
                 'require_full_slot_coverage': _bool(
                     'require_full_slot_coverage'),
+                'stationary_tolerance_m': _float(
+                    'stationary_tolerance_m'),
+                'stationary_hold_s': _float('stationary_hold_s'),
+                'target_detection_timeout_s': _float(
+                    'target_detection_timeout_s'),
+                'target_presence_timeout_s': _float(
+                    'target_presence_timeout_s'),
+                'target_position_filter_window': _int(
+                    'target_position_filter_window'),
                 'use_fixed_wheelbase': True,
                 'fixed_wheelbase_m': _float('fixed_wheelbase_m'),
             }],

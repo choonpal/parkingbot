@@ -165,7 +165,7 @@ def start(args):
     deadline = time.monotonic() + 20.0
     data = None
     while time.monotonic() < deadline:
-        data = snapshot(timeout=0.8)
+        data = snapshot(timeout=10.0)
         values = data["topics"]
         if (isinstance(values["fleet"], dict) and
                 values["front_state"] is not None and
@@ -326,7 +326,7 @@ def doctor(args):
             if role == "rear":
                 checks.append((f"test -f {shlex.quote(config['REAR_CALIB'])}", "Rear calibration missing"))
         for command, reason in checks:
-            result = remote_run(runner, role_host(config, role), command, timeout=8)
+            result = remote_run(runner, role_host(config, role), command, timeout=25)
             if result.returncode:
                 blockers.append(f"{role}: {reason}")
     print("READY" if not blockers else "BLOCKED")
@@ -347,7 +347,7 @@ def monitor(args):
     last_faults = set()
     grace_until = time.monotonic() + 15.0
     while True:
-        data = snapshot(timeout=0.7)
+        data = snapshot(timeout=10.0)
         with (run_dir / "state" / "state_monitor.jsonl").open("a") as stream:
             stream.write(json.dumps(data, ensure_ascii=False) + "\n")
         faults = set(data["blockers"])

@@ -64,6 +64,17 @@ def test_detection_envelope_round_trip_preserves_world_coordinates():
     assert decoded['detections'][0].length_m == pytest.approx(0.9)
 
 
+def test_coverage_grid_honors_nonzero_origin_and_ceil_sized_edge():
+    polygon = {'cam0': [(-0.4, -0.8), (3.43, -0.8),
+                         (3.43, 0.2), (-0.4, 0.2)]}
+    width = math.ceil(3.83 / 0.05)
+    values = coverage_grid_values(
+        width, 20, 0.05, polygon, origin_x_m=-0.4, origin_y_m=-0.8)
+    assert width == 77
+    assert values[0] == 0
+    assert values[width - 1] == 0
+
+
 def test_detection_envelope_rejects_unknown_version():
     text = encode_detection_envelope('cam0', 1, 1, None, [])
     broken = text.replace('"version": 1', '"version": 99')

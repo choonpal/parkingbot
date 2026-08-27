@@ -6,7 +6,23 @@ import pytest
 from cooperative_parking_robot.ultrasonic_edge_node import (
     paired_lateral_offset,
 )
-from cooperative_parking_robot.vision_utils import principal_axis_yaw
+from cooperative_parking_robot.vision_utils import (
+    directed_axis_yaw,
+    principal_axis_yaw,
+)
+
+
+@pytest.mark.parametrize('axis_deg,expected_deg,result_deg', [
+    (0.0, 180.0, -180.0),
+    (180.0, 180.0, -180.0),
+    (1.0, 179.0, -179.0),
+    (179.0, -179.0, 179.0),
+])
+def test_waiting_heading_resolves_pca_axis_direction(
+        axis_deg, expected_deg, result_deg):
+    resolved = directed_axis_yaw(
+        math.radians(axis_deg), math.radians(expected_deg))
+    assert math.degrees(resolved) == pytest.approx(result_deg)
 
 
 ROOT = Path(__file__).resolve().parents[1]

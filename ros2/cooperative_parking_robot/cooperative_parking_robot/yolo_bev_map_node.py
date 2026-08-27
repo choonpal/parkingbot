@@ -44,6 +44,7 @@ from std_msgs.msg import Bool, String
 
 from cooperative_parking_robot.vision_utils import (
     correct_floor_projection,
+    directed_axis_yaw,
     normalize_model_mode,
     parse_class_ids,
     principal_axis_yaw,
@@ -109,6 +110,7 @@ class YoloBevMapNode(Node):
         # fallback until a parking segmentation model is supplied.
         self.declare_parameter('yaw_pca_min_ratio', 1.25)
         self.declare_parameter('yaw_ema_alpha', 0.15)
+        self.declare_parameter('waiting_yaw_deg', 0.0)
         self.declare_parameter('yaw_limit_deg', 90.0)
         # Until oriented obstacle boxes are available, use the longer vehicle
         # dimension as a conservative square rather than the old 0.20m point.
@@ -231,8 +233,8 @@ class YoloBevMapNode(Node):
             raise ValueError('waiting_zone must be [x1,y1,x2,y2]')
         if not (0.0 < self.conf <= 1.0):
             raise ValueError('confidence must be in (0,1]')
-        self.grid_w = int(self.map_w_m / self.resolution)
-        self.grid_h = int(self.map_h_m / self.resolution)
+        self.grid_w = int(math.ceil(self.map_w_m / self.resolution))
+        self.grid_h = int(math.ceil(self.map_h_m / self.resolution))
         self.stationary_tol = float(
             self.get_parameter('stationary_tolerance_m').value)
         self.stationary_hold = float(
@@ -305,6 +307,8 @@ class YoloBevMapNode(Node):
             self.get_parameter('yaw_pca_min_ratio').value)
         self.yaw_alpha = float(
             self.get_parameter('yaw_ema_alpha').value)
+        self.waiting_yaw = math.radians(float(
+            self.get_parameter('waiting_yaw_deg').value))
         self.yaw_limit = math.radians(
             float(self.get_parameter('yaw_limit_deg').value))
         # --- 듀얼 카메라 sensor 모드 상태 ---
@@ -1108,7 +1112,8 @@ class YoloBevMapNode(Node):
         msg.header.frame_id = 'map'
         msg.pose.position.x = x
         msg.pose.position.y = y
-        half_yaw = self.target_yaw / 2.0
+        half_yaw = directed_axis_yaw(
+            self.target_yaw, self.waiting_yaw) / 2.0
         msg.pose.orientation.z = math.sin(half_yaw)
         msg.pose.orientation.w = math.cos(half_yaw)
         self.pub_target.publish(msg)

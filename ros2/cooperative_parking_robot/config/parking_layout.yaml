@@ -81,6 +81,7 @@ fleet_manager_node:
     planning_validation_mode: "warn_only"
     unknown_is_occupied: true
     odom_timeout_s: 0.500000
+    target_candidate_timeout_s: 2.000000
     approach_yaw_gain: 1.500000
     approach_max_yaw_rate_rps: 0.150000
 
@@ -93,6 +94,8 @@ cctv_merge_node:
     map_origin_y_m: -0.800000
     map_width_m: 4.800000
     map_height_m: 4.630000
+    robot_odom_freshness_s: 0.500000
+    static_obstacle_polygons_json: "[]"
     car_size_m: 0.900000
     waiting_polygon: [0.000000, 0.000000, 1.200000, 0.000000, 1.200000, 0.800000, 0.000000, 0.800000]
     slot_ids: ["P1", "P2", "P3", "P4"]

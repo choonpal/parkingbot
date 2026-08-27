@@ -81,6 +81,7 @@ class Stm32BridgeNode(Node):
         self.declare_parameter('require_ultrasonic_for_ready', True)
         self.declare_parameter('command_source_timeout_s', 0.25)
         self.declare_parameter('command_future_tolerance_s', 0.10)
+        self.declare_parameter('clock_reject_fault_count', 3)
 
         self.role = self.get_parameter('role').value
         if self.role not in ('front', 'rear'):
@@ -107,6 +108,11 @@ class Stm32BridgeNode(Node):
             self.get_parameter('command_source_timeout_s').value)
         self.command_future_tolerance = float(
             self.get_parameter('command_future_tolerance_s').value)
+        self.clock_reject_fault_count = int(
+            self.get_parameter('clock_reject_fault_count').value)
+        if self.clock_reject_fault_count <= 0:
+            raise ValueError('clock_reject_fault_count must be positive')
+        self.clock_reject_count = {'auto': 0, 'manual': 0}
         if not (0.0 < self.ultrasonic_min_range < self.ultrasonic_max_range):
             raise ValueError('ultrasonic min/max range is invalid')
         if self.ultrasonic_frame_timeout <= 0.0:
@@ -221,14 +227,13 @@ class Stm32BridgeNode(Node):
     # ===== ROS2 → STM32 =====
     def cmd_vel_cb(self, msg):
         # 역기구학 안 함. 최신 명령 저장 (송신은 send_velocity_loop가 담당)
-        accepted, reason = self.command_stamp_gate.accept(
-            stamp_to_ns(msg.header.stamp),
-            self.get_clock().now().nanoseconds)
+        stamp_ns = stamp_to_ns(msg.header.stamp)
+        now_ns = self.get_clock().now().nanoseconds
+        accepted, reason = self.command_stamp_gate.accept(stamp_ns, now_ns)
         if not accepted:
-            self.get_logger().warn(
-                f'cmd_vel rejected: {reason}',
-                throttle_duration_sec=1.0)
+            self._report_stamp_rejection('auto', reason, stamp_ns, now_ns)
             return
+        self.clock_reject_count['auto'] = 0
         if msg.header.frame_id not in ('', f'{self.role}_base'):
             self.get_logger().warn(
                 f'cmd_vel frame rejected: {msg.header.frame_id}')
@@ -246,14 +251,14 @@ class Stm32BridgeNode(Node):
     def manual_cmd_vel_cb(self, msg):
         if not self.command_arbiter.manual_enabled:
             return
+        stamp_ns = stamp_to_ns(msg.header.stamp)
+        now_ns = self.get_clock().now().nanoseconds
         accepted, reason = self.manual_command_stamp_gate.accept(
-            stamp_to_ns(msg.header.stamp),
-            self.get_clock().now().nanoseconds)
+            stamp_ns, now_ns)
         if not accepted:
-            self.get_logger().warn(
-                f'manual cmd_vel rejected: {reason}',
-                throttle_duration_sec=1.0)
+            self._report_stamp_rejection('manual', reason, stamp_ns, now_ns)
             return
+        self.clock_reject_count['manual'] = 0
         if msg.header.frame_id not in ('', f'{self.role}_base'):
             self.get_logger().warn(
                 f'manual cmd frame rejected: {msg.header.frame_id}')
@@ -268,6 +273,21 @@ class Stm32BridgeNode(Node):
             max(-self.max_linear, min(self.max_linear, values[1])),
             max(-self.max_angular, min(self.max_angular, values[2])))
         self.command_arbiter.update_manual(command, time.monotonic())
+
+    def _report_stamp_rejection(self, source, reason, stamp_ns, now_ns):
+        delta_s = (int(now_ns) - int(stamp_ns)) * 1.0e-9
+        self.get_logger().warn(
+            f'{source} cmd_vel rejected: {reason} '
+            f'msg_stamp_ns={stamp_ns} local_now_ns={now_ns} '
+            f'age_s={delta_s:+.6f}', throttle_duration_sec=1.0)
+        if reason not in ('STALE_STAMP', 'FUTURE_STAMP'):
+            return
+        self.clock_reject_count[source] += 1
+        if self.clock_reject_count[source] == self.clock_reject_fault_count:
+            self.publish_status(
+                f'ERR,CLOCK_SKEW:{source}:{reason}:'
+                f'age_s={delta_s:+.6f}:count='
+                f'{self.clock_reject_count[source]}')
 
     def manual_enable_cb(self, msg):
         was_enabled = self.command_arbiter.manual_enabled

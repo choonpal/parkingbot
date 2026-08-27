@@ -9,6 +9,22 @@ from typing import Any, Callable
 from typing import Iterable, Optional, Sequence, Tuple
 
 
+def directed_axis_yaw(axis_yaw, expected_yaw):
+    """Resolve an undirected PCA axis to the heading nearest expectation."""
+    def wrap(value):
+        wrapped = math.atan2(math.sin(float(value)), math.cos(float(value)))
+        return -math.pi if wrapped >= math.pi else wrapped
+
+    axis = wrap(axis_yaw)
+    expected = wrap(expected_yaw)
+    opposite = wrap(axis + math.pi)
+    axis_error = abs(math.atan2(
+        math.sin(axis - expected), math.cos(axis - expected)))
+    opposite_error = abs(math.atan2(
+        math.sin(opposite - expected), math.cos(opposite - expected)))
+    return opposite if opposite_error < axis_error else axis
+
+
 def normalize_model_mode(value: str) -> str:
     """Return a validated YOLO interpretation mode."""
     mode = str(value).strip().lower()

@@ -99,6 +99,8 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
         self.declare_parameter('sync_reference_max_sample_std_y_m', 0.01)
         self.declare_parameter(
             'sync_reference_max_sample_std_yaw_deg', 2.0)
+        self.declare_parameter('sync_reference_max_retries', 2)
+        self.declare_parameter('sync_reference_retry_delay_s', 0.3)
 
         gp = self.get_parameter
         dist_process_sigma = float(
@@ -186,7 +188,10 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
             max_std_y=float(
                 gp('sync_reference_max_sample_std_y_m').value),
             max_std_yaw=math.radians(float(
-                gp('sync_reference_max_sample_std_yaw_deg').value)))
+                gp('sync_reference_max_sample_std_yaw_deg').value)),
+            max_retries=int(gp('sync_reference_max_retries').value),
+            retry_delay_s=float(
+                gp('sync_reference_retry_delay_s').value))
         self.reference_settle_time = float(
             gp('sync_reference_settle_time_s').value)
         if self.reference_settle_time < 0.0:
@@ -309,10 +314,18 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
                 self.vehicle_lifted, self.front_robot_state,
                 self.rear_robot_state, self.reference_capture.ready):
             now = time.monotonic()
-            self.reference_capture.timed_out(now)
-            state = self.reference_capture.state
-            if state in ('REFERENCE_INVALID', 'REFERENCE_TIMEOUT'):
-                self.recoverable_hold(state)
+            state = self.reference_capture.advance(now)
+            if state == 'REFERENCE_FAILED':
+                self.fatal_stop(
+                    f'REFERENCE_CAPTURE_FAILED '
+                    f'{self.reference_capture.reason} '
+                    f'retries={self.reference_capture.retry_count}')
+            elif state == 'REFERENCE_RETRY_WAIT':
+                self.recoverable_hold(
+                    f'REFERENCE_RETRY_WAIT '
+                    f'{self.reference_capture.reason} '
+                    f'{self.reference_capture.retry_count}/'
+                    f'{self.reference_capture.max_retries}')
             else:
                 self.send_stop()
                 self._err = state
@@ -332,6 +345,8 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
         return {
             'reference_state': self.reference_capture.state,
             'reference_sample_count': len(samples),
+            'reference_retry_count': self.reference_capture.retry_count,
+            'reference_reason': self.reference_capture.reason,
             'reference_capture_x_std': std_x,
             'reference_capture_y_std': std_y,
             'reference_capture_yaw_std': std_yaw,
@@ -387,7 +402,8 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
         if (self.vehicle_lifted and capture_settled and
                 abs(lateral) <= self.aruco_lateral_envelope and
                 self.reference_capture.add(
-                    self.aruco_dist, lateral, self.aruco_yaw)):
+                    self.aruco_dist if self.use_aruco_distance else None,
+                    lateral, self.aruco_yaw, now=time.monotonic())):
             self._lock_mission_reference()
 
     def _lock_mission_reference(self):
@@ -397,8 +413,16 @@ class RigidBodySyncNode(LegacyRigidBodySyncNode):
         now = time.monotonic()
         raw_x, raw_yaw, stamp_s, source, raw_y = (
             self._relative_predictor(now))
+        locked_x = (raw_x if reference.relative_x is None else
+                    reference.relative_x)
+        if reference.relative_x is None:
+            reference = type(reference)(
+                locked_x, reference.relative_y, reference.relative_yaw,
+                reference.std_x, reference.std_y, reference.std_yaw,
+                reference.sample_count)
+            self.reference_capture.reference = reference
         self.relative_x_kalman.reset(
-            reference.relative_x, raw_value=raw_x,
+            locked_x, raw_value=raw_x,
             covariance=self.initial_covariance_scale *
             self.relative_x_kalman.R, stamp_s=stamp_s)
         self.lateral_kalman.reset(

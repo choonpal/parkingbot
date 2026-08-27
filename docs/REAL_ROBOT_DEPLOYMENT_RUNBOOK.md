@@ -326,12 +326,47 @@ ros2 launch cooperative_parking_robot front_robot.launch.py \
   lx:="${FRONT_LX}" ly:="${FRONT_LY}" \
   left_sensor_to_gripper_x_m:="${FRONT_LEFT_SENSOR_X}" \
   right_sensor_to_gripper_x_m:="${FRONT_RIGHT_SENSOR_X}" \
-  use_aruco_distance:=false \
+  use_aruco_distance:=true \
   simultaneous_entry:=false
 ```
 
-`use_aruco_distance`는 실제 중심간 거리와 `aruco_distance_offset_m`을 반복 측정해
-검증하기 전까지 `false`로 유지한다.
+ID0 중심거리 offset은 `config/id0_calibration.yaml`에서 중앙 관리한다.
+현재 `0.570m` 값은 2026-08-27의 정렬 실측(중심간 0.785m, raw 약 0.215m)에
+근거하므로 production은 `use_aruco_distance=true`를 사용한다. 카메라 또는 ID0
+장착을 변경했다면 이 파일을 재측정하기 전까지 X correction을 비활성화하고,
+mission reference가 wheel X를 사용한다는 점을 확인한다.
+
+### 분산 장비 시계 동기화 확인
+
+Jetson, Front RPi, Rear RPi 세 장비에서 모두 다음을 확인한다.
+
+```bash
+timedatectl
+chronyc tracking
+chronyc sources -v
+```
+
+`command_future_tolerance_s=0.10`, `command_source_timeout_s=0.25`보다 충분히
+작은 여유를 확보하기 위해 장비 간 절대 skew 목표는 20ms 이하로 둔다.
+`hardware_status`의 `ERR,CLOCK_SKEW`가 한 번이라도 발생하면 실제 미션을
+시작하지 말고 NTP/chrony source와 네트워크를 복구한다.
+
+### FAULT 복구 계약
+
+FAULT는 자동 clear하지 않는다. 현재 STM32 firmware의 ESTOP은 전원/MCU reset까지
+latched되므로 ROS state만 임의로 IDLE로 바꾸는 것은 금지한다.
+
+| 발생 단계 | 허용되는 조치 |
+|---|---|
+| PARK 승인 전 | 원인 제거 후 노드를 재기동한다. Registry 변경은 없다. |
+| WAIT_LIFT / 실제 Lift 전 | 차량이 바닥에 있고 두 로봇이 정지했음을 확인한 뒤 전체 mission process와 두 STM32를 재기동한다. |
+| Lift 후 / NAVIGATING | 자동 reset·Registry rollback 금지. 차량을 안전 지지하고 수동 회수한 뒤 operator가 현장 상태와 DB를 대조한다. |
+| Release 후 | 슬롯의 실제 차량 유무를 확인하기 전 EMPTY/OCCUPIED를 자동 변경하지 않는다. |
+
+복구 전에는 `/robot/lifted`, 양쪽 `/robot_state`, `/hardware_status`, 실제 바퀴
+정지, 그리퍼/차량 지지 상태를 함께 확인한다. ESTOP latch를 해제하는 firmware
+protocol이 아직 없으므로 이 절차는 P0 운영 제약이며 단순 UI reset 버튼으로
+대체할 수 없다.
 
 ## 5. 기동 확인과 모터 인가
 

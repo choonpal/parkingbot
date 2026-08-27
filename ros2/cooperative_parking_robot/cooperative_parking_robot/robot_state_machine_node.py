@@ -10,6 +10,7 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Bool, String
 
 from cooperative_parking_robot.mission_protocol import parse_arrival_status
+from cooperative_parking_robot.sync_faults import is_fatal_sync_error
 
 
 class RobotStateMachineNode(Node):
@@ -313,15 +314,7 @@ class RobotStateMachineNode(Node):
                         payload, self.active_plan_stamp_ns) is not None):
                 self.arrived = True
             return
-        fatal_prefixes = (
-            "ODOM_TIMEOUT",
-            "MARKER_LOST",
-            "YAW_ERROR",
-            "DIST_ERROR_FATAL",
-            "DIST_ERROR_TIMEOUT",
-            "SYNC_FILTER_INIT_FAILED",
-        )
-        if error.startswith(fatal_prefixes):
+        if is_fatal_sync_error(error):
             fault = f"SYNC,{error}"
             if self.hardware_fault != fault:
                 self.hardware_fault = fault

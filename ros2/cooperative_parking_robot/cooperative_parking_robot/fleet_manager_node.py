@@ -42,6 +42,7 @@ from cooperative_parking_robot.vehicle_entry import (
     vehicle_to_world,
 )
 from cooperative_parking_robot.mission_protocol import parse_arrival_status
+from cooperative_parking_robot.sync_faults import is_fatal_sync_error
 from cooperative_parking_robot.parking_registry import (
     ParkingCredential,
     ParkingRegistry,
@@ -91,6 +92,7 @@ class FleetManagerNode(Node):
             [2.10, 0.30, 2.50, 0.30, 2.50, 0.90, 2.10, 0.90])
         self.declare_parameter('map_resolution', 0.05)
         self.declare_parameter('target_timeout_s', 2.0)
+        self.declare_parameter('target_candidate_timeout_s', 2.0)
         self.declare_parameter('vehicle_spec_timeout_s', 10.0)
         self.declare_parameter('odom_timeout_s', 0.5)
         self.declare_parameter('future_tolerance_s', 0.10)
@@ -161,7 +163,10 @@ class FleetManagerNode(Node):
             self.get_parameter('odom_timeout_s').value)
         self.future_tolerance = float(
             self.get_parameter('future_tolerance_s').value)
-        if self.odom_timeout <= 0.0 or self.future_tolerance < 0.0:
+        self.target_candidate_timeout = float(
+            self.get_parameter('target_candidate_timeout_s').value)
+        if (self.odom_timeout <= 0.0 or self.future_tolerance < 0.0 or
+                self.target_candidate_timeout <= 0.0):
             raise ValueError('invalid odom/future timeout')
 
         self.robot_length = float(
@@ -286,6 +291,7 @@ class FleetManagerNode(Node):
 
         # 상태
         self.target_pose = None
+        self.target_candidate_receipt_time = None
         self.empty_slots = []
         self.grid = None
         self.grid_w = 0
@@ -313,6 +319,7 @@ class FleetManagerNode(Node):
         self.request_status = None
         self.validation_warnings = []
         self.planning_blocker = None
+        self.sync_fault = ''
         self.last_completed = None
         self.completion_sequence = 0
         self.status_sequence = 0
@@ -403,13 +410,9 @@ class FleetManagerNode(Node):
         if msg.header.frame_id not in ('', 'map'):
             self.get_logger().warn('target_pose frame must be map')
             return
-        if self.state == 'WAIT_TARGET' and not self.mission_id:
-            self.mission_id = (
-                f'mission-{self.get_clock().now().nanoseconds}')
-            self.mission_type = 'park'
-            self._reset_planning_diagnostics()
-            self.get_logger().info(f'new mission: {self.mission_id}')
         self.target_pose = msg
+        if self.state == 'WAIT_TARGET':
+            self.target_candidate_receipt_time = time.monotonic()
 
     def slots_cb(self, msg):
         """빈 Pose를 등록 슬롯과 다시 연결해 크기와 진입 Yaw를 보존한다."""
@@ -720,6 +723,16 @@ class FleetManagerNode(Node):
         try:
             payload = json.loads(msg.data)
         except (TypeError, ValueError, json.JSONDecodeError):
+            return
+        error = str(payload.get('error', 'OK')).strip()
+        if (self.mission_id and self.state in ('PLAN_PATH', 'NAVIGATING') and
+                is_fatal_sync_error(error)):
+            self.sync_fault = error
+            self.state = 'FAULT'
+            self.path_published = False
+            self.publish_state()
+            self.get_logger().error(
+                f'fleet mission stopped by rigid-body fault: {error}')
             return
         if (not self.mission_id or self.active_plan_stamp_ns <= 0 or
                 self.state not in ('PLAN_PATH', 'NAVIGATING')):
@@ -1225,6 +1238,24 @@ class FleetManagerNode(Node):
     # ===== 관제 로직 =====
     def manage_loop(self):
         if self.state == 'WAIT_TARGET':
+            if (self.target_pose is not None and
+                    self.target_candidate_receipt_time is not None and
+                    time.monotonic() - self.target_candidate_receipt_time >
+                    self.target_candidate_timeout):
+                self.target_pose = None
+                self.target_candidate_receipt_time = None
+                self.active_vehicle_spec = None
+                if self.ui_park_approved:
+                    self.ui_park_approved = False
+                    self.requested_destination_slot_id = ''
+                    self.active_vehicle_number = ''
+                    self.active_parking_credential = None
+                    if self.request_status is not None:
+                        self.request_status = dict(self.request_status)
+                        self.request_status['status'] = 'REJECTED'
+                        self.request_status['reason'] = 'TARGET_TIMEOUT'
+                self.publish_state()
+                self.get_logger().warn('stale candidate target cleared')
             # 차가 아직 없는데 버튼이 먼저 눌린 경우, 승인이 무기한 남아 있으면
             # 한참 뒤에 들어온 차가 예고 없이 실려 나간다. 반드시 만료시킨다.
             if (self.ui_park_approved and
@@ -1245,14 +1276,20 @@ class FleetManagerNode(Node):
                 self.get_logger().warn('UI 입차 승인 만료 — 다시 눌러야 합니다')
             if self.target_pose is not None:
                 if not self.require_ui_confirmation:
+                    self.mission_id = (
+                        f'mission-{self.get_clock().now().nanoseconds}')
                     self.mission_type = 'park'
+                    self._reset_planning_diagnostics()
                     self.state = 'WAIT_LIFT'
                     self.publish_state()
                 elif self.ui_park_approved:
                     # 승인은 1회성이다. 진입 순간 즉시 소비해야 다음 임무가
                     # 버튼 없이 자동 시작되는 일을 막을 수 있다.
                     self.ui_park_approved = False
+                    self.mission_id = (
+                        f'mission-{self.get_clock().now().nanoseconds}')
                     self.mission_type = 'park'
+                    self._reset_planning_diagnostics()
                     self.state = 'WAIT_LIFT'
                     self.publish_state()
                     self.get_logger().info(
@@ -1720,6 +1757,7 @@ class FleetManagerNode(Node):
             'planning_validation_mode': self.planning_validation_mode,
             'validation_warnings': list(self.validation_warnings),
             'planning_blocker': self.planning_blocker,
+            'sync_fault': self.sync_fault,
             'last_completed': self.last_completed,
             'footprint_length_m': round(
                 self.loaded_footprint.length_m, 4),

@@ -11,7 +11,7 @@ rigid_body_sync_node:
     hold_initial_yaw: true
     yaw_hold_kp: 1.0
 
-    # 상대 거리/yaw 안전 한계
+    # 상대 x/yaw 안전 한계
     dist_error_limit: 0.03
     dist_stop_limit: 0.08
     dist_error_timeout_s: 2.0
@@ -19,6 +19,11 @@ rigid_body_sync_node:
     odom_timeout_s: 0.50
     marker_slowdown_s: 1.0
     marker_stop_s: 2.0
+
+    # 상대 lateral은 기계적 횡하중과 직결되므로 x와 별도로 제한한다.
+    sync_lateral_error_limit_m: 0.020
+    sync_lateral_stop_limit_m: 0.040
+    sync_lateral_error_timeout_s: 1.0
 
     # Front 후면 ID0와 Rear 전면 카메라가 각 로봇 끝면에 있다고 본 기본값.
     # 중심거리 = raw camera-to-marker 거리 + 0.565m. 장착 후 실측 보정한다.
@@ -31,23 +36,24 @@ rigid_body_sync_node:
     robot_length_m: 0.565
     minimum_inter_robot_gap_m: 0.22
 
-    # v1.11.1 상대필터: /wheel_odom 누적 dead-reckoning을 현재 map pose에
-    # anchor해 predict한다. CCTV correction이 섞인 /odom은 raw wheel stream이
-    # 끊긴 경우에만 fallback으로 쓴다.
+    # /wheel_odom 누적 dead-reckoning을 현재 map pose에 anchor해 predict한다.
+    # 두 장비의 최신값을 무조건 섞지 않고 source timestamp가 50ms 안인 pair만
+    # 새 relative sample로 사용한다. 어긋난 동안은 마지막 동기 sample을 hold한다.
     use_raw_wheel_relative_predictor: true
     wheel_relative_timeout_s: 0.50
+    wheel_pair_sync_slop_s: 0.05
     cctv_pair_timeout_s: 0.50
     cctv_pair_sync_slop_s: 0.12
 
     # Lift 직후 calibration 적용된 ID0 x/y/yaw를 여러 frame 수집해 mission
     # reference를 한 번 lock한다. nominal geometry는 sanity check에만 쓰고,
-    # DRIVE PID target은 lock된 reference를 mission 종료까지 유지한다.
+    # DRIVE PID target은 lock된 reference를 Lift 해제까지 유지한다.
     sync_reference_capture_samples: 20
     sync_reference_capture_timeout_s: 5.0
     sync_reference_settle_time_s: 0.5
-    sync_reference_max_x_error_m: 0.06
-    sync_reference_max_lateral_error_m: 0.04
-    sync_reference_max_yaw_error_deg: 5.0
+    sync_reference_max_x_error_m: 0.025
+    sync_reference_max_lateral_error_m: 0.020
+    sync_reference_max_yaw_error_deg: 3.0
     sync_reference_max_sample_std_x_m: 0.01
     sync_reference_max_sample_std_y_m: 0.01
     sync_reference_max_sample_std_yaw_deg: 2.0
@@ -82,16 +88,16 @@ rigid_body_sync_node:
     aruco_consistency_lateral_m: 0.015
 
     # 센서 잡음에 의한 모터 hunting 방지용 작은 제어 deadband.
-    # 안전 판정은 deadband 전 원시 오차로 계속 수행한다.
+    # 실차 첫 단계는 저속 P-only로 시작하고, D/I는 로그 근거가 생긴 뒤 추가한다.
     sync_dist_deadband_m: 0.003
     sync_yaw_deadband_deg: 0.50
     sync_lateral_deadband_m: 0.003
     sync_target_lateral_m: 0.0
     sync_target_yaw_deg: 0.0
-    sync_lateral_kp: 1.2
-    sync_lateral_ki: 0.1
-    sync_lateral_kd: 0.05
-    sync_lateral_max_correction_mps: 0.08
+    sync_lateral_kp: 0.4
+    sync_lateral_ki: 0.0
+    sync_lateral_kd: 0.0
+    sync_lateral_max_correction_mps: 0.015
 
     # 차량 중심과 로봇 두 대 중점의 고정 장착 오프셋 초기화/보정
     initialize_offset_from_target_pose: true

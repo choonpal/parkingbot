@@ -7,11 +7,19 @@ config_dir="${HOME}/.config/parkingbot"
 mkdir -p "$install_dir"
 mkdir -p "$config_dir"
 
+# The public robotctl command is the fail-closed guard. The previous CLI is
+# retained as robotctl_core so its mature start/state/log/stop implementation
+# remains unchanged behind the revision gate.
 install -m 0755 "$tool_dir/robotctl" "$install_dir/robotctl"
+install -m 0755 "$tool_dir/robotctl_core" "$install_dir/robotctl_core"
 install -m 0644 "$tool_dir/parkingbot_ops.py" "$install_dir/parkingbot_ops.py"
+install -m 0644 "$tool_dir/production_preflight.py" \
+  "$install_dir/production_preflight.py"
+install -m 0755 "$tool_dir/id0_yaw_preflight.py" \
+  "$install_dir/id0_yaw_preflight.py"
 install -m 0755 "$tool_dir/parkingbot_ros_snapshot.py" \
   "$install_dir/parkingbot_ros_snapshot.py"
-for command in start state logs stop restart doctor; do
+for command in start state logs stop restart doctor id0_check; do
   ln -sfn robotctl "$install_dir/robot_${command}"
 done
 if [[ ! -f "$config_dir/production_hosts.env" ]]; then
@@ -19,7 +27,7 @@ if [[ ! -f "$config_dir/production_hosts.env" ]]; then
     "$config_dir/production_hosts.env"
 fi
 
-echo "Installed robotctl and robot_* commands in $install_dir"
+echo "Installed guarded robotctl and robot_* commands in $install_dir"
 case ":${PATH}:" in
   *":${install_dir}:"*) ;;
   *)
@@ -30,3 +38,4 @@ case ":${PATH}:" in
 esac
 echo "Required site configuration: $config_dir/production_hosts.env"
 echo "Fill it with verified host, workspace, device and measured geometry values."
+echo "Before cooperative motion, align the robots and run: robot_id0_check"

@@ -1,581 +1,189 @@
 #!/usr/bin/env python3
-"""Single entry point for ParkingBot production operation commands."""
+"""Fail-closed launcher in front of the existing ParkingBot robotctl core."""
 
-import argparse
+from __future__ import annotations
+
 import json
 import os
 from pathlib import Path
-import shlex
-import shutil
+import runpy
 import subprocess
 import sys
-import time
 
 from parkingbot_ops import (
-    REQUIRED, ROLES, SESSION, Runner, create_run_dir, format_snapshot,
-    conditional_config_errors, incident_snapshot, invalid_paths,
-    launch_command, load_env, missing_config,
-    protocol_consistency_errors, protocol_source_check_command,
-    remote_argv, remote_run, role_host, role_workspace, ros_prefix, run_root,
-    snapshot, stack_process_status,
+    conditional_config_errors, invalid_paths, load_env, missing_config, run_root,
 )
+from production_preflight import revision_status, run_id0_yaw_preflight
 
 HERE = Path(__file__).resolve().parent
+CORE = HERE / "robotctl_core"
+
+# Preserve the existing module-level helper API for the repository's robotctl
+# regression tests and operational scripts. The core is evaluated without
+# running its CLI main, then this guard overrides only command dispatch.
+_CORE_NAMESPACE = runpy.run_path(str(CORE))
+for _name, _value in _CORE_NAMESPACE.items():
+    if not _name.startswith("__") and _name not in globals():
+        globals()[_name] = _value
+
 DEFAULT_CONFIG = Path("~/.config/parkingbot/production_hosts.env").expanduser()
+GUARDED_COMMANDS = {"start", "restart"}
+ID0_COMMANDS = {"id0-check", "id0_check"}
 
 
-def repo_root():
-    """저장소 루트를 찾는다.
-
-    ``install_robot_commands.sh`` 는 이 스크립트를 ``~/.local/bin`` 으로
-    복사한다. 그러면 ``HERE.parent`` 는 ``~/.local`` 이 되어 소스 대조가
-    항상 "source missing" 으로 실패한다. 설치본에서도 동작하도록 실제
-    저장소를 찾는다.
-    """
-    override = os.environ.get("PARKINGBOT_REPO")
-    if override:
-        return Path(override).expanduser()
-    # 저장소 안에서 직접 실행한 경우
-    if (HERE.parent / "ros2" / "cooperative_parking_robot").is_dir():
-        return HERE.parent
-    for candidate in (Path("~/parkingbot").expanduser(),
-                      Path.home() / "parkingbot"):
-        if (candidate / "ros2" / "cooperative_parking_robot").is_dir():
-            return candidate
-    # 못 찾으면 예전 동작을 유지한다. 오류 메시지가 경로를 알려준다.
-    return HERE.parent
-
-
-def config_path(args):
-    return Path(args.config or os.environ.get("PARKINGBOT_CONFIG", DEFAULT_CONFIG)).expanduser()
-
-
-def checked_config(args):
-    try:
-        config = load_env(config_path(args))
-    except ValueError as exc:
-        print(f"[BLOCKED] {exc}", file=sys.stderr)
-        raise SystemExit(2)
-    missing = missing_config(config)
-    if missing:
-        for key in missing:
-            print(f"[BLOCKED] {key} is not configured", file=sys.stderr)
-        raise SystemExit(2)
-    bad_paths = invalid_paths(config)
-    if bad_paths:
-        for key in bad_paths:
-            print(f"[BLOCKED] {key} must be an absolute path", file=sys.stderr)
-        raise SystemExit(2)
-    conditional = conditional_config_errors(config)
-    if conditional:
-        for reason in conditional:
-            print(f"[BLOCKED] {reason}", file=sys.stderr)
-        raise SystemExit(2)
-    return config
-
-
-def reachable(runner, config, role):
-    result = remote_run(runner, role_host(config, role), "true", timeout=7)
-    return result.returncode == 0
-
-
-def session_exists(runner, config, role):
-    result = remote_run(
-        runner, role_host(config, role), f"tmux has-session -t {SESSION}", timeout=7)
-    return result.returncode == 0
-
-
-def process_status(runner, config, role):
-    status = stack_process_status(runner, role_host(config, role))
-    status.update({
-        "role": role,
-        "launch_command": launch_command(config, role),
-    })
-    return status
-
-
-def manifest(config, role, launch):
-    workspace = role_workspace(config, role)
-    return (
-        "date --iso-8601=seconds; hostname; "
-        f"git -C {shlex.quote(workspace + '/src/cooperative_parking_robot')} branch --show-current; "
-        f"git -C {shlex.quote(workspace + '/src/cooperative_parking_robot')} rev-parse HEAD; "
-        f"git -C {shlex.quote(workspace + '/src/cooperative_parking_robot')} status --short; "
-        f"printf 'ROS_DOMAIN_ID=%s\\nRMW_IMPLEMENTATION=%s\\nlaunch=%s\\nworkspace=%s\\n' "
-        f"{shlex.quote(config['ROS_DOMAIN_ID'])} {shlex.quote(config['RMW_IMPLEMENTATION'])} "
-        f"{shlex.quote(launch)} {shlex.quote(workspace)}")
-
-
-def stack_launch_command(prefix, launch, remote_dir, log_name):
-    """Create a detached pane whose real exit code remains inspectable."""
-    log_path = f"{remote_dir}/{log_name}"
-    pane_body = (
-        "set -o pipefail; "
-        f"printf '%s\\n' \"$$\" > {remote_dir}/stack_shell.pid; "
-        f"({prefix} && {launch}) 2>&1 | tee -a {log_path}; "
-        "rc=${PIPESTATUS[0]}; "
-        f"printf 'returncode=%s\\nfinished_at=%s\\n' \"$rc\" "
-        f"\"$(date --iso-8601=seconds)\" > {remote_dir}/stack_exit.env; "
-        "exit \"$rc\"")
-    pane_command = "bash -lc " + shlex.quote(pane_body)
-    target = SESSION + ":stack.0"
-    return (
-        f"tmux new-session -d -s {SESSION} -n stack && "
-        f"tmux set-option -w -t {target} remain-on-exit on && "
-        f"tmux respawn-pane -k -t {target} {shlex.quote(pane_command)} && "
-        f"tmux display-message -p -t {target} '#{{pane_pid}}' > "
-        f"{remote_dir}/stack_pane.pid")
-
-
-def startup_conditions(data):
-    values = data["topics"]
-    return {
-        "Fleet manager": isinstance(values["fleet"], dict),
-        "Front state_machine": values["front_state"] is not None,
-        "Rear state_machine": values["rear_state"] is not None,
-        "cctv_merge": values["merge"] is not None,
-        "Rear ID0 camera/tracker": values["id0_marker"] is not None,
-        "Front hardware_ready": (
-            values["front_hw"] is True and values["front_state"] == "IDLE"),
-        "Rear hardware_ready": (
-            values["rear_hw"] is True and values["rear_state"] == "IDLE"),
-    }
-
-
-def startup_fatal_faults(data):
-    values = data["topics"]
-    faults = []
-    for role in ("front", "rear"):
-        state = values[f"{role}_state"]
-        status = values[f"{role}_hw_status"]
-        if state == "FAULT":
-            faults.append(
-                f"{role.upper()} hardware_ready=false "
-                f"({status or 'robot_state=FAULT'})")
-        elif isinstance(status, str) and status.startswith(("ERR,", "ESTOP")):
-            faults.append(
-                f"{role.upper()} hardware_ready=false ({status})")
-    return faults
-
-
-def report_startup_progress(data, previous):
-    conditions = startup_conditions(data)
-    values = data["topics"]
-    current = {}
-    for label, ok in conditions.items():
-        if ok:
-            rendered = "OK"
-        elif label.endswith("hardware_ready"):
-            role = label.split()[0].lower()
-            status = values[f"{role}_hw_status"]
-            rendered = f"WAIT:{status}" if status else "WAIT"
-        else:
-            rendered = "WAIT"
-        current[label] = rendered
-        if previous.get(label) != rendered:
-            prefix = "OK" if rendered == "OK" else "WAIT"
-            detail = ""
-            if rendered.startswith("WAIT:"):
-                detail = f" ({rendered.removeprefix('WAIT:')})"
-            print(f"[{prefix}] {label}{detail}", flush=True)
-    return current, conditions
-
-
-def incident_metadata(role, reason, data, process=None, config=None):
-    values = data.get("topics", {})
-    process = process or {}
-    return {
-        "role": role,
-        "reason": reason,
-        "pid": process.get("pid"),
-        "process_state": process.get("state"),
-        "process_alive": process.get("process_alive"),
-        "returncode": process.get("returncode"),
-        "probe_returncode": process.get("probe_returncode"),
-        "hardware_ready": values.get(f"{role}_hw") if role else None,
-        "robot_state": values.get(f"{role}_state") if role else None,
-        "motion_fault": values.get(f"{role}_fault") if role else None,
-        "timestamp": data.get("timestamp"),
-        "launch_command": (
-            process.get("launch_command") or
-            (launch_command(config, role) if config and role else None)),
-    }
-
-
-def start(args):
-    config = checked_config(args)
-    runner = Runner()
-    print("ParkingBot Production Start\n===========================\n")
-    protocol_errors = protocol_consistency_errors(repo_root())
-    if protocol_errors:
-        for error in protocol_errors:
-            print(f"[FAIL] protocol consistency: {error}")
-        return 1
-    if shutil.which("tmux") is None:
-        print("[FAIL] tmux is not installed on the control machine")
-        return 1
-    for role in ROLES:
-        if not reachable(runner, config, role):
-            print(f"[FAIL] {role.title()} host unreachable")
-            return 1
-        print(f"[OK] {role.title()} reachable")
-    running = [role for role in ROLES if session_exists(runner, config, role)]
-    if running:
-        print("\nProduction stack is already running.")
-        print("Use: robot_state | robot_restart | robot_stop")
-        return 2
-    # Check every deployment before starting the first process. A mixed
-    # firmware/bridge release fails without disrupting any running stack.
-    for role in ROLES:
-        remote_repository = (
-            role_workspace(config, role) + '/src/cooperative_parking_robot')
-        protocol_check = remote_run(
-            runner, role_host(config, role),
-            protocol_source_check_command(remote_repository), timeout=7)
-        if protocol_check.returncode:
-            print(
-                f"[FAIL] {role.title()} firmware/ROS protocol capability "
-                "mismatch")
-            return 1
-    run_dir = create_run_dir()
-    run_id = run_dir.name
-    processes = {}
-    head = subprocess.run(["git", "rev-parse", "HEAD"], text=True, capture_output=True).stdout.strip()
-    for role in ROLES:
-        remote_head = remote_run(
-            runner, role_host(config, role),
-            f"git -C {shlex.quote(role_workspace(config, role) + '/src/cooperative_parking_robot')} rev-parse HEAD",
-            timeout=7).stdout.strip()
-        if remote_head and head and remote_head != head:
-            print(f"[WARN] {role.title()} code revision differs\n  Controller: {head}\n  {role.title()}: {remote_head}")
-        launch = launch_command(config, role)
-        log_name = "cctv_server_dual.log" if role == "jetson" else f"{role}_robot.log"
-        remote_dir = f"$HOME/.ros/parkingbot_logs/{run_id}/{role}"
-        prefix = ros_prefix(config, role)
-        command = (
-            f"mkdir -p {remote_dir} $HOME/.ros/parkingbot_logs/{run_id}/incidents && "
-            f"ln -sfn {run_id} $HOME/.ros/parkingbot_logs/latest && "
-            f"({manifest(config, role, launch)}) > {remote_dir}/run_manifest.txt && "
-            + stack_launch_command(prefix, launch, remote_dir, log_name))
-        print(f"[START] {role.title()} production stack")
-        result = remote_run(runner, role_host(config, role), command, timeout=12)
-        if result.returncode:
-            print(f"[FAIL] {role.title()} start: {(result.stderr or result.stdout).strip()}")
-            stop_sessions(runner, config, publish_estop=False)
-            return 1
-        status = process_status(runner, config, role)
-        processes[role] = status
-        if status["state"] != "RUNNING":
-            print(
-                f"[FAIL] {role.title()} stack did not stay alive: "
-                f"{status['state']} returncode={status.get('returncode')}")
-            stop_sessions(runner, config, publish_estop=False)
-            return 1
-        print(f"[OK] {role.title()} stack pid={status['pid']}")
-        if (role == "rear" and
-                config["REAR_ENABLE_INTERNAL_CAMERA"].lower() == "false"):
-            camera_log = f"$HOME/.ros/parkingbot_logs/{run_id}/rear/rear_camera.log"
-            camera_command = (
-                ros_prefix(config, "rear") + " && " +
-                config["REAR_EXTERNAL_CAMERA_COMMAND"] +
-                f" 2>&1 | tee -a {camera_log}")
-            result = remote_run(
-                runner, role_host(config, "rear"),
-                f"tmux new-window -t {SESSION} -n rear-camera "
-                f"{shlex.quote(camera_command)}", timeout=10)
-            if result.returncode:
-                print("[FAIL] Rear external camera start")
-                stop_sessions(runner, config, publish_estop=False)
-                return 1
-    (run_dir / "run_manifest.txt").write_text(
-        f"run_id={run_id}\ncontroller_commit={head}\nconfig={config_path(args)}\n")
-    (run_dir / "state" / "processes.json").write_text(
-        json.dumps(processes, indent=2, ensure_ascii=False) + "\n")
-    print("\nWaiting for ROS graph...")
-    started_at = time.monotonic()
-    grace_until = started_at + 3.0
-    deadline = started_at + 120.0
-    data = None
-    previous = {}
-    conditions = {}
-    while time.monotonic() < deadline:
-        data = snapshot(config, timeout=6.0)
-        data["processes"] = processes
-        previous, conditions = report_startup_progress(data, previous)
-        fatal = startup_fatal_faults(data)
-        if fatal and time.monotonic() >= grace_until:
-            for reason in fatal:
-                print(f"[FAIL] {reason}")
-            role = "front" if fatal[0].startswith("FRONT") else "rear"
-            reason = f"{role.upper()}_STARTUP_HARDWARE_FAULT"
-            incident_snapshot(
-                run_dir, reason, data, config, runner,
-                incident_metadata(
-                    role, reason, data, processes.get(role), config))
-            print("Startup failed fast; processes remain available for robot_logs.")
-            return 1
-        if conditions and all(conditions.values()):
-            break
-        time.sleep(0.25)
-    if not conditions or not all(conditions.values()):
-        for label, ok in conditions.items():
-            if not ok:
-                print(f"[FAIL] {label}")
-        reason = "STARTUP_READINESS_TIMEOUT"
-        incident_snapshot(
-            run_dir, reason, data, config, runner,
-            incident_metadata(None, reason, data))
-        print("Startup graph incomplete; processes remain available for robot_logs.")
-        return 1
-    print("[START] State/log monitor")
-    monitor_cmd = (
-        f"{shlex.quote(str(Path(__file__).resolve()))} --config "
-        f"{shlex.quote(str(config_path(args)))} monitor")
-    subprocess.run([
-        "tmux", "new-session", "-d", "-s", SESSION + "-monitor",
-        monitor_cmd], check=False)
-    print("\nSystem started. Safety readiness remains visible in robot_state.")
-    print("Run:\n  robot_state\n  robot_logs\n  robot_stop")
-    return 0
-
-
-def stop_sessions(runner, config, publish_estop=True):
-    if publish_estop:
-        command = (ros_prefix(config, "jetson") +
-                   " && timeout 3 ros2 topic pub --once /emergency_stop std_msgs/msg/Bool '{data: true}'")
-        remote_run(runner, role_host(config, "jetson"), command, timeout=7)
-    for role in ("front", "rear", "jetson"):
-        print(f"[STOP] {role.title()}")
-        remote_run(runner, role_host(config, role), f"tmux kill-session -t {SESSION}", timeout=7)
-    subprocess.run(["tmux", "kill-session", "-t", SESSION + "-monitor"], capture_output=True)
-
-
-def stop(args):
-    config = checked_config(args)
-    # STM32 는 ESTOP 을 전원 재인가까지 latch 한다. 곧바로 다시 띄울 때는
-    # latch 를 남기면 새 세션이 시작하자마자 FAULT 로 떨어져 복구가 안 된다.
-    stop_sessions(Runner(), config,
-                  publish_estop=not getattr(args, "no_estop", False))
-    print("[OK] Production stack stopped")
-    print("Safety/STM32 ESTOP latches are not reset; MANUAL RESET MAY BE REQUIRED.")
-    return 0
-
-
-def state(args):
-    config = checked_config(args)
-    hosts = {}
-    runner = Runner()
-    hosts = {role: ("ONLINE" if reachable(runner, config, role) else "OFFLINE") for role in ROLES}
-    while True:
-        data = snapshot(config, hosts=hosts)
-        output = json.dumps(data, ensure_ascii=False, indent=2) if args.json else format_snapshot(data)
-        if args.watch and not args.json:
-            print("\033[2J\033[H", end="")
-        print(output, flush=True)
-        if not args.watch:
-            return 0 if not data["blockers"] else 1
-        time.sleep(1.0)
-
-
-def logs(args):
-    root = run_root()
-    latest = root / "latest"
-    if not latest.exists():
-        print("[BLOCKED] no production run logs found", file=sys.stderr)
-        return 2
-    target = latest.resolve()
-    print(f"Run: {target}")
-    roles = ROLES if args.component == "all" else (args.component,)
-    if args.follow and config_path(args).exists() and args.component != "sync":
-        config = load_env(config_path(args))
-        processes = []
-        try:
-            for role in roles:
-                name = ("cctv_server_dual.log" if role == "jetson"
-                        else f"{role}_robot.log")
-                remote_path = f"$HOME/.ros/parkingbot_logs/{target.name}/{role}/{name}"
-                command = (
-                    f"tail -n {max(1, args.lines)} -F {remote_path} | "
-                    f"sed -u 's/^/[{role.upper()}] /'")
-                processes.append(subprocess.Popen(remote_argv(
-                    role_host(config, role), command)))
-            return max(process.wait() for process in processes)
-        except KeyboardInterrupt:
-            for process in processes:
-                process.terminate()
-            return 130
-    paths = []
-    for role in roles:
-        if role == "sync":
-            path = target / "state" / "state_monitor.jsonl"
-            name = path.name
-        else:
-            name = "cctv_server_dual.log" if role == "jetson" else f"{role}_robot.log"
-            path = target / role / name
-        paths.append(path)
-        print(f"\n===== {role.upper()} =====")
-        if path.exists():
-            lines = path.read_text(errors="replace").splitlines()
-            selected = lines[-args.lines:]
-            print("\n".join(selected))
-        elif role != "sync" and config_path(args).exists():
-            config = load_env(config_path(args))
-            remote_path = f"$HOME/.ros/parkingbot_logs/{target.name}/{role}/{name}"
-            result = remote_run(
-                Runner(), role_host(config, role),
-                f"grep -Ei 'error|warn|fault|fatal|timeout|lost|reject' {remote_path} | tail -n 20; "
-                f"echo '--- RECENT ---'; tail -n {max(1, args.lines)} {remote_path}", timeout=8)
-            print(result.stdout if result.returncode == 0 else
-                  "remote log unavailable")
-        else:
-            print("log unavailable")
-    incidents = sorted((target / "incidents").glob("*"))
-    print(f"\nIncidents: {len(incidents)}" + (f" (latest {incidents[-1]})" if incidents else ""))
-    if args.follow:
-        existing = [str(path) for path in paths if path.exists()]
-        if existing:
-            return subprocess.run(["tail", "-F", *existing]).returncode
-        print("[BLOCKED] no local logs available to follow", file=sys.stderr)
-        return 2
-    return 0
-
-
-def doctor(args):
-    config = checked_config(args)
-    runner = Runner()
-    blockers = []
-    blockers.extend(
-        f"control: protocol consistency: {error}"
-        for error in protocol_consistency_errors(repo_root()))
-    if shutil.which("tmux") is None:
-        blockers.append("control: tmux missing")
-    if not Path(config["ROS_SETUP"]).is_file():
-        blockers.append("control: ROS setup missing")
-    if not Path(config["CONTROL_WORKSPACE"], "install/setup.bash").is_file():
-        blockers.append("control: workspace install missing")
-    for role in ROLES:
-        if not reachable(runner, config, role):
-            blockers.append(f"{role} host unreachable")
-            continue
-        workspace = role_workspace(config, role)
-        checks = [
-            ("command -v tmux >/dev/null", "tmux missing"),
-            (f"test -f {shlex.quote(config['ROS_SETUP'])}", "ROS setup missing"),
-            (f"test -f {shlex.quote(workspace + '/install/setup.bash')}", "workspace install missing"),
-            (f"test -f {shlex.quote(workspace + '/src/cooperative_parking_robot/launch/' + ('cctv_server_dual.launch.py' if role == 'jetson' else role + '_robot.launch.py'))}", "launch file missing"),
-            (ros_prefix(config, role) + " && ros2 pkg prefix cooperative_parking_robot >/dev/null", "ROS package unavailable"),
-            ("test \"$(timedatectl show -p NTPSynchronized --value 2>/dev/null)\" = yes", "clock not NTP synchronized"),
-            (protocol_source_check_command(
-                workspace + '/src/cooperative_parking_robot'),
-             "firmware/ROS protocol capability mismatch"),
-        ]
-        if role == "jetson":
-            checks.extend((
-                (f"test -e {shlex.quote(config['CAM0_DEVICE'])}", "CCTV0 device missing"),
-                (f"test -e {shlex.quote(config['CAM2_DEVICE'])}", "CCTV2 device missing"),
-                (f"test -f {shlex.quote(config['MODEL_PATH'])}", "vehicle model missing"),
-                ("test -f $HOME/.ros/adaptive_valet_bot/parking_layout.yaml", "runtime layout missing"),
-                ("test -f $HOME/.ros/adaptive_valet_bot/homography_cam0_rectified.npy", "CAM0 homography missing"),
-                ("test -f $HOME/.ros/adaptive_valet_bot/homography_cam2_rectified.npy", "CAM2 homography missing"),
-            ))
-        else:
-            checks.append((f"test -e {shlex.quote(config[role.upper() + '_SERIAL'])}", "STM32 serial missing"))
-            if role == "rear":
-                checks.append((f"test -f {shlex.quote(config['REAR_CALIB'])}", "Rear calibration missing"))
-        for command, reason in checks:
-            result = remote_run(runner, role_host(config, role), command, timeout=25)
-            if result.returncode:
-                blockers.append(f"{role}: {reason}")
-    print("READY" if not blockers else "BLOCKED")
-    for item in blockers:
-        print(f"- {item}")
-    return 0 if not blockers else 1
-
-
-def monitor(args):
-    config = checked_config(args)
-    root = run_root()
-    latest = root / "latest"
-    if not latest.exists():
-        return 2
-    run_dir = latest.resolve()
-    runner = Runner()
-    last_faults = set()
-    grace_until = time.monotonic() + 15.0
-    while True:
-        data = snapshot(config, timeout=1.2)
-        processes = {
-            role: process_status(runner, config, role) for role in ROLES}
-        data["processes"] = processes
-        with (run_dir / "state" / "state_monitor.jsonl").open("a") as stream:
-            stream.write(json.dumps(data, ensure_ascii=False) + "\n")
-        faults = set(data["blockers"])
-        process_incidents = {}
-        for role, status in processes.items():
-            # UNKNOWN covers SSH timeout/unreachable and SESSION_MISSING covers
-            # an externally removed tmux session. Neither proves a process
-            # crash. remain-on-exit makes EXITED authoritative.
-            if status["state"] == "EXITED":
-                faults.add(f"{role.upper()} PROCESS EXITED")
-                process_incidents[f"{role.upper()} PROCESS EXITED"] = (
-                    role, status)
-        for reason in sorted(faults - last_faults):
-            if (time.monotonic() >= grace_until and any(
-                    word in reason for word in
-                    ("FAULT", "SYNC:", "HARDWARE", "PROCESS EXITED"))):
-                if reason in process_incidents:
-                    role, status = process_incidents[reason]
-                elif reason.startswith("FRONT"):
-                    role, status = "front", processes["front"]
-                elif reason.startswith("REAR"):
-                    role, status = "rear", processes["rear"]
-                else:
-                    role, status = None, None
-                target = incident_snapshot(
-                    run_dir, reason, data, config, runner,
-                    incident_metadata(role, reason, data, status, config))
-                for role in ROLES:
-                    name = ("cctv_server_dual.log" if role == "jetson"
-                            else f"{role}_robot.log")
-                    remote_path = f"$HOME/.ros/parkingbot_logs/{run_dir.name}/{role}/{name}"
-                    result = remote_run(
-                        runner, role_host(config, role),
-                        f"tail -n 200 {remote_path}", timeout=8)
-                    (target / f"{role}_tail.log").write_text(
-                        result.stdout + result.stderr)
-        # Faults first observed during discovery grace must still create one
-        # incident when grace expires; do not mark them handled prematurely.
-        last_faults = faults if time.monotonic() >= grace_until else set()
-        time.sleep(2.0)
-
-
-def main():
-    parser = argparse.ArgumentParser(prog="robotctl")
-    parser.add_argument("--config")
-    sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("start", "restart", "doctor", "monitor"):
-        sub.add_parser(name)
-    stop_parser = sub.add_parser("stop")
-    stop_parser.add_argument(
-        "--no-estop", action="store_true",
-        help="ESTOP latch 를 남기지 않고 세션만 내린다 (바로 재시작할 때)")
-    state_parser = sub.add_parser("state")
-    state_parser.add_argument("-w", "--watch", action="store_true")
-    state_parser.add_argument("--json", action="store_true")
-    logs_parser = sub.add_parser("logs")
-    logs_parser.add_argument("component", nargs="?", choices=("all", *ROLES, "sync"), default="all")
-    logs_parser.add_argument("-f", "--follow", action="store_true")
-    logs_parser.add_argument("-n", "--lines", type=int, default=80)
+def normalized_argv() -> list[str]:
     argv = sys.argv[1:]
     invoked = Path(sys.argv[0]).name
     if invoked.startswith("robot_") and invoked != "robotctl":
         argv.insert(0, invoked.removeprefix("robot_"))
-    args = parser.parse_args(argv)
-    if args.command == "restart":
-        args.no_estop = True
-        code = stop(args)
-        return code or start(args)
-    return globals()[args.command](args)
+    return argv
+
+
+def selected_command(argv: list[str]) -> str | None:
+    skip_next = False
+    for token in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if token == "--config":
+            skip_next = True
+            continue
+        if token.startswith("--config="):
+            continue
+        if not token.startswith("-"):
+            return token
+    return None
+
+
+def selected_config_path(argv: list[str]) -> Path:
+    for index, token in enumerate(argv):
+        if token == "--config" and index + 1 < len(argv):
+            return Path(argv[index + 1]).expanduser()
+        if token.startswith("--config="):
+            return Path(token.split("=", 1)[1]).expanduser()
+    return Path(os.environ.get("PARKINGBOT_CONFIG", DEFAULT_CONFIG)).expanduser()
+
+
+def checked_config(path: Path) -> dict[str, str]:
+    config = load_env(path)
+    errors = []
+    errors.extend(f"{key} is not configured" for key in missing_config(config))
+    errors.extend(
+        f"{key} must be an absolute path" for key in invalid_paths(config))
+    errors.extend(conditional_config_errors(config))
+    if errors:
+        raise ValueError("\n".join(errors))
+    return config
+
+
+def core_argv(argv: list[str]) -> list[str]:
+    return [str(CORE), *argv]
+
+
+def run_core(
+        argv: list[str], config: dict[str, str], *,
+        repository_cwd: bool = False) -> int:
+    cwd = None
+    if repository_cwd:
+        cwd = Path(config["CONTROL_WORKSPACE"]) / "src/cooperative_parking_robot"
+    return subprocess.run(core_argv(argv), cwd=cwd).returncode
+
+
+def write_yaw_result(payload: dict) -> None:
+    latest = run_root() / "latest"
+    if not latest.exists():
+        return
+    target = latest.resolve() / "state/id0_yaw_preflight.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+
+
+def print_revision_failure(status: dict) -> None:
+    print("[BLOCKED] production code revision preflight failed", file=sys.stderr)
+    for error in status["errors"]:
+        print(f"- {error}", file=sys.stderr)
+
+
+def check_revisions(config: dict[str, str]) -> bool:
+    status = revision_status(config, runner=_RunnerAdapter())
+    if status["ok"]:
+        print(f"[OK] all deployment revisions match {status['controller_head']}")
+        return True
+    print_revision_failure(status)
+    return False
+
+
+def run_id0_check(config: dict[str, str]) -> int:
+    print(
+        "[CHECK] Keep both robots stationary and position them so the Rear "
+        "camera continuously sees Front marker ID0.")
+    result = run_id0_yaw_preflight(config, runner=_RunnerAdapter())
+    write_yaw_result(result)
+    if result.get("passed"):
+        print(
+            "[OK] ID0 yaw stable | "
+            f"samples={result.get('sample_count')} "
+            f"visible={result.get('visible_ratio'):.2f} "
+            f"std={result.get('std_deg'):.2f}deg "
+            f"peak={result.get('max_deviation_deg'):.2f}deg "
+            f"step={result.get('max_step_deg'):.2f}deg")
+        return 0
+    print(
+        "[BLOCKED] ID0 yaw check failed: "
+        f"{result.get('reason', 'UNKNOWN')}", file=sys.stderr)
+    print(json.dumps(result, ensure_ascii=False), file=sys.stderr)
+    return 1
+
+
+def main() -> int:
+    argv = normalized_argv()
+    command = selected_command(argv)
+    if command is None:
+        return subprocess.run(core_argv(argv)).returncode
+
+    config_path = selected_config_path(argv)
+    try:
+        config = checked_config(config_path)
+    except ValueError as exc:
+        print(f"[BLOCKED] {exc}", file=sys.stderr)
+        return 2
+
+    if command == "doctor":
+        core_result = run_core(argv, config, repository_cwd=True)
+        return core_result if check_revisions(config) else 1
+
+    if command in ID0_COMMANDS:
+        if not check_revisions(config):
+            return 1
+        return run_id0_check(config)
+
+    if command not in GUARDED_COMMANDS:
+        return run_core(argv, config)
+
+    if not check_revisions(config):
+        return 1
+    result = run_core(argv, config, repository_cwd=True)
+    if result == 0:
+        print(
+            "[NEXT] HOME 배치에서는 ID0가 보이지 않을 수 있습니다. "
+            "협동 시험 전 두 로봇을 정렬한 뒤 robot_id0_check를 실행하세요.")
+    return result
+
+
+class _RunnerAdapter:
+    """Use subprocess with the same bounded result contract as parkingbot_ops."""
+
+    def run(self, argv, *, timeout=10, check=False):
+        try:
+            return subprocess.run(
+                argv, text=True, capture_output=True,
+                timeout=timeout, check=check)
+        except subprocess.TimeoutExpired as exc:
+            return subprocess.CompletedProcess(
+                argv, returncode=124,
+                stdout=(exc.stdout or "") if isinstance(exc.stdout, str) else "",
+                stderr=f"timeout after {timeout}s")
 
 
 if __name__ == "__main__":

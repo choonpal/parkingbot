@@ -147,8 +147,8 @@ def generate_launch_description():
         # 카메라
         # ============================================================
         DeclareLaunchArgument(
-            'enable_opencv_camera', default_value='false',
-            description='true면 이 패키지가 두 카메라를 cv2로 단독 점유'),
+            'enable_opencv_camera', default_value='true',
+            description='이 패키지가 두 카메라를 cv2로 단독 점유'),
         DeclareLaunchArgument(
             'camera0_device', default_value=CAM0_DEVICE_DEFAULT,
             description='cam0 persistent V4L by-path; takes priority over ID'),

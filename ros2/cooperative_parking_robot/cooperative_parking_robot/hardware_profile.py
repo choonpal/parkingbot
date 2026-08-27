@@ -5,6 +5,11 @@
 시험하더라도 실측 축 보정이 역할과 함께 뒤집히지 않아야 한다.
 """
 
+from cooperative_parking_robot.uart_protocol import (
+    SERVO_PULSE_MAX_US,
+    SERVO_PULSE_MIN_US,
+)
+
 
 COMMAND_SIGN_BY_PROFILE = {
     # ROS REP-103 (x forward, y left, yaw CCW) -> 각 기체 STM32 속도축.
@@ -17,6 +22,13 @@ COMMAND_SIGN_BY_PROFILE = {
 DEFAULT_PROFILE_BY_ROLE = {
     'front': 'robot-2',
     'rear': 'robot-1',
+}
+
+# STM32 firmware의 profile별 open pulse.  서보는 각도 feedback이
+# 없으므로 bridge startup attach에서 사용할 명시적 기준값이다.
+SERVO_ATTACH_PULSE_US_BY_PROFILE = {
+    'robot-1': (SERVO_PULSE_MIN_US, SERVO_PULSE_MAX_US),
+    'robot-2': (SERVO_PULSE_MAX_US, SERVO_PULSE_MIN_US),
 }
 
 
@@ -37,5 +49,13 @@ def command_sign_for(profile):
     """ROS 명령축과 STM32/encoder 축 사이의 부호 변환을 반환한다."""
     try:
         return COMMAND_SIGN_BY_PROFILE[profile]
+    except KeyError as exc:
+        raise ValueError(f'unknown hardware profile: {profile}') from exc
+
+
+def servo_attach_pulses_for(profile):
+    """Return startup servo pulses for a physical hardware profile."""
+    try:
+        return SERVO_ATTACH_PULSE_US_BY_PROFILE[profile]
     except KeyError as exc:
         raise ValueError(f'unknown hardware profile: {profile}') from exc

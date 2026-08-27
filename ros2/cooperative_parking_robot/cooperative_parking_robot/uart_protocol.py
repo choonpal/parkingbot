@@ -3,6 +3,7 @@
 
 RPi → STM32 (기존 단일문자 시험 명령과 충돌하지 않도록 @ prefix 사용)
   @V,vx,vy,w
+  @S,attach,pulse1_us,pulse2_us
   @S,grip | @S,release
   @HB,timestamp
   @ESTOP
@@ -21,6 +22,12 @@ ultrasonic_edge_node에서 수행한다.
 """
 
 
+# STM32 BAD_SERVO_ATTACH guard와 동일한 hobby-servo pulse 계약.
+# 실차 open pulse가 이 범위의 양끝을 사용한다.
+SERVO_PULSE_MIN_US = 400
+SERVO_PULSE_MAX_US = 2600
+
+
 class UartProtocol:
     ULTRASONIC_SIDE = {'L': 'left', 'R': 'right'}
 
@@ -31,6 +38,19 @@ class UartProtocol:
         if action not in ('grip', 'release'):
             raise ValueError("servo action must be 'grip' or 'release'")
         return f"@S,{action}\n"
+
+    def encode_servo_attach(self, pulse1, pulse2):
+        """STM32 servo RAM 기준값을 RPi가 알고 있는 pulse로 동기화한다."""
+        pulses = (pulse1, pulse2)
+        if any(isinstance(pulse, bool) or not isinstance(pulse, int)
+               for pulse in pulses):
+            raise ValueError('servo attach pulses must be integers')
+        if any(not SERVO_PULSE_MIN_US <= pulse <= SERVO_PULSE_MAX_US
+               for pulse in pulses):
+            raise ValueError(
+                'servo attach pulses must be between '
+                f'{SERVO_PULSE_MIN_US} and {SERVO_PULSE_MAX_US} us')
+        return f"@S,attach,{pulse1},{pulse2}\n"
 
     def encode_heartbeat(self, timestamp):
         return f"@HB,{timestamp:.3f}\n"

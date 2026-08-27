@@ -5,14 +5,19 @@
 extern "C" {
 #endif
 
-/* 두 실차가 mirror 구조라 서보 안전 범위가 다르다.
- * CubeIDE의 C/C++ Build > Settings > MCU GCC Compiler > Preprocessor에서
- * PARKING_ROBOT_PROFILE을 1(front/robot-2) 또는 2(rear/robot-1)로 지정한다. */
+/* 두 실차가 mirror 구조라 서보 안전 범위와 뒤쪽 encoder mapping이 다르다.
+ * Production binary에는 반드시 profile을 명시한다. 무지정 build를 Front로
+ * 간주하면 같은 image를 Rear에 flash하는 사고를 compiler가 막을 수 없다. */
 #define PARKING_ROBOT_PROFILE_FRONT 1
 #define PARKING_ROBOT_PROFILE_REAR  2
 
 #ifndef PARKING_ROBOT_PROFILE
-#define PARKING_ROBOT_PROFILE PARKING_ROBOT_PROFILE_FRONT
+#error "PARKING_ROBOT_PROFILE must be explicitly defined as FRONT(1) or REAR(2)"
+#endif
+
+#if PARKING_ROBOT_PROFILE != PARKING_ROBOT_PROFILE_FRONT && \
+    PARKING_ROBOT_PROFILE != PARKING_ROBOT_PROFILE_REAR
+#error "PARKING_ROBOT_PROFILE must be FRONT(1) or REAR(2)"
 #endif
 
 void Robot_Init(void);

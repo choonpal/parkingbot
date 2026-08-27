@@ -74,10 +74,28 @@ export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 
 ## 2. STM32 플래시와 전기 안전
 
-플래시 대상은 `stm32/parking_robot` 하나다. CubeIDE에서 Existing Projects
-into Workspace로 import하고, `parking_robot_firmware.c`가 포함된 ARM build가
-성공하는지 확인한 뒤 메인 전원을 끈 상태로 두 보드에 플래시한다. 로봇 공통
-전원이 필요한 검증은 모든 바퀴를 견고하게 띄운 뒤 수행하고, UART 115200 8N1의
+authoritative source는 `stm32/parking_robot` 하나지만 flash image는 로봇별로
+다르다. 서보 OPEN/GRIP/MIN/MAX와 RL/RR encoder timer mapping이 compile-time
+profile에 들어 있으므로 같은 `.bin`을 양쪽 보드에 사용하지 않는다. 저장소
+루트에서 두 production image를 명시적으로 빌드한다.
+
+```bash
+export ARM_NONE_EABI_ROOT=/path/to/gcc-arm-none-eabi
+tools/build_stm32_firmware.sh all
+sha256sum stm32/parking_robot/build/production/artifacts/parking_robot_*.bin
+```
+
+- Front/robot-2 STM32: `parking_robot_front.bin`만 flash한다.
+- Rear/robot-1 STM32: `parking_robot_rear.bin`만 flash한다.
+
+빌드 script는 profile 없는 generic image를 만들지 않으며, source header도
+`PARKING_ROBOT_PROFILE`이 없으면 compile을 거부한다. CubeIDE를 사용할 때도
+Front configuration에는 `PARKING_ROBOT_PROFILE=1`, Rear configuration에는
+`PARKING_ROBOT_PROFILE=2`를 명시하고 산출물 이름을 역할별로 분리한다. 어느
+방식이든 flash 전 파일명, SHA256, 대상 로봇 label을 함께 대조한다.
+
+메인 전원을 끈 상태로 각 보드에 해당 image를 flash한다. 로봇 공통 전원이
+필요한 검증은 모든 바퀴를 견고하게 띄운 뒤 수행하고, UART 115200 8N1의
 heartbeat/ACK, encoder와 ultrasonic frame을 먼저 확인한다.
 
 펌웨어 소스의 현재 `ENCODER_PPR`은 `5182.0f`지만 운용값으로 고정해 믿지 않는다.

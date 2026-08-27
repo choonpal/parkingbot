@@ -12,4 +12,5 @@
 
 # STM32CubeIDE local build/index files
 /stm32/parking_robot/Debug/
+/stm32/parking_robot/build/
 /stm32/parking_robot/.settings/language.settings.xml

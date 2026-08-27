@@ -23,15 +23,30 @@
 
 ## 로봇 프로필
 
-`parking_robot_firmware.h`의 `PARKING_ROBOT_PROFILE`로 선택한다.
+`parking_robot_firmware.h`의 compile-time `PARKING_ROBOT_PROFILE`로 선택한다.
+이 값은 서보 pulse뿐 아니라 Rear-left/Rear-right encoder timer mapping도
+선택하므로 두 로봇이 같은 binary를 사용할 수 없다.
 
 | 값 | 대상 | Servo 1 범위 | Servo 2 범위 |
 |---:|---|---:|---:|
 | 1 | front / robot-2 / ArUco 장착 | 1550~2600 us | 400~1450 us |
 | 2 | rear / robot-1 | 400~1600 us | 1400~2600 us |
 
-기본값은 1이다. Rear 바이너리를 만들 때 compiler preprocessor define에
-`PARKING_ROBOT_PROFILE=2`를 추가한다.
+기본값은 없다. profile을 지정하지 않거나 1/2 이외 값을 지정하면 compiler가
+실패한다. Production 산출물은 저장소 루트에서 다음처럼 명시적으로 만든다.
+
+```bash
+export ARM_NONE_EABI_ROOT=/path/to/gcc-arm-none-eabi
+tools/build_stm32_firmware.sh all
+```
+
+- Front/robot-2: `stm32/parking_robot/build/production/artifacts/parking_robot_front.bin`
+- Rear/robot-1: `stm32/parking_robot/build/production/artifacts/parking_robot_rear.bin`
+
+`front`, `rear`, `all` 중 하나를 반드시 인자로 주어야 하며 generic firmware
+target은 제공하지 않는다. CubeIDE를 사용할 때도 각 build configuration에 각각
+`PARKING_ROBOT_PROFILE=1` 또는 `PARKING_ROBOT_PROFILE=2`를 명시하고 출력 파일을
+역할별로 구분해야 한다.
 
 ## UART 호환 방식
 

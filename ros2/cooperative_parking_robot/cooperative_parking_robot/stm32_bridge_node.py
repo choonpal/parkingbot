@@ -246,7 +246,7 @@ class Stm32BridgeNode(Node):
                                  self.grip_cb, 10)
         self.create_subscription(
             TwistStamped, f'/{self.role}/manual_cmd_vel',
-            self.manual_cmd_vel_cb, 10)
+            self.manual_cmd_vel_cb, CMD_VEL_QOS)
         self.create_subscription(
             String, f'/{self.role}/manual_grip_command',
             self.manual_grip_cb, 10)

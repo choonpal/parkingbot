@@ -11,6 +11,7 @@
 | [실차 탑재·실행 Runbook](REAL_ROBOT_DEPLOYMENT_RUNBOOK.md) | 설치, 분산 기동, UI, 복구의 기준 절차 |
 | [실차 준비도](REAL_WORLD_READINESS.md) | 현재 검증 범위와 GO/NO-GO |
 | [배포 Pipeline](pipeline.md) | calibration, Homography, preflight 흐름 |
+| [기능별 소프트웨어 테스트](../ros2/cooperative_parking_robot/docs/FEATURE_TEST_GUIDE.md) | 가짜 입력 통합 테스트와 강체 키보드 시험 진입점 |
 | [프로젝트 용어](../CONTEXT.md) | 미션·슬롯·Registry 공통 언어 |
 | [하드웨어 문서](our_robot/README.md) | BOM, 배선, 실기 시험 기록 |
 | [ADR](adr/) | 설계 결정과 변경 이유 |

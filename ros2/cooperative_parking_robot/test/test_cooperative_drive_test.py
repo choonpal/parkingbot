@@ -96,6 +96,8 @@ def test_real_test_launches_do_not_start_production_motion_stack():
     assert "'height', default_value='720'" in rear
     assert "'marker_size_m', default_value='0.10'" in rear
     assert "'aruco_every_n': 2" in rear
+    assert "'preview_enable_aruco', default_value='false'" in rear
+    assert "'enable_aruco': _bool('preview_enable_aruco')" in rear
     assert "'aruco_min_marker_distance_rate', default_value='0.02'" in rear
     assert "'min_marker_distance_rate': _float(" in rear
     for forbidden in (

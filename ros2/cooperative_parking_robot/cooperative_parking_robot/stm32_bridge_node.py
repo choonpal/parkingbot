@@ -31,6 +31,7 @@ from collections import deque
 import json
 import math
 import secrets
+import signal
 import threading
 import time
 
@@ -84,6 +85,10 @@ class Stm32BridgeNode(Node):
         self.declare_parameter('hardware_profile', 'auto')
         self.declare_parameter('serial_port', '/dev/ttyACM0')
         self.declare_parameter('serial_baud', 115200)
+        # Nucleo ST-Link VCP는 serial open/DTR 전환 직후 MCU가 재시작될 수 있다.
+        # 이 구간에 framed 명령이 겹치면 부분 frame/legacy byte가 RX queue를
+        # 오염시킬 수 있으므로 입력을 비운 뒤에만 첫 HELLO를 보낸다.
+        self.declare_parameter('serial_startup_settle_s', 0.50)
         self.declare_parameter('enable_serial', True)
         self.declare_parameter('require_serial', False)
         # BOM의 100 mm 메카넘 휠 기준 명목 반경. 실물 유효반경은 실측 후 갱신.
@@ -186,6 +191,10 @@ class Stm32BridgeNode(Node):
         if self.serial_baud != UART_BAUD_RATE:
             raise ValueError(
                 f'serial_baud must match firmware ({UART_BAUD_RATE})')
+        self.serial_startup_settle = float(
+            self.get_parameter('serial_startup_settle_s').value)
+        if not 0.0 <= self.serial_startup_settle <= 5.0:
+            raise ValueError('serial_startup_settle_s must be in [0,5]')
         self.ultrasonic_min_range = float(
             self.get_parameter('ultrasonic_min_range_m').value)
         self.ultrasonic_max_range = float(
@@ -289,6 +298,8 @@ class Stm32BridgeNode(Node):
         # 반환할 수 있으므로 직접 byte buffer를 유지한다.
         self.rx_buffer = bytearray()
         self.max_rx_buffer = 4096
+        self.serial_ready_at = time.monotonic()
+        self.serial_input_drained = True
 
         # ===== 시리얼 연결 =====
         self.ser = None
@@ -315,6 +326,10 @@ class Stm32BridgeNode(Node):
                     write_timeout=0.05,
                     exclusive=True)
                 self.ser.reset_input_buffer()
+                self.serial_ready_at = (
+                    time.monotonic() + self.serial_startup_settle)
+                self.hello_started_at = self.serial_ready_at
+                self.serial_input_drained = False
                 self.get_logger().info(f'[{self.role}] STM32 연결')
             except Exception as e:
                 self.get_logger().error(f'STM32 연결 실패: {e}')
@@ -333,7 +348,7 @@ class Stm32BridgeNode(Node):
                                  self.grip_cb, 10)
         self.create_subscription(
             TwistStamped, f'/{self.role}/manual_cmd_vel',
-            self.manual_cmd_vel_cb, 10)
+            self.manual_cmd_vel_cb, CMD_VEL_QOS)
         self.create_subscription(
             String, f'/{self.role}/manual_grip_command',
             self.manual_grip_cb, 10)
@@ -557,13 +572,28 @@ class Stm32BridgeNode(Node):
         """종료 직전 0 속도를 보낸다. 실패해도 종료를 막지 않는다."""
         if self.ser is None:
             return
+        sent = False
         try:
             self.tx_scheduler.discard_non_emergency()
-            self._write(self.protocol.encode_velocity(0.0, 0.0, 0.0),
-                        kind='safety_stop', priority=P0_EMERGENCY)
-            self.get_logger().info(f'[{self.role}] 종료 — 0 속도 전송')
+            sent = self._write(
+                self.protocol.encode_velocity(0.0, 0.0, 0.0),
+                kind='safety_stop', priority=P0_EMERGENCY)
+        except KeyboardInterrupt:
+            return
         except Exception as exc:
-            self.get_logger().warn(f'[{self.role}] 종료 정지 전송 실패: {exc}')
+            try:
+                self.get_logger().warn(
+                    f'[{self.role}] 종료 정지 전송 실패: {exc}')
+            except (Exception, KeyboardInterrupt):
+                pass
+            return
+        if sent:
+            try:
+                self.get_logger().info(f'[{self.role}] 종료 — 0 속도 전송')
+            except (Exception, KeyboardInterrupt):
+                # launch/timeout이 SIGINT를 연속 전달해도 이미 보낸 zero와
+                # 뒤이은 serial close가 traceback 때문에 건너뛰면 안 된다.
+                pass
 
     def estop_cb(self, msg):
         if msg.data and not self.estop_latched:
@@ -632,9 +662,12 @@ class Stm32BridgeNode(Node):
                 (self.active_fault and not (
                     self.communication_recovering or
                     self.communication_recovered)) or
-                self.transport_fault):
+                self.transport_fault or
+                not getattr(self, 'serial_input_drained', True)):
             return
         now = time.monotonic()
+        if now < getattr(self, 'serial_ready_at', 0.0):
+            return
         if (self.last_hello_request_time is not None and
                 now - self.last_hello_request_time < self.hello_retry_interval):
             return
@@ -865,6 +898,25 @@ class Stm32BridgeNode(Node):
         """UART byte stream을 newline 단위로 조립해 완전한 프레임만 파싱한다."""
         if not self.ser:
             return
+        now = time.monotonic()
+        if now < getattr(self, 'serial_ready_at', 0.0):
+            # 부팅 중의 부분 telemetry/boot noise가 정상 프로토콜 frame으로
+            # 오인되지 않게 버린다. 이 구간에는 아직 어떤 명령도 보내지 않는다.
+            try:
+                self.ser.reset_input_buffer()
+            except Exception as exc:
+                self._latch_transport_fault('ERR,UART_READ', str(exc))
+            self.rx_buffer.clear()
+            return
+        if not getattr(self, 'serial_input_drained', True):
+            try:
+                self.ser.reset_input_buffer()
+            except Exception as exc:
+                self._latch_transport_fault('ERR,UART_READ', str(exc))
+                return
+            self.rx_buffer.clear()
+            self.serial_input_drained = True
+            return
         try:
             waiting = int(self.ser.in_waiting)
             if waiting > 0:
@@ -1081,12 +1133,16 @@ class Stm32BridgeNode(Node):
             'HELLO_REQUIRED', 'HEARTBEAT_REQUIRED', 'COMMAND_REQUIRED',
             'STARTUP_SEQUENCE', 'BAD_HELLO', 'BAD_HEARTBEAT_TOKEN',
             'BAD_VELOCITY', 'BAD_ZERO_PROBE', 'BAD_V_FRAME',
-            'RX_QUEUE_OVERFLOW', 'UNKNOWN_COMMAND', 'SERVO_TIMEOUT'}
-        if not self.hello_acknowledged and code in communication_timeouts:
+            'RX_QUEUE_OVERFLOW', 'UART_RX_ERROR', 'UNKNOWN_COMMAND',
+            'SERVO_TIMEOUT'}
+        startup_protocol_faults = {
+            'RX_QUEUE_OVERFLOW', 'UART_RX_ERROR', 'UNKNOWN_COMMAND'}
+        if (not self.hello_acknowledged and
+                code in communication_timeouts | startup_protocol_faults):
             if code not in self.previous_session_faults:
                 self.previous_session_faults.append(code)
             self.get_logger().warn(
-                f'[{self.role}] 이전 communication session fault 격리: {code}')
+                f'[{self.role}] startup 이전 communication fault 격리: {code}')
             return
 
         status = f'ERR,{code}'
@@ -1286,12 +1342,16 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        # ros2 launch가 child에도 SIGINT를 전달할 수 있다. 첫 종료 신호 뒤
+        # cleanup 중 중복 SIGINT가 zero/serial close를 끊지 못하게 한다.
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
         # 브리지가 사라지면 STM32 는 명령/heartbeat 를 못 받아 watchdog 으로
         # 멈춘다. 그 전에 0 속도를 명시적으로 보내 관성 주행을 없앤다.
         # ESTOP 은 보내지 않는다. latch 되면 전원 재인가 전까지 못 푼다.
         node.shutdown_stop()
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

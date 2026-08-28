@@ -345,19 +345,12 @@ def test_embedded_page_javascript_parses():
     assert done.returncode == 0, f'내장 JS 문법 오류:\n{done.stderr}'
 
 
-def test_disabled_yolo_does_not_validate_unused_camera_labels():
+def test_non_internal_detection_does_not_validate_unused_camera_labels():
     with open(SOURCE, encoding='utf-8') as handle:
         source = handle.read()
-    mission_guard = (
-        "if self.enable_yolo and self.yolo_switch_mode == "
-        "'mission' and stray:"
-    )
-    region_guard = (
-        "if self.enable_yolo and self.yolo_switch_mode == "
-        "'region' and unknown:"
-    )
-    assert mission_guard in source
-    assert region_guard in source
+    assert "self.detection_source == 'internal'" in source
+    assert "self.yolo_switch_mode == 'mission' and stray" in source
+    assert "self.yolo_switch_mode == 'region' and unknown" in source
 
 
 # ------------------------------------------------- 구역을 카메라 화면에 되짚기

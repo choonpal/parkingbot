@@ -57,6 +57,10 @@ class ArucoTrackerNode(Node):
         self.declare_parameter('yaw_sign', 1.0)
         self.declare_parameter('allow_uncalibrated', False)
         self.declare_parameter('gray_gain', 1.0)
+        # ID0 is printed inside a close white mounting-board edge. OpenCV's
+        # 0.05 default can suppress the real marker as a near-duplicate of
+        # that outer quadrilateral at 720p.
+        self.declare_parameter('min_marker_distance_rate', 0.02)
 
         self.marker_id = self.get_parameter('marker_id').value
         self.marker_size = self.get_parameter('marker_size_m').value
@@ -159,7 +163,10 @@ class ArucoTrackerNode(Node):
 
     def _setup_aruco(self):
         dict_name = self.get_parameter('aruco_dict').value
-        self.detector = ArucoDetectorCompat(cv2, dict_name)
+        self.detector = ArucoDetectorCompat(
+            cv2, dict_name,
+            min_marker_distance_rate=float(self.get_parameter(
+                'min_marker_distance_rate').value))
 
     def image_cb(self, msg):
         frame = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
@@ -224,7 +231,8 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     node.destroy_node()
-    rclpy.shutdown()
+    if rclpy.ok():
+        rclpy.shutdown()
 
 
 if __name__ == '__main__':

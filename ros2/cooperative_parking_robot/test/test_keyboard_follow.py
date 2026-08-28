@@ -10,6 +10,10 @@ from cooperative_parking_robot.keyboard_follow_core import (
     follow_pair_commands,
     median_relative_pose,
 )
+from cooperative_parking_robot.rigid_pair_teleop_core import (
+    relative_pose_is_stable,
+    relative_pose_step_is_plausible,
+)
 
 
 def test_aruco_reference_is_captured_exactly_without_geometry_offset():
@@ -43,6 +47,47 @@ def test_three_pose_median_preserves_sustained_yaw_change_and_wraparound():
         (0.21, 0.0, math.radians(178.0)),
     ])
     assert abs(math.degrees(wrapped[2])) == pytest.approx(179.0)
+
+
+def test_impossible_pnp_pose_jump_is_rejected_before_the_median_filter():
+    baseline = (0.376, 0.015, math.radians(1.0))
+    assert relative_pose_step_is_plausible(
+        baseline, (0.379, 0.014, math.radians(2.0)))
+    assert not relative_pose_step_is_plausible(
+        baseline, (0.376, 0.015, math.radians(7.3)))
+    assert not relative_pose_step_is_plausible(
+        baseline, (0.401, 0.015, math.radians(1.0)))
+
+
+def test_pose_step_plausibility_handles_yaw_wraparound():
+    assert relative_pose_step_is_plausible(
+        (0.30, 0.0, math.radians(179.0)),
+        (0.30, 0.0, math.radians(-179.0)))
+
+
+def test_measured_720p_yaw_noise_is_stable_but_large_jump_is_rejected():
+    samples = [
+        (0.2135, 0.0217, math.radians(-2.36)),
+        (0.2134, 0.0218, math.radians(-1.58)),
+        (0.2133, 0.0217, math.radians(-0.28)),
+    ]
+    assert relative_pose_is_stable(
+        samples, yaw_span_rad=math.radians(3.0))
+    assert relative_pose_step_is_plausible(
+        samples[-1], (0.2134, 0.0217, math.radians(4.5)),
+        yaw_step_rad=math.radians(5.0))
+    assert not relative_pose_step_is_plausible(
+        samples[-1], (0.2134, 0.0217, math.radians(8.0)),
+        yaw_step_rad=math.radians(5.0))
+
+    source = (
+        Path(__file__).parents[1]
+        / 'cooperative_parking_robot/keyboard_follow_node.py'
+    ).read_text(encoding='utf-8')
+    assert "'relative_stable_yaw_span_deg', 3.0" in source
+    assert "'relative_stable_window_s', 0.75" in source
+    assert 'self.relative_stable_window < self.marker_timeout' in source
+    assert "'relative_outlier_yaw_step_deg', 5.0" in source
 
 
 def test_keyboard_web_uses_fixed_repeat_and_keyup_stop():
@@ -149,7 +194,7 @@ def test_rear_launch_exposes_separately_conditioned_controller_modes():
         / 'launch/cooperative_drive_test_rear.launch.py'
     ).read_text(encoding='utf-8')
     assert "'enable_drive_test_dashboard', default_value='true'" in launch_text
-    assert "'enable_keyboard_follow', default_value='false'" in launch_text
-    assert "executable='keyboard_follow'" in launch_text
-    assert "LaunchConfiguration('enable_keyboard_follow')" in launch_text
+    assert "'enable_rigid_pair_teleop', default_value='false'" in launch_text
+    assert "executable='rigid_pair_teleop'" in launch_text
+    assert "LaunchConfiguration('enable_rigid_pair_teleop')" in launch_text
     assert "LaunchConfiguration('enable_drive_test_dashboard')" in launch_text

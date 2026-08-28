@@ -1,84 +1,220 @@
-# robot-2 키보드 · robot-1 ArUco 추종 시험
+# 강체 쌍 키보드 주행 빠른 가이드
 
-이 모드는 robot-2를 기준으로 키보드에서 전후·횡·회전을 입력하면 robot-1이
-함께 움직이면서 두 로봇의 ArUco 상대 자세를 유지하는 빈 차체 시험이다. 전체
-주차 상태기계, 그리퍼, 차량 하중 제어는 실행하지 않는다.
+robot-2 **Front**와 robot-1 **Rear**를 ArUco로 정렬한 뒤, 두 로봇을 하나의
+강체처럼 `W/A/S/D/Q/E`로 움직이는 현장 시험 절차입니다.
 
-## 간격 기준
+> **현재 상태 (2026-08-28)**
+>
+> 오늘 시험 branch를 양쪽 로봇에 임시 배포해 바퀴를 띄운 상태의 `W/S` 방향과
+> 정지 동작을 확인했습니다. `A/D/Q/E`, 지면 주행, 장시간 marker dropout 및 열
+> 안정성은 아직 미확인입니다. robot-1이 중복 production launch와 함께 실행될 때
+> 78.8°C까지 올라 최종 시험을 중단했습니다. 최신 main 통합본을 다시 배포하고
+> 아래 전체 체크리스트를 통과하기 전에는 production 검증 완료로 간주하지 않습니다.
+> 이 시험은 기존 `keyboard_follow`가 아닌 별도 `rigid_pair_teleop`을 사용합니다.
 
-`추종 준비`를 누른 순간 Rear 카메라가 읽은 ID0의 `forward`, `lateral`, `yaw`를
-그대로 기준값으로 저장한다. 특히 목표 축간 거리는 **그 순간 ArUco가 판단한
-forward 값 자체**다. 로봇 길이, 카메라 offset, 명목 wheelbase를 더하지 않는다.
+## 안전 원칙
 
-W/S/A/D 평행이동에서는 두 로봇에 같은 기본 속도를 주고, Q/E 회전에서는 저장한
-ArUco forward 간격으로 강체 속도를 분배해 두 로봇 중점을 중심으로 돈다. 기준
-대비 간격·좌우 오차에는 반대 방향의 작은 보정을 양쪽에 절반씩 적용한다.
+- 첫 시험은 반드시 **바퀴를 지면에서 띄운 상태**로 수행합니다.
+- 로봇 옆에 물리 E-STOP을 즉시 누를 사람이 있어야 합니다.
+- 다른 주행 launch와 `cmd_vel` 발행자는 모두 종료합니다.
+- 이상 동작 시 키보드나 웹 화면보다 **물리 E-STOP을 우선**합니다.
+- 실제 카메라·ArUco·STM32를 사용하며 가짜 토픽은 발행하지 않습니다.
 
-## 안전 제한
+## 1. 현장 설정값
 
-- 한 키 입력의 deadman은 0.30초다. 브라우저 반복 입력이 끊기면 양쪽에 0속도를
-  보낸다.
-- ArUco, 양쪽 wheel odometry, `hardware_ready`, 수동 제어권 중 하나라도 오래되면
-  둘 다 정지한다.
-- 기준 대비 forward 또는 lateral 변화가 3cm, 상대 yaw 변화가 5도를 넘으면
-  `FAULT`로 정지한다.
-- 한 번 준비한 세션에서 어느 로봇이든 누적 30cm를 이동하면 정지한다. 더
-  움직이려면 제어권을 해제하고 현재 ArUco 자세를 새 기준으로 다시 준비한다.
-- `/front|rear/cmd_vel` 자동 발행자나 이 노드 외의 manual 명령 발행자가 있으면
-  준비되지 않는다.
-- 그리퍼 키 T/G는 비활성화되어 있다. 웹 비상정지는 STM32에 고정되므로 원인
-  제거 뒤 전원을 다시 인가해야 한다.
+| 구분 | 값 |
+| --- | --- |
+| Rear | `robot@robot-1.local` |
+| Front | `robot@robot-2.local` |
+| 격리 시험 ROS domain | `142` |
+| 오늘 검증한 로봇 workspace | `/home/robot/parkingbot` |
+| 목표 중심 간격 | `78.5 cm` |
+| Rear 카메라에서 보이는 ID0 raw forward | 약 `21.5 cm` |
+| Front serial | `/dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_0667FF485270535067112920-if02` |
+| Rear serial | `/dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066AFF485270535067112511-if02` |
+| Rear camera | `/dev/v4l/by-path/platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.1:1.0-video-index0` |
+| Rear calibration | `/home/robot/ov2710_calib_23mm_white.npz` |
+| Rear camera mode | `1280x720 @ 12 fps` |
+| Front rear-face marker | `DICT_4X4_50 ID0`, black square `0.10 m` |
 
-## 실행
+IP는 DHCP로 바뀌므로 SSH와 웹 접속에는 항상 `*.local` 이름을 사용합니다.
 
-기존 3cm/10cm 시험 화면이 실행 중이면 먼저 해당 Rear/Front launch를 종료한다.
-두 제어기를 동시에 실행하면 안 된다. 같은 격리 domain을 양쪽에 적용한다.
+## 2. 배포 후 최초 1회 확인
 
-robot-2 Front:
+양쪽 로봇에서 새 소스를 배포·빌드한 뒤 실행합니다.
 
 ```bash
+cd /home/robot/parkingbot
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install --packages-select cooperative_parking_robot
+source install/setup.bash
+
+ros2 pkg executables cooperative_parking_robot | grep rigid_pair_teleop
+```
+
+Rear에서는 launch 인자도 확인합니다.
+
+```bash
+ros2 launch cooperative_parking_robot \
+  cooperative_drive_test_rear.launch.py --show-args | \
+  grep enable_rigid_pair_teleop
+```
+
+둘 중 하나라도 결과가 없으면 구버전이므로 다음 단계로 진행하지 않습니다.
+
+## 3. 시작 전 배치
+
+1. 두 로봇의 바퀴를 띄우고 물리 E-STOP을 준비합니다.
+2. Front를 Rear 앞쪽에 대략 평행하게 놓습니다.
+3. Rear 카메라가 Front의 ID0 marker 전체를 보도록 맞춥니다.
+4. 두 로봇에서 다른 주행 프로그램이 모두 종료됐는지 확인합니다.
+5. 운영 PC에서 SSH 터미널 두 개를 엽니다.
+
+```bash
+ssh robot@robot-2.local   # Front 터미널
+ssh robot@robot-1.local   # Rear 터미널
+```
+
+robot-1에서는 domain이 달라도 CPU·카메라·STM32를 공유하므로 production launch가
+함께 실행되면 안 됩니다. 다음 결과에는 이번 시험 launch 하나만 있어야 합니다.
+
+```bash
+pgrep -af 'rear_robot.launch.py|cooperative_drive_test_rear.launch.py'
+vcgencmd measure_temp
+vcgencmd get_throttled
+```
+
+가능하면 60°C 이하에서 시작하고 75°C에 접근하면 즉시 정지·종료합니다.
+
+## 4. Front 실행
+
+robot-2 터미널에서 실행합니다.
+
+```bash
+source /opt/ros/humble/setup.bash
+source /home/robot/parkingbot/install/setup.bash
 export ROS_DOMAIN_ID=142
+
 ros2 launch cooperative_parking_robot cooperative_drive_test_front.launch.py \
-  serial_port:=/dev/serial/by-id/FRONT_STABLE_SERIAL
+  serial_port:=/dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_0667FF485270535067112920-if02 \
+  wheel_radius:=0.05 encoder_ppr:=5182.0 \
+  lx:=0.2225 ly:=0.21
 ```
 
-robot-1 Rear:
+## 5. Rear 실행
+
+robot-1 터미널에서 실행합니다.
 
 ```bash
+source /opt/ros/humble/setup.bash
+source /home/robot/parkingbot/install/setup.bash
 export ROS_DOMAIN_ID=142
+
 ros2 launch cooperative_parking_robot cooperative_drive_test_rear.launch.py \
-  serial_port:=/dev/serial/by-id/REAR_STABLE_SERIAL \
-  camera_device:=/dev/v4l/by-path/REAR_WHITE_CAMERA-video-index0 \
-  camera_calib:="$HOME/ov2710_calib_23mm_white.npz" \
+  serial_port:=/dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066AFF485270535067112511-if02 \
+  camera_device:=/dev/v4l/by-path/platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.1:1.0-video-index0 \
+  camera_calib:=/home/robot/ov2710_calib_23mm_white.npz \
+  width:=1280 height:=720 fps:=12.0 marker_size_m:=0.10 \
+  wheel_radius:=0.05 encoder_ppr:=5182.0 \
+  lx:=0.2225 ly:=0.21 \
   enable_drive_test_dashboard:=false \
-  enable_keyboard_follow:=true
+  enable_rigid_pair_teleop:=true
 ```
 
-브라우저에서 다음을 연다.
+`enable_drive_test_dashboard:=false`는 기존 주행 UI와 명령이 충돌하지 않게 하는
+필수 설정입니다.
 
-- 키보드 추종과 판단: `http://robot-1.local:5007/`
-- 카메라만 보기: `http://robot-1.local:5005/`
+## 6. 카메라와 정렬 확인
 
-페이지를 한 번 클릭한 뒤 `추종 준비`를 누른다. 목표 간격이 현재 ArUco 값으로
-표시되고 상태가 `키보드 추종 준비 완료`가 된 뒤에만 키를 사용한다.
+운영 PC의 브라우저에서 엽니다.
+
+- 카메라: `http://robot-1.local:5005/`
+- 정렬·제어: `http://robot-1.local:5007/`
+
+`5005`에서 영상이 계속 갱신되고 ID0 marker가 안정적으로 인식되는지 확인합니다.
+그다음 로봇을 손으로 조금씩 옮겨 `5007`의 값을 맞춥니다.
+
+| 항목 | 목표 |
+| --- | ---: |
+| 추정 중심 간격 | `78.5 ± 1.5 cm` |
+| raw lateral | `0 ± 1.5 cm` |
+| raw yaw | `0 ± 2°` |
+
+화면에 `정렬 후보`가 나타나면 실제 차체도 평행한지, 케이블이나 차체가 간섭하지
+않는지 눈으로 한 번 더 확인합니다. 이 표시는 안전을 보증하지 않습니다.
+
+## 7. Arm과 키 조작
+
+1. `5007`에서 blocker가 없는지 확인합니다.
+2. **현재 자세 기준 준비**를 한 번 누릅니다.
+3. `강체 쌍 제어 준비 완료`가 표시될 때까지 키를 누르지 않습니다.
+4. 브라우저 화면을 클릭한 뒤 키를 짧게 사용합니다.
 
 | 키 | 동작 |
-|---|---|
-| W / S | 두 로봇 전진 / 후진 |
-| A / D | 두 로봇 좌 / 우 횡이동 |
-| Q / E | 현재 ArUco 간격을 반지름 관계로 사용한 중점 회전 |
-| Space | 즉시 0속도, 준비 상태 유지 |
-| 정지·제어권 해제 | 0속도 후 양쪽 manual 제어권 반환 |
+| --- | --- |
+| `W` / `S` | 전진 / 후진 |
+| `A` / `D` | 왼쪽 / 오른쪽 횡이동 |
+| `Q` / `E` | 중점 기준 반시계 / 시계 회전 |
+| `Space` | 즉시 0속도, Arm 유지 |
+| **정지·제어권 해제** | 정지 후 IDLE |
+| **양쪽 비상정지** | 양쪽 STM32 E-STOP 고정 |
 
-## 가벼운 첫 확인 순서
+키 입력이 약 `0.30초` 끊기면 양쪽에 0속도가 발행됩니다.
 
-1. `추종 준비` 직후 목표 간격과 현재 간격이 같은지 확인한다.
-2. W를 짧게 한 번 눌러 양쪽이 같은 방향으로 움직이고 손을 떼면 즉시 서는지
-   본다.
-3. W와 S를 각각 짧게 눌러 기준 간격이 1cm 안팎으로 돌아오는지 본다.
-4. A와 D를 한 번씩 확인한다.
-5. Q/E는 마지막에 짧게 한 번만 확인한다. Front와 Rear의 횡속도가 반대가 되는
-   것이 정상이며, 두 로봇이 각각 제자리 회전하는 동작은 정상이 아니다.
+## 8. 바퀴를 띄운 첫 시험
 
-어느 단계든 화면이 `FAULT`가 되면 다시 키를 누르지 말고 표시된 간격·좌우·각도와
-카메라 영상을 먼저 확인한다.
+각 키를 **아주 짧게** 누르고 매 단계 `Space`로 정지합니다.
+
+- [ ] `W`: 양쪽 모두 전진 방향
+- [ ] `S`: 양쪽 모두 후진 방향
+- [ ] `A`, `D`: 횡이동 방향 정상
+- [ ] `Q`, `E`: 두 로봇이 서로 싸우거나 급격히 비틀리지 않고 중점 회전
+- [ ] 키를 놓으면 즉시 감속하고 약 `0.30초` 안에 정지
+- [ ] `Space`와 **정지·제어권 해제**가 모두 정상 동작
+- [ ] 카메라·ArUco·wheel odom·STM32 ready가 끊기면 주행이 차단됨
+
+방향이 반대이거나 진동·급가속·계속 움직임이 하나라도 보이면 물리 E-STOP을 누르고
+시험을 종료합니다. 원인을 고치기 전에는 바퀴를 지면에 내리지 않습니다.
+
+## 9. 지면 첫 시험
+
+바퀴를 띄운 시험을 모두 통과한 뒤에만 진행합니다.
+
+1. 사람과 장애물을 치우고 평평한 공간을 확보합니다.
+2. 다시 정렬하고 Arm합니다.
+3. `W`를 짧게 눌러 수 cm만 이동한 뒤 `Space`로 정지합니다.
+4. 중심 간격과 lateral/yaw가 유지되는지 확인합니다.
+5. `S`, `A`, `D`를 차례로 짧게 확인합니다.
+6. `Q`, `E`는 마지막에 최소 입력으로 확인합니다.
+
+기본 설정은 한 세션에서 어느 한 로봇이라도 누적 `30 cm`를 이동하면 정지합니다.
+
+## 10. 자주 막히는 경우
+
+| 증상 | 우선 확인 |
+| --- | --- |
+| 웹 페이지가 안 열림 | Rear launch, 동일 Wi-Fi, `getent hosts robot-1.local` 결과 |
+| `마커 찾기` | ID0 전체가 영상 안에 있는지, 가림·반사광 여부 |
+| `hardware_ready` 없음 | serial 경로, STM32 전원, Front/Rear role |
+| `수동 제어권 확인 안 됨` | 다른 teleop·dashboard·주행 launch 종료 |
+| `다른 주행 발행자 존재` | 아래 명령으로 불필요한 publisher 확인 후 종료 |
+| UI 응답이 간헐적으로 끊김 | 중복 launch, robot-1 온도, CPU 사용률을 먼저 확인 |
+
+```bash
+ros2 topic info /front/cmd_vel --verbose
+ros2 topic info /rear/cmd_vel --verbose
+```
+
+`FAULT`가 발생하면 키를 놓고 원인을 해결한 뒤 **정지·제어권 해제 → 재정렬 → 재Arm**
+순서로 다시 시작합니다. `ESTOP`은 원인 제거와 현장 전원 재인가 전까지 해제하지
+않습니다.
+
+## 11. 정상 종료
+
+1. `Space`로 정지합니다.
+2. **정지·제어권 해제**를 누릅니다.
+3. 양쪽 로봇이 실제로 멈췄는지 확인합니다.
+4. Rear launch, Front launch 순서로 `Ctrl+C`를 누릅니다.
+5. 현장 절차에 따라 전원을 차단합니다.
+
+브라우저만 닫는 것은 정상 종료가 아닙니다.

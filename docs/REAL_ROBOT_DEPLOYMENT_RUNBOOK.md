@@ -137,7 +137,7 @@ camera driver로 열고 `enable_rear_camera:=false`로 연결한다.
 `/home/guitest/ov2710_calib_23mm_*.npz`이고, 로봇에서 실행할 때는 각 로봇
 사용자의 `$HOME`에 필요한 파일을 복사한다.
 
-- Rear `robot-1`: 흰색 OV2710, 640x480,
+- Rear `robot-1`: 흰색 OV2710, 1280x720 @ 12 fps,
   `$HOME/ov2710_calib_23mm_white.npz` 배포·존재 확인 완료
 - Front `robot-2`: 검은색 OV2710, 640x480,
   원본 `ov2710_calib_23mm_black.npz` (현재 상대 pose 제어에는 미사용·미배포)
@@ -160,7 +160,7 @@ ros2 launch cooperative_parking_robot rear_aruco_static_check.launch.py
 ```
 
 robot-1 자체 브라우저에서는 `http://127.0.0.1:5005`, 같은 내부망의 노트북에서는
-`http://ROBOT1_IP:5005`를 연다. 화면에는 640x480 영상과 FPS, 중심 십자선,
+`http://robot-1.local:5005`를 연다. 화면에는 1280x720 영상과 FPS, 중심 십자선,
 검출된 marker ID·테두리·픽셀 크기·찌그러짐 정도가 실시간으로 표시된다. 웹
 상단의 `거리`는 두 로봇 진행축 방향 간격, `좌우`는 중심선 오차, `틀어짐`은
 상대 yaw이며, 이 세 값은 tracker의 `/sync/relative_pose`에서 가져온다. ID0
@@ -168,7 +168,9 @@ robot-1 자체 브라우저에서는 `http://127.0.0.1:5005`, 같은 내부망�
 확인한다. 픽셀 표의 `각도오차`는 마커 사각형의 영상 왜곡 지표이므로 로봇 간
 `틀어짐`과는 다른 값이다.
 
-흰색 카메라가 `/dev/video0`이 아니면 확인한 안정 경로를 지정한다.
+ID0의 검은 정사각형 한 변은 정확히 100 mm이며 런치 기본값은
+`marker_size_m:=0.10`이다. 흰색 카메라가 `/dev/video0`이 아니면 확인한 안정
+경로를 지정한다.
 
 ```bash
 ros2 launch cooperative_parking_robot rear_aruco_static_check.launch.py \
@@ -239,10 +241,10 @@ bash tools/install_robot_commands.sh
 ```
 
 Installer는 shell startup file을 수정하지 않는다. 최초 한 번
-`~/.config/parkingbot/production_hosts.env`에 검증된 SSH host, 세 장비와 운용
+`~/.config/parkingbot/production_hosts.env`에 Jetson SSH host, 세 장비와 운용
 PC의 절대 colcon workspace 경로, stable device path 및 아래 launch에 필요한
-실측값을 입력한다. 저장소에는 실제 SSH 주소가 없으며 Rear=`robot-1`,
-Front=`robot-2` 역할만 확인되므로 빈 값을 추측해 채우지 않는다.
+실측값을 입력한다. 로봇은 DHCP 주소 대신 Front=`robot@robot-2.local`,
+Rear=`robot@robot-1.local`을 사용한다.
 Rear가 외부 camera driver를 쓰면 현장에서 이미 검증한 정확한 실행 명령을
 `REAR_EXTERNAL_CAMERA_COMMAND`에 넣는다. 명령을 알 수 없으면 start는 차단된다.
 

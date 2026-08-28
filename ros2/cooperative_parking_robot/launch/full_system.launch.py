@@ -159,7 +159,7 @@ def generate_launch_description():
         DeclareLaunchArgument('rear_marker_id', default_value='1'),
         DeclareLaunchArgument('min_marker_area_px', default_value='100.0'),
         DeclareLaunchArgument('min_marker_area_ratio', default_value='0.0003'),
-        DeclareLaunchArgument('marker_size_m', default_value='0.175'),
+        DeclareLaunchArgument('marker_size_m', default_value='0.24'),
         DeclareLaunchArgument('debug_web_port', default_value='5000'),
         DeclareLaunchArgument('camera_ground_x_m', default_value='0.0'),
         DeclareLaunchArgument('camera_ground_y_m', default_value='0.0'),

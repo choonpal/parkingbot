@@ -19,11 +19,13 @@ HARNESS = r'''
 
 #include "parking_robot_firmware.c"
 
-UART_HandleTypeDef huart2 = {USART2};
+UART_HandleTypeDef huart2 = {USART2, HAL_UART_STATE_READY};
 TIM_HandleTypeDef htim1, htim2, htim3, htim4, htim5, htim9, htim10, htim11;
 
 static uint32_t test_tick;
 static HAL_StatusTypeDef next_tx_status = HAL_OK;
+static HAL_StatusTypeDef next_rx_status = HAL_OK;
+static int rx_arm_count;
 static char tx_frames[128][256];
 static uint32_t tx_timeouts[128];
 static int tx_count;
@@ -61,7 +63,12 @@ int HAL_TIM_PWM_Stop(TIM_HandleTypeDef *h, uint32_t c) {
 int HAL_TIM_Base_Start(TIM_HandleTypeDef *h) { (void)h; return 0; }
 HAL_StatusTypeDef HAL_UART_Receive_IT(
         UART_HandleTypeDef *h, uint8_t *p, uint16_t n) {
-    (void)h; (void)p; (void)n; return HAL_OK;
+    (void)p; (void)n;
+    HAL_StatusTypeDef status = next_rx_status;
+    next_rx_status = HAL_OK;
+    rx_arm_count++;
+    if (status == HAL_OK) h->RxState = HAL_UART_STATE_BUSY_RX;
+    return status;
 }
 HAL_StatusTypeDef HAL_UART_Transmit(
         UART_HandleTypeDef *h, uint8_t *p, uint16_t n, uint32_t timeout) {
@@ -88,6 +95,9 @@ static void reset_robot(void) {
     test_tick = 0U;
     tx_count = 0;
     next_tx_status = HAL_OK;
+    next_rx_status = HAL_OK;
+    rx_arm_count = 0;
+    huart2.RxState = HAL_UART_STATE_READY;
     Robot_Init();
     tx_count = 0;
 }
@@ -98,6 +108,12 @@ static void command(const char *text) {
     strcpy(mutable, text);
     UART_ParseCommand(mutable);
     UART_SendPending();
+}
+
+static void receive_legacy_byte(uint8_t value) {
+    uart_rx_byte = value;
+    huart2.RxState = HAL_UART_STATE_READY;
+    HAL_UART_RxCpltCallback(&huart2);
 }
 
 static void expect_last(const char *text) {
@@ -148,6 +164,31 @@ static void test_fresh_boot_sequence(void) {
     assert((int)g_robot.servo_target[1] == EXPECTED_SERVO2_OPEN);
 }
 
+static void test_legacy_actuation_requires_complete_v2_session(void) {
+    reset_robot();
+    receive_legacy_byte('W');
+    UART_ProcessPendingCommands();
+    expect_last("ERR,HELLO_REQUIRED\n");
+    assert(g_robot.target_vx == 0.0f);
+    for (int index = 0; index < MOTOR_NUM; index++) {
+        assert(g_robot.wheel_target[index] == 0.0f);
+        assert(g_robot.motor_pwm[index] == 0.0f);
+    }
+
+    establish("aaaaaaaaaaaaaaaa");
+    receive_legacy_byte('W');
+    UART_ProcessPendingCommands();
+    assert(g_robot.manual_mode == 1U);
+    assert(g_robot.wheel_target[0] != 0.0f);
+    receive_legacy_byte('X');
+    UART_ProcessPendingCommands();
+    assert(g_robot.target_vx == 0.0f);
+    for (int index = 0; index < MOTOR_NUM; index++) {
+        assert(g_robot.wheel_target[index] == 0.0f);
+        assert(g_robot.motor_pwm[index] == 0.0f);
+    }
+}
+
 static void test_other_profile_attach_is_rejected(void) {
     reset_robot();
     establish("aaaaaaaaaaaaaaaa");
@@ -190,6 +231,167 @@ static void test_current_command_timeout_latches(void) {
     command("S,attach,2600,400");
     expect_last("ERR,STARTUP_SEQUENCE\n");
     assert(g_robot.servo_attached == 0U);
+}
+
+static void test_uart_rejection_stops_and_new_hello_recovers(void) {
+    reset_robot();
+    establish("aaaaaaaaaaaaaaaa");
+    command("V,0.100,0.000,0.000");
+    assert(g_robot.target_vx == 0.100f);
+    assert(g_robot.wheel_target[0] != 0.0f);
+    g_robot.servo_attached = 1U;
+    g_robot.servo_current[0] = 1700.0f;
+    g_robot.servo_target[0] = 2100.0f;
+    g_robot.servo_motion_active = 1U;
+
+    command("NOT_A_COMMAND");
+    expect_last("ERR,UNKNOWN_COMMAND\n");
+    assert(g_robot.target_vx == 0.0f);
+    assert(g_robot.target_vy == 0.0f);
+    assert(g_robot.target_omega == 0.0f);
+    assert(g_robot.wheel_target[0] == 0.0f);
+    assert(g_robot.safety_fault_latched == 0U);
+    assert(g_robot.protocol_session_active == 0U);
+    assert(g_robot.heartbeat_seen == 0U);
+    assert(g_robot.command_seen == 0U);
+    assert(g_robot.servo_attached == 0U);
+    assert(g_robot.servo_motion_active == 0U);
+    assert(g_robot.servo_target[0] == g_robot.servo_current[0]);
+
+    command("V,0.100,0.000,0.000");
+    expect_last("ERR,HELLO_REQUIRED\n");
+    assert(g_robot.target_vx == 0.0f);
+    assert(g_robot.wheel_target[0] == 0.0f);
+
+    command("HELLO,2,bbbbbbbbbbbbbbbb");
+    expect_last("ACK,HELLO:2:bbbbbbbbbbbbbbbb\n");
+    assert(strcmp(g_robot.session_id, "bbbbbbbbbbbbbbbb") == 0);
+    assert(g_robot.heartbeat_seen == 0U);
+    assert(g_robot.command_seen == 0U);
+
+    g_robot.target_vx = 0.100f;
+    for (int index = 0; index < MOTOR_NUM; index++) {
+        g_robot.wheel_target[index] = 1.0f;
+        Set_MotorPWM(index, 100.0f);
+    }
+    g_robot.servo_attached = 1U;
+    g_robot.servo_current[0] = 1750.0f;
+    g_robot.servo_target[0] = 2150.0f;
+    g_robot.servo_motion_active = 1U;
+    for (uint8_t index = 0U; index <= RX_COMMAND_QUEUE_DEPTH; index++) {
+        receive_legacy_byte('X');
+    }
+    assert(g_rx_queue_overflow == 1U);
+    UART_ProcessPendingCommands();
+    UART_SendPending();
+    expect_last("ERR,RX_QUEUE_OVERFLOW\n");
+    assert(g_robot.target_vx == 0.0f);
+    for (int index = 0; index < MOTOR_NUM; index++) {
+        assert(g_robot.wheel_target[index] == 0.0f);
+        assert(g_robot.motor_pwm[index] == 0.0f);
+    }
+    assert(g_robot.safety_fault_latched == 0U);
+    assert(g_robot.protocol_session_active == 0U);
+    assert(g_robot.servo_attached == 0U);
+    assert(g_robot.servo_motion_active == 0U);
+    assert(g_robot.servo_target[0] == g_robot.servo_current[0]);
+
+    command("HB,bbbbbbbbbbbbbbbb:2");
+    expect_last("ERR,HELLO_REQUIRED\n");
+}
+
+static void test_uart_error_rearms_rx_and_requires_new_hello(void) {
+    reset_robot();
+    establish("aaaaaaaaaaaaaaaa");
+    command("V,0.100,0.000,0.000");
+    g_robot.servo_attached = 1U;
+    g_robot.servo_current[0] = 1700.0f;
+    g_robot.servo_target[0] = 2100.0f;
+    g_robot.servo_motion_active = 1U;
+    int arms_before_error = rx_arm_count;
+
+    /* HAL ends an ORE receive before invoking the application callback. */
+    huart2.RxState = HAL_UART_STATE_READY;
+    HAL_UART_ErrorCallback(&huart2);
+    assert(rx_arm_count == arms_before_error);
+    assert(huart2.RxState == HAL_UART_STATE_READY);
+    /* A damaged framed command may leave a motion-looking tail byte. */
+    receive_legacy_byte('W');
+    UART_MaintainRx();
+    UART_SendPending();
+    expect_last("ERR,UART_RX_ERROR\n");
+    assert(rx_arm_count == arms_before_error + 1);
+    assert(huart2.RxState == HAL_UART_STATE_BUSY_RX);
+    assert(g_robot.target_vx == 0.0f);
+    for (int index = 0; index < MOTOR_NUM; index++) {
+        assert(g_robot.wheel_target[index] == 0.0f);
+        assert(g_robot.motor_pwm[index] == 0.0f);
+    }
+    assert(g_robot.protocol_session_active == 0U);
+    assert(g_robot.servo_attached == 0U);
+    assert(g_robot.servo_motion_active == 0U);
+    assert(g_robot.servo_target[0] == g_robot.servo_current[0]);
+
+    /* Also cover the ISR/main-loop boundary after the queue clear. */
+    receive_legacy_byte('W');
+    UART_ProcessPendingCommands();
+    expect_last("ERR,HELLO_REQUIRED\n");
+    for (int index = 0; index < MOTOR_NUM; index++) {
+        assert(g_robot.wheel_target[index] == 0.0f);
+        assert(g_robot.motor_pwm[index] == 0.0f);
+    }
+    command("M,FL,120");
+    expect_last("ERR,HELLO_REQUIRED\n");
+    assert(g_robot.motor_pwm[FL] == 0.0f);
+
+    command("V,0.100,0.000,0.000");
+    expect_last("ERR,HELLO_REQUIRED\n");
+    command("HB,aaaaaaaaaaaaaaaa:2");
+    expect_last("ERR,HELLO_REQUIRED\n");
+    command("HELLO,2,bbbbbbbbbbbbbbbb");
+    expect_last("ACK,HELLO:2:bbbbbbbbbbbbbbbb\n");
+}
+
+static void test_uart_error_between_maintain_and_process_discards_queue(void) {
+    reset_robot();
+    establish("aaaaaaaaaaaaaaaa");
+    command("V,0.100,0.000,0.000");
+    receive_legacy_byte('W');
+    assert(g_rx_command_count == 1U);
+
+    UART_MaintainRx();
+    huart2.RxState = HAL_UART_STATE_READY;
+    HAL_UART_ErrorCallback(&huart2);
+    UART_ProcessPendingCommands();
+    assert(g_rx_command_count == 1U);
+    /* Production main loop performs this second maintenance before PID. */
+    UART_MaintainRx();
+    UART_SendPending();
+    expect_last("ERR,UART_RX_ERROR\n");
+    assert(g_rx_command_count == 0U);
+    assert(g_robot.protocol_session_active == 0U);
+    assert(g_robot.target_vx == 0.0f);
+    for (int index = 0; index < MOTOR_NUM; index++) {
+        assert(g_robot.wheel_target[index] == 0.0f);
+        assert(g_robot.motor_pwm[index] == 0.0f);
+    }
+}
+
+static void test_initial_rx_arm_failure_is_retried_fail_closed(void) {
+    test_tick = 0U;
+    tx_count = 0;
+    next_tx_status = HAL_OK;
+    next_rx_status = HAL_ERROR;
+    rx_arm_count = 0;
+    huart2.RxState = HAL_UART_STATE_READY;
+    Robot_Init();
+    assert(rx_arm_count == 1);
+    UART_MaintainRx();
+    UART_SendPending();
+    expect_last("ERR,UART_RX_ERROR\n");
+    assert(rx_arm_count == 2);
+    assert(huart2.RxState == HAL_UART_STATE_BUSY_RX);
+    assert(g_robot.protocol_session_active == 0U);
 }
 
 static void test_estop_and_noncommunication_fault_survive_hello(void) {
@@ -253,9 +455,14 @@ static void test_complete_line_transport(void) {
 int main(void) {
     test_profile_constants();
     test_fresh_boot_sequence();
+    test_legacy_actuation_requires_complete_v2_session();
     test_other_profile_attach_is_rejected();
     test_previous_heartbeat_session_and_current_latch();
     test_current_command_timeout_latches();
+    test_uart_rejection_stops_and_new_hello_recovers();
+    test_uart_error_rearms_rx_and_requires_new_hello();
+    test_uart_error_between_maintain_and_process_discards_queue();
+    test_initial_rx_arm_failure_is_retried_fail_closed();
     test_estop_and_noncommunication_fault_survive_hello();
     test_complete_line_transport();
     return 0;

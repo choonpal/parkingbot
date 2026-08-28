@@ -42,7 +42,8 @@ def marker_center_to_base_link(marker_x, marker_y, yaw, offset_x):
 class ArucoDetectorCompat:
     """Use either OpenCV's new ArucoDetector API or the legacy OpenCV 4.x API."""
 
-    def __init__(self, cv2_module, dictionary_name):
+    def __init__(self, cv2_module, dictionary_name,
+                 min_marker_distance_rate=None):
         self._aruco = getattr(cv2_module, 'aruco', None)
         if self._aruco is None:
             raise RuntimeError(
@@ -60,8 +61,7 @@ class ArucoDetectorCompat:
                 raise RuntimeError(
                     'OpenCV ArUco DetectorParameters API missing')
             self.parameters = self._aruco.DetectorParameters()
-            self._detector = detector_type(
-                self.dictionary, self.parameters)
+            self._detector = None
         else:
             # OpenCV 4.6 exposes both constructors, but its Python binding
             # segfaults inside legacy detectMarkers() when parameters came
@@ -74,6 +74,22 @@ class ArucoDetectorCompat:
                 raise RuntimeError(
                     'OpenCV ArUco DetectorParameters API missing')
             self._detector = None
+
+        if min_marker_distance_rate is not None:
+            rate = float(min_marker_distance_rate)
+            if not 0.0 < rate <= 1.0:
+                raise ValueError(
+                    'min_marker_distance_rate must be in (0, 1]')
+            if not hasattr(self.parameters, 'minMarkerDistanceRate'):
+                raise RuntimeError(
+                    'OpenCV ArUco minMarkerDistanceRate API missing')
+            self.parameters.minMarkerDistanceRate = rate
+
+        # New OpenCV copies DetectorParameters into ArucoDetector during
+        # construction, so apply overrides before constructing it.
+        if detector_type is not None:
+            self._detector = detector_type(
+                self.dictionary, self.parameters)
         if self._detector is None and not hasattr(self._aruco, 'detectMarkers'):
             raise RuntimeError('No supported OpenCV ArUco detector API found')
 

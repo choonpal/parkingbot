@@ -11,9 +11,9 @@ r"""천장 카메라 여러 대를 브라우저에서 나란히 보는 경량 �
   * 렌즈 왜곡 보정이 제대로 되고 있는가 (raw와 rect를 나란히 비교)
   * 바닥 기준점으로 쓸 지점이 두 영상에 모두 잘 보이는가
 
-``jetson_vision_web_node``도 MJPEG를 주지만 카메라 한 대만 다루고 YOLO/ArUco
-추론까지 함께 돌린다. 이 노드는 **영상만** 보여주므로 가볍고, 카메라를 몇 대
-붙이든 한 페이지에서 비교할 수 있다.
+``jetson_vision_web_node``도 MJPEG를 주지만 카메라 한 대만 다룬다. 이 노드는
+여러 영상을 한 페이지에서 비교하며, 필요하면 내장 YOLO를 쓰거나 Production
+검출 토픽을 직접 받아 모델을 추가로 올리지 않고 상세 결과를 표시한다.
 
 화면에서 할 수 있는 것
 ----------------------
@@ -21,9 +21,10 @@ r"""천장 카메라 여러 대를 브라우저에서 나란히 보는 경량 �
     기준점을 미리 가늠하거나, 크롭 범위를 정할 때 쓴다.
   * 두 점을 찍으면 픽셀 거리를 알려준다.
   * 격자 간격을 바꿔가며 영상 왜곡(직선이 휘는지)을 눈으로 확인한다.
-  * **ArUco 마커를 자로 쓴다.** 마커는 실제로 정사각형이므로 보정된 영상에서
-    정사각형으로 보여야 한다. 변 길이 편차·대각선 비·꼭짓점 각도로 찌그러짐을
-    수치화하고, 한 변의 실제 길이(기본 0.18 m)로 그 지점의 mm/px를 계산한다.
+  * **ArUco 마커 상태를 확인한다.** 최소 변 길이·면적·화면 경계 여유·최근
+    검출 연속성과 실제 주행 노드의 ``/{front,rear}/cctv_marker_visible`` 을
+    함께 보여준다. 원근 투영으로 생기는 변 편차·대각선 비·각도 오차는
+    참고값일 뿐, 그 값만으로 주행 가능/불가를 판정하지 않는다.
   * 같은 ID가 두 카메라에 동시에 보이면 **거기가 겹침 영역**이다. 상단에
     표시된다.
   * **YOLO 차량 검출과 world 좌표** — 검출된 차량의 화면 픽셀을 같은
@@ -61,19 +62,22 @@ r"""천장 카메라 여러 대를 브라우저에서 나란히 보는 경량 �
     ros2 run cooperative_parking_robot camera_preview --ros-args \\
       -p enable_yolo:=false
 
+    # Production YOLO 결과를 그대로 보기 (추론/모델 추가 로드 없음)
+    ros2 run cooperative_parking_robot camera_preview --ros-args \\
+      -p enable_yolo:=false \\
+      -p detection_topics_csv:='/cctv0/detections,/cctv2/detections'
+
     # 마커 크기가 다르거나 dictionary가 다를 때
     ros2 run cooperative_parking_robot camera_preview --ros-args \\
       -p marker_size_m:=0.10 -p aruco_dict:=DICT_5X5_100
 
-찌그러짐 판정 기준 (변 길이 편차)
----------------------------------
-    < 5%    양호
-    5~12%   주의 — 카메라 기울기나 보정 오차를 의심한다
-    > 12%   불량
-
-마커를 화면 중앙과 네 귀퉁이로 옮겨가며 재면 원인을 구분할 수 있다.
-중앙에서도 나쁘면 **왜곡 보정**이 틀린 것이고, 중앙은 괜찮은데 가장자리로
-갈수록 나빠지면 **카메라가 기울어진** 것이다.
+주행 판정 기준
+--------------
+최종 판정은 실제 절대 pose 공급 노드의 ``cctv_marker_visible`` 을 따른다.
+프리뷰의 픽셀 크기·면적·경계 여유·검출 연속성은 불안정 가능성을 설명하는
+보조 지표다. 카메라가 바닥에 대해 기울어져 있으면 정사각형 마커도 영상에서는
+정상적으로 사다리꼴이 되므로, raw 변 편차가 크다는 이유만으로 불량 처리하지
+않는다.
 
 브라우저에서 ``http://<젯슨IP>:5005/``. VSCode 원격 접속 중이라면 PORTS 탭에서
 5005를 forward하면 맥에서 ``http://localhost:5005/``로 그대로 열린다.
@@ -99,6 +103,7 @@ from cooperative_parking_robot.latest_qos import (
     SENSOR_LATEST_QOS,
     STATE_LATEST_QOS,
 )
+from cooperative_parking_robot.freshness import StampGate, stamp_to_ns
 # 런타임(cctv_merge)이 쓰는 것과 **같은** 점유 판정 로직을 그대로 쓴다.
 # 프리뷰가 자체 규칙으로 판정하면 화면과 실제 발행값이 어긋난다.
 from cooperative_parking_robot.bev_fusion_core import (
@@ -106,6 +111,7 @@ from cooperative_parking_robot.bev_fusion_core import (
     # 런타임 merge_detections 와 **같은** 중복 판정을 쓰기 위해 가져온다.
     # 프리뷰가 자체 규칙으로 합치면 화면과 실제 발행값이 달라진다.
     _mutual_overlap,
+    decode_detection_envelope,
     image_corner_coverage,
     polygon_centroid,
     slot_observability,
@@ -156,8 +162,12 @@ _HTML = r'''<!doctype html>
   .dead{outline:2px solid var(--red)}
   .readout{margin-top:8px;font-size:12px;color:#b9c8da;min-height:34px;
     background:#0d141e;border-radius:6px;padding:7px;white-space:pre-wrap}
+  .sourcebar{margin-top:8px;font-size:12px;color:#b9c8da;
+    background:#111a25;border:1px solid #2c394c;border-radius:6px;padding:7px}
   table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}
-  th,td{border-bottom:1px solid #2c394c;padding:4px 5px;text-align:right}
+  th,td{border-bottom:1px solid #2c394c;padding:4px 5px;text-align:right;
+    white-space:nowrap}
+  #grid-root [id^="det"],#grid-root [id^="mk"]{overflow-x:auto}
   th:first-child,td:first-child{text-align:left}
   th{color:#8fa3ba;font-weight:600}
   .badge{display:inline-block;padding:3px 9px;border-radius:12px;
@@ -181,6 +191,7 @@ _HTML = r'''<!doctype html>
     <span id="overlap" class="badge">겹침 확인 중…</span>
     <span id="slots" class="badge">슬롯 확인 중…</span>
     <span id="guide" class="badge">안내 대기…</span>
+    <span id="drivegate" class="badge">CCTV 주행 입력 확인 중…</span>
     <span class="meta">안내 미션
       <button onclick="setGuide('auto')">자동</button>
       <button onclick="setGuide('park')">입차</button>
@@ -188,7 +199,7 @@ _HTML = r'''<!doctype html>
     </span>
     <span id="relpose" class="badge">상대 거리 확인 중…</span>
     <span id="yolo" class="badge">YOLO 확인 중…</span>
-    <span id="hint" class="meta">영상 클릭 = 픽셀 좌표. ArUco 한 변 <b id="msize">0.18</b> m 기준.</span>
+    <span id="hint" class="meta">영상 클릭 = 픽셀 좌표. ArUco 한 변 <b id="msize">0.24</b> m 기준.</span>
   </div>
 </header>
 <main id="grid-root"></main>
@@ -204,7 +215,7 @@ _HTML = r'''<!doctype html>
       <span class="meta">색분리에서 겹침 영역이 <b>회색</b>이면 정합,
         <b style="color:#7ff">청록</b>/<b style="color:#f77">빨강</b>으로 갈라지면 어긋난 것입니다.</span>
     </div>
-    <div class="controls" style="margin-bottom:10px">
+    <div id="yolo-region-controls" class="controls" style="margin-bottom:10px">
       <b>YOLO 구역</b>
       <select id="rgcam"></select>
       <span class="meta">를 고르고 <b>합성 BEV 위에서 드래그</b></span>
@@ -237,6 +248,7 @@ async function boot(){
              onclick="pick(${i}, event)">
       </div>
       <div class="readout" id="out${i}">클릭해서 픽셀 좌표 확인</div>
+      <div class="sourcebar" id="src${i}">검출 소스 확인 중…</div>
       <div id="det${i}"></div>
       <div id="mk${i}"></div>
     </section>`).join('');
@@ -253,6 +265,12 @@ async function boot(){
                 background:rgba(255,209,102,.15);pointer-events:none"></div>
          </div></div>`;
     initRegionDrag(info);
+    if(info.yolo && !info.yolo.controls_enabled){
+      const controls = document.getElementById('yolo-region-controls');
+      if(controls) controls.innerHTML =
+        '<b>Production 검출 모드</b><span class="meta">카메라 선택과 추론은 '
+        + 'Production 노드가 담당하며, 프리뷰는 결과만 표시합니다.</span>';
+    }
   } else {
     document.getElementById('bevbox').style.display='none';
   }
@@ -266,6 +284,9 @@ async function tick(){
   info.cameras.forEach((c,i)=>{
     const el = document.getElementById('meta'+i); if(!el) return;
     const img = document.getElementById('img'+i);
+    renderDetectionSource(i, c);
+    renderMarkers(i, c.markers || []);
+    renderDetections(i, c.detections || []);
     if(!c.alive){
       el.innerHTML = '<span class="err">수신 없음</span> · ' + esc(c.topic);
       if(img) img.classList.add('dead');
@@ -273,7 +294,9 @@ async function tick(){
     }
     if(img) img.classList.remove('dead');
     let size = c.width + '×' + c.height;
-    if(c.infer_ms) size += ' · yolo ' + c.infer_ms.toFixed(0) + 'ms';
+    if(c.detection_source === 'production' && c.detection_live){
+      size += ' · 검출 ' + c.detection_rate_hz.toFixed(1) + 'Hz';
+    } else if(c.infer_ms) size += ' · yolo ' + c.infer_ms.toFixed(0) + 'ms';
     if(c.held) size += ' · <span class="warn">직전 검출 유지</span>';
     let cls = 'ok';
     let note = '';
@@ -285,9 +308,9 @@ async function tick(){
     }
     el.innerHTML = '<span class="'+cls+'">'+size+'</span> · '
       + c.fps.toFixed(1) + ' fps · ' + esc(c.topic) + note;
-    renderMarkers(i, c.markers || []);
-    renderDetections(i, c.detections || []);
   });
+
+  renderDriveGate(info.drive_markers || []);
 
   document.getElementById('msize').textContent = info.marker_size_m;
 
@@ -303,9 +326,9 @@ async function tick(){
 
   const rp = info.relative_pose, rpb = document.getElementById('relpose');
   if(rpb && rp){
-    if(rp.fresh && rp.visible !== false){
+    if(rp.fresh && rp.visible === true){
       rpb.className = 'badge good';
-      rpb.textContent = '거리 ' + (rp.forward_m*100).toFixed(1) + ' cm'
+      rpb.textContent = 'ID0 raw 카메라→마커 ' + (rp.forward_m*100).toFixed(1) + ' cm'
         + ' · 좌우 ' + (rp.lateral_m*100).toFixed(1) + ' cm'
         + ' · 틀어짐 ' + rp.yaw_deg.toFixed(1) + '°';
     } else if(rp.visible === false){
@@ -325,7 +348,10 @@ async function tick(){
     if(y.ready){
       const n = info.cameras.reduce((s,c)=>s+(c.detections||[]).length,0);
       yb.className = 'badge good';
-      let t = 'YOLO 검출 ' + n + '개 (클래스 ' + y.classes.join(',') + ')';
+      let t = y.source === 'production'
+        ? 'Production 차량 검출 ' + n + '개 · 센서 '
+          + y.live_cameras.length + '/' + info.cameras.length
+        : 'YOLO 검출 ' + n + '개 (클래스 ' + y.classes.join(',') + ')';
       if(y.switch_mode === 'region' || y.switch_mode === 'mission'){
         t += y.active
            ? ' · 담당 ' + y.active + (y.scanning ? ' (스캔 중)' : '')
@@ -564,10 +590,57 @@ async function setBev(mode){
   if(img) img.src='/bev/merged?t='+Date.now();
 }
 
-function verdict(spread){
-  if(spread < 0.05) return ['양호','ok'];
-  if(spread < 0.12) return ['주의','warn'];
-  return ['불량','err'];
+function renderDriveGate(markers){
+  const box = document.getElementById('drivegate');
+  if(!box) return;
+  if(!markers || !markers.length){
+    box.className = 'badge';
+    box.textContent = '주행 마커: 설정 없음';
+    return;
+  }
+  const allReady = markers.every(m => m.drive_ready === true);
+  const anyBlocked = markers.some(m => m.drive_ready === false);
+  box.className = 'badge ' + (allReady ? 'good' : anyBlocked ? 'bad' : '');
+  box.title = markers.map(m => `${m.role} ID${m.id}: ${m.reason}`).join('\n');
+  box.textContent = 'CCTV 주행 입력 · ' + markers.map(m =>
+    `${m.role} ID${m.id} ${m.status}`).join(' · ');
+}
+
+function renderDetectionSource(i, c){
+  const box = document.getElementById('src'+i);
+  if(!box) return;
+  if(c.detection_source === 'production'){
+    const live = c.detection_live;
+    const age = c.source_age_s == null ? '—' : c.source_age_s.toFixed(2)+'s';
+    const transport = c.transport_age_s == null
+      ? '—' : c.transport_age_s.toFixed(3)+'s';
+    const hid = c.homography_ok === true
+      ? '<span class="ok">H 정상</span>'
+      : c.homography_ok === false
+        ? '<span class="err">H 오류</span>' : 'H 대기';
+    let text = '<b class="'+(live?'ok':'err')+'">Production '
+      + (live?'수신 중':'수신 대기') + '</b>'
+      + ' · ' + esc(c.detection_topic)
+      + ' · sensor ' + esc(c.detection_camera_id || '—')
+      + ' · ' + c.detection_rate_hz.toFixed(1) + ' Hz'
+      + ' · 데이터 age ' + age + ' (전송 ' + transport + ')'
+      + ' · seq ' + c.detection_sequence
+      + ' · msg ' + c.detection_messages
+      + ' · ' + hid;
+    if(c.detection_invalid || c.detection_dropped){
+      text += ' · <span class="warn">오류 ' + c.detection_invalid
+        + ' / 순서폐기 ' + c.detection_dropped + '</span>';
+    }
+    if(c.detection_error){
+      text += ' · <span class="err">' + esc(c.detection_error) + '</span>';
+    }
+    box.innerHTML = text;
+  } else if(c.detection_source === 'internal'){
+    const age = c.infer_age_s == null ? '—' : c.infer_age_s.toFixed(2)+'s';
+    box.innerHTML = '<b>프리뷰 내장 YOLO</b> · 마지막 추론 '+age;
+  } else {
+    box.innerHTML = '<span class="warn">차량 검출 비활성</span>';
+  }
 }
 
 function renderDetections(i, dets){
@@ -575,13 +648,21 @@ function renderDetections(i, dets){
   if(!box) return;
   if(!dets.length){ box.innerHTML = ''; return; }
   box.innerHTML = '<table><tr><th>검출</th><th>신뢰도</th><th>중심</th>'
-    + '<th>World X (m)</th><th>World Y (m)</th>'
-    + '<th>길이×폭 (m)</th><th>각도</th><th>이동 (cm)</th></tr>'
+    + '<th>World X</th><th>World Y</th>'
+    + '<th>길이×폭</th><th>Yaw</th><th>광축거리</th>'
+    + '<th>영역</th><th>분류/휠베이스</th><th>이동 (cm)</th></tr>'
     + dets.map(d => {
         const w = d.world, g = d.geometry;
         const size = (d.length_m != null && d.width_m != null)
           ? `${d.length_m.toFixed(2)}×${d.width_m.toFixed(2)}` : '—';
-        const ang = g ? `${g.angle_deg.toFixed(1)}°` : '—';
+        const angle = d.yaw_deg != null ? d.yaw_deg : (g ? g.angle_deg : null);
+        const ang = angle != null ? `${angle.toFixed(1)}°` : '—';
+        const axis = d.axis_dist_m != null ? `${d.axis_dist_m.toFixed(2)}m` : '—';
+        const zone = d.in_waiting === true
+          ? '<span class="warn">WAIT</span>' : '일반';
+        const kind = esc(d.vehicle_class || '—')
+          + (d.classified_wheelbase_m != null
+             ? ` / ${d.classified_wheelbase_m.toFixed(2)}m` : '');
         const mv = (d.moved_m != null)
           ? `<b>${(d.moved_m*100).toFixed(1)}</b> / ${(d.path_m*100).toFixed(1)}`
           : '—';
@@ -592,11 +673,13 @@ function renderDetections(i, dets){
           + `<td class="${d.center_source==='mask'?'ok':'warn'}">${esc(d.center_source)}</td>`
           + (w ? `<td class="ok">${w[0].toFixed(3)}</td><td class="ok">${w[1].toFixed(3)}</td>`
                : `<td colspan="2" class="warn">H 없음</td>`)
-          + `<td>${size}</td><td>${ang}</td><td>${mv}</td>`
+          + `<td>${size}</td><td>${ang}</td><td>${axis}</td>`
+          + `<td>${zone}</td><td>${kind}</td><td>${mv}</td>`
           + '</tr>';
       }).join('') + '</table>'
     + '<div class="meta" style="margin-top:4px">이동 = 기준점 대비 직선거리 / '
-    + '경로 = 누적 이동거리. 중심 열이 <b>mask</b> 여야 회전사각형 중심입니다.</div>';
+    + '경로 = 누적 이동거리. Production 중심/윤곽은 실제 검출 노드의 '
+    + 'map 좌표를 영상에 역투영한 값입니다.</div>';
 }
 
 function renderMarkers(i, markers){
@@ -604,22 +687,31 @@ function renderMarkers(i, markers){
   if(!box) return;
   if(!markers.length){ box.innerHTML =
     '<div class="meta" style="margin-top:8px">ArUco 미검출</div>'; return; }
-  box.innerHTML = '<table><tr><th>ID</th><th>중심 px</th><th>World (m)</th>'
-    + '<th>한 변</th><th>변 편차</th><th>대각비</th><th>각도오차</th>'
-    + '<th>mm/px</th><th>판정</th></tr>'
+  box.innerHTML = '<table><tr><th>ID/역할</th><th>중심 px</th><th>World (m)</th>'
+    + '<th>최소 변</th><th>최근 검출</th><th>경계 여유</th>'
+    + '<th title="카메라 원근 투영으로 커질 수 있으며 주행 불량 기준이 아닙니다">원근 편차*</th>'
+    + '<th title="원근 투영 참고값">대각비/각도*</th><th>mm/px</th>'
+    + '<th>주행 입력 상태</th><th>이유</th></tr>'
     + markers.map(m => {
-        const [word, cls] = verdict(m.side_spread);
+        const cls = m.drive_class || 'warn';
         const w = m.world;
-        return `<tr><td>${m.id}</td>`
+        const history = m.history_samples
+          ? `${m.history_hits}/${m.history_samples} (${(m.detection_ratio*100).toFixed(0)}%)`
+          : '측정 중';
+        const role = m.role ? `<span class="meta">${esc(m.role)}</span>` : '';
+        return `<tr><td>${m.id} ${role}</td>`
           + `<td>${m.center[0].toFixed(0)}, ${m.center[1].toFixed(0)}</td>`
           + (w ? `<td class="ok">${w[0].toFixed(2)}, ${w[1].toFixed(2)}</td>`
                : `<td class="warn">—</td>`)
-          + `<td>${m.mean_side_px.toFixed(1)}</td>`
-          + `<td class="${cls}">${(m.side_spread*100).toFixed(1)}%</td>`
-          + `<td>${m.diagonal_ratio.toFixed(3)}</td>`
-          + `<td>${m.max_angle_error_deg.toFixed(1)}°</td>`
+          + `<td>${m.min_side_px.toFixed(1)} px</td>`
+          + `<td>${history}</td>`
+          + `<td>${m.edge_margin_px.toFixed(0)} px</td>`
+          + `<td>${(m.side_spread*100).toFixed(1)}%</td>`
+          + `<td>${m.diagonal_ratio.toFixed(3)} / ${m.max_angle_error_deg.toFixed(1)}°</td>`
           + `<td>${m.mm_per_px.toFixed(2)}</td>`
-          + `<td class="${cls}">${word}</td></tr>`;
+          + `<td class="${cls}"><b>${esc(m.drive_status || '확인 중')}</b></td>`
+          + `<td class="${cls}" style="text-align:left;white-space:normal;min-width:260px">`
+          + `${esc(m.drive_reason || '')}</td></tr>`;
       }).join('') + '</table>';
 }
 
@@ -670,6 +762,77 @@ def _camera_key(text):
     token = str(text).strip().split()[0] if str(text).strip() else ''
     parts = [p for p in token.split('/') if p]
     return parts[0] if parts else (token or 'cam')
+
+
+def camera_ids_match(label, camera_id):
+    """프리뷰 라벨과 production envelope의 카메라 ID를 비교한다.
+
+    영상 토픽은 보통 ``/cctv0/image_rect``라서 라벨이 ``cctv0``이고,
+    검출 노드는 같은 장비를 ``cam0``으로 싣는다. 숫자 suffix가 같은
+    ``camN``/``cctvN``은 같은 카메라로 인정하되 다른 이름은 엄격히 막는다.
+    """
+    left = _camera_key(label).strip().lower()
+    right = _camera_key(camera_id).strip().lower()
+    if left == right:
+        return True
+
+    def canonical(value):
+        for prefix in ('cctv', 'cam'):
+            if value.startswith(prefix) and value[len(prefix):].isdigit():
+                return 'camera-' + value[len(prefix):]
+        return value
+
+    return canonical(left) == canonical(right)
+
+
+def parse_detection_topics(text, labels):
+    """외부 검출 토픽 CSV를 카메라 라벨에 1:1로 연결한다.
+
+    빈 문자열은 내장 YOLO/검출 끔 모드다. 값을 주면 개수가 영상 라벨과
+    정확히 같아야 한다. 암묵적으로 첫 토픽을 모든 카메라에 재사용하면
+    cam0 검출이 cam2 영상에 그려지는 위험한 오진 화면이 되기 때문이다.
+    """
+    raw = str(text).strip()
+    if not raw:
+        return {}
+    topics = [topic.strip() for topic in raw.split(',')]
+    if any(not topic for topic in topics):
+        raise ValueError('detection_topics_csv 에 빈 토픽이 있습니다')
+    if len(topics) != len(labels):
+        raise ValueError(
+            'detection_topics_csv 길이가 image_topics_csv와 다릅니다: '
+            f'{len(topics)} != {len(labels)}')
+    if len(set(topics)) != len(topics):
+        raise ValueError('detection_topics_csv 토픽은 서로 달라야 합니다')
+    return dict(zip(labels, topics))
+
+
+def production_detection_item(detection):
+    """``CameraDetection``을 프리뷰/웹에서 쓰는 JSON-safe dict로 바꾼다."""
+    yaw = detection.yaw
+    yaw_deg = None if yaw is None else math.degrees(float(yaw))
+    polygon = detection.polygon
+    return {
+        'name': 'vehicle',
+        'source': 'production',
+        'camera_id': str(detection.camera_id),
+        'confidence': round(float(detection.confidence), 3),
+        'center_source': 'production',
+        'world': [round(float(detection.center[0]), 3),
+                  round(float(detection.center[1]), 3)],
+        'world_polygon': (
+            None if polygon is None
+            else [[round(float(point[0]), 3), round(float(point[1]), 3)]
+                  for point in polygon]),
+        'yaw_deg': None if yaw_deg is None else round(yaw_deg, 2),
+        'length_m': detection.length_m,
+        'width_m': detection.width_m,
+        'in_waiting': bool(detection.in_waiting),
+        'axis_dist_m': round(float(detection.axis_dist_m), 3),
+        'vehicle_class': detection.vehicle_class,
+        'classified_wheelbase_m': detection.classified_wheelbase_m,
+        'merged_count': 1,
+    }
 
 
 def _homography_candidates(key, search_dirs):
@@ -768,20 +931,14 @@ def mask_center_geometry(mask_polygon):
     }
 
 
-def marker_metrics(corners, marker_size_m):
-    """정사각형 마커가 화면에서 얼마나 찌그러졌는지 잰다.
+def marker_metrics(corners, marker_size_m, frame_width=None,
+                   frame_height=None):
+    """마커의 픽셀 크기와 원근 투영 참고값을 계산한다.
 
-    ArUco 마커는 실제로 정사각형이므로, **보정된 영상에서 정사각형으로
-    보여야 정상**이다. 찌그러짐의 원인은 둘이다.
-
-      * 렌즈 왜곡 보정이 틀림 — 화면 어디에 두든 찌그러진다
-      * 카메라가 기울어짐 — 광축에서 멀어질수록 사다리꼴이 심해진다
-
-    그래서 마커를 화면 여러 위치로 옮겨가며 이 값을 보면 두 원인을
-    구분할 수 있다. 중심에서도 나쁘면 왜곡, 가장자리에서만 나빠지면 기울기다.
-
-    반환값의 ``mm_per_px``는 그 지점의 실효 해상도다. 이 값이 크면
-    (1픽셀이 넓은 거리를 뜻하면) 그 위치의 좌표 정밀도가 낮다.
+    기울어진 카메라에서 바닥과 평행한 정사각형은 정상이어도 사다리꼴로
+    투영된다. 따라서 ``side_spread``·``diagonal_ratio``·각도 오차는 화면의
+    원근 정도를 설명할 뿐 주행 불량 gate가 아니다. 실제 검출 안정성은
+    최소 변, 픽셀 면적, 화면 경계 여유와 검출 연속성으로 따로 판단한다.
     """
     points = [(float(c[0]), float(c[1])) for c in corners]
     if len(points) != 4:
@@ -798,6 +955,19 @@ def marker_metrics(corners, marker_size_m):
     if mean_side <= 1e-6:
         raise ValueError('degenerate marker')
     diagonals = [distance(points[0], points[2]), distance(points[1], points[3])]
+    area_px = abs(sum(
+        points[i][0] * points[(i + 1) % 4][1]
+        - points[(i + 1) % 4][0] * points[i][1]
+        for i in range(4))) / 2.0
+    edge_margin_px = None
+    if frame_width is not None and frame_height is not None:
+        width = float(frame_width)
+        height = float(frame_height)
+        if width <= 0.0 or height <= 0.0:
+            raise ValueError('frame dimensions must be positive')
+        edge_margin_px = min(
+            min(x, width - 1.0 - x, y, height - 1.0 - y)
+            for x, y in points)
 
     # 각 꼭짓점의 내각. 정사각형이면 전부 90도다.
     angles = []
@@ -819,6 +989,10 @@ def marker_metrics(corners, marker_size_m):
         'center': [round(center[0], 1), round(center[1], 1)],
         'sides_px': [round(s, 1) for s in sides],
         'mean_side_px': round(mean_side, 1),
+        'min_side_px': round(min(sides), 1),
+        'area_px': round(area_px, 1),
+        'edge_margin_px': (None if edge_margin_px is None
+                           else round(edge_margin_px, 1)),
         # 변 길이 편차 — 사다리꼴로 찌그러진 정도
         'side_spread': round((max(sides) - min(sides)) / mean_side, 4),
         # 두 대각선 길이 비 — 1.0이면 완전한 정사각형/직사각형
@@ -826,6 +1000,110 @@ def marker_metrics(corners, marker_size_m):
         # 90도에서 가장 많이 벗어난 꼭짓점
         'max_angle_error_deg': round(max(abs(a - 90.0) for a in angles), 2),
         'mm_per_px': round(size * 1000.0 / mean_side, 3),
+    }
+
+
+def marker_readiness(marker, role='', production_visible=None,
+                     production_fresh=False):
+    """프리뷰 지표와 실제 Production gate를 사람이 읽을 문장으로 합친다.
+
+    최종 주행 가능 여부는 ``cctv_robot_marker_node``가 발행하는
+    ``marker_visible``이 결정한다. 픽셀 지표는 TRUE 상태가 간헐적이거나
+    곧 끊길 가능성을 설명하는 보조 진단이다.
+    """
+    if not role:
+        return {
+            'drive_status': '참고용 ID',
+            'drive_class': '',
+            'drive_ready': None,
+            'drive_reason': '주행 마커 ID 목록에 없는 진단용 마커',
+        }
+
+    severe = []
+    warnings = []
+    observations = []
+    if marker is None:
+        observations.append('프리뷰에서는 현재 미검출')
+    else:
+        minimum = float(marker.get('min_side_px') or 0.0)
+        area = float(marker.get('area_px') or 0.0)
+        margin = marker.get('edge_margin_px')
+        samples = int(marker.get('history_samples') or 0)
+        hits = int(marker.get('history_hits') or 0)
+        ratio = float(marker.get('detection_ratio') or 0.0)
+
+        observations.append(f'최소 변 {minimum:.0f}px')
+        observations.append(f'면적 {area:.0f}px²')
+        if margin is not None:
+            observations.append(f'경계 여유 {float(margin):.0f}px')
+        if samples:
+            observations.append(
+                f'최근 검출 {hits}/{samples}회({ratio * 100.0:.0f}%)')
+
+        # Production의 기본 면적 gate는 100px²다. 최소 변/경계/연속성은
+        # 프리뷰가 추가로 알려 주는 보수적인 안정성 지표다.
+        if area < 100.0:
+            severe.append('Production 최소 면적 100px² 미달')
+        elif area < 200.0:
+            warnings.append('마커 면적이 작음')
+        if minimum < 12.0:
+            severe.append('최소 변 12px 미만')
+        elif minimum < 20.0:
+            warnings.append('최소 변이 작음')
+        if margin is not None:
+            if float(margin) < 4.0:
+                severe.append('화면 경계에 붙음')
+            elif float(margin) < 10.0:
+                warnings.append('화면 경계 여유가 작음')
+        if samples >= 6:
+            if ratio < 0.60:
+                severe.append('최근 검출이 자주 끊김')
+            elif ratio < 0.85:
+                warnings.append('최근 검출이 간헐적임')
+
+    detail = ' · '.join(observations)
+    if not production_fresh:
+        reason = (f'/{role}/cctv_marker_visible 수신 없음 — 실제 주행 gate를 '
+                  '확인할 수 없음')
+        if detail:
+            reason += f' · {detail}'
+        return {
+            'drive_status': 'Production 미수신',
+            'drive_class': 'warn',
+            'drive_ready': None,
+            'drive_reason': reason,
+        }
+    if production_visible is not True:
+        reason = ('Production marker_visible=false — 현재 절대 pose를 '
+                  '주행에 공급하지 않음')
+        if severe or warnings:
+            reason += ' · ' + ' · '.join(severe + warnings)
+        elif detail:
+            reason += f' · {detail}'
+        return {
+            'drive_status': 'CCTV pose 입력 중단',
+            'drive_class': 'err',
+            'drive_ready': False,
+            'drive_reason': reason,
+        }
+
+    issues = severe + warnings
+    if issues:
+        reason = 'Production marker_visible=true · ' + ' · '.join(issues)
+        if detail:
+            reason += f' · {detail}'
+        return {
+            'drive_status': 'CCTV pose 입력 정상(주의)',
+            'drive_class': 'warn',
+            'drive_ready': True,
+            'drive_reason': reason,
+        }
+    return {
+        'drive_status': 'CCTV pose 입력 정상',
+        'drive_class': 'ok',
+        'drive_ready': True,
+        'drive_reason': ('Production marker_visible=true'
+                         + (f' · {detail}' if detail else '')),
     }
 
 
@@ -1073,13 +1351,18 @@ class CameraPreviewNode(Node):
         # 마커는 실제로 정사각형이라 "보정이 맞는지" 재는 자로 쓸 수 있다.
         self.declare_parameter('enable_aruco', True)
         self.declare_parameter('aruco_dict', 'DICT_4X4_50')
-        self.declare_parameter('marker_size_m', 0.18)
+        self.declare_parameter('marker_size_m', 0.24)
+        # Keep the generic/CCTV default unless a close mounting-board edge
+        # requires the lower Rear ID0 setting supplied by its launch file.
+        self.declare_parameter('aruco_min_marker_distance_rate', 0.05)
         # 검출은 매 프레임 할 필요가 없다. CPU를 아낀다.
         self.declare_parameter('aruco_every_n', 3)
         # aruco_tracker_node가 보정된 카메라 행렬로 계산한 실제 상대 pose.
         # 픽셀 기반 마커 품질 수치와 구분해 웹 상단에 거리/좌우/yaw를 표시한다.
         self.declare_parameter('relative_pose_topic', '/sync/relative_pose')
         self.declare_parameter('marker_visible_topic', '/sync/marker_visible')
+        self.declare_parameter('relative_pose_frame', 'rear_base')
+        self.declare_parameter('relative_pose_future_tolerance_s', 0.10)
         # --- BEV (bird's eye view) ---
         # 카메라별 homography로 바닥을 위에서 본 그림으로 편다. 두 카메라를
         # 겹쳐 보면 H 두 개가 같은 map 좌표계를 가리키는지 눈으로 확인된다.
@@ -1097,6 +1380,10 @@ class CameraPreviewNode(Node):
         # 검출 결과를 카메라 화면과 BEV 양쪽에 world 좌표와 함께 표시한다.
         # CPU 추론이라 매 프레임 돌리면 프리뷰가 느려진다.
         self.declare_parameter('enable_yolo', True)
+        # Production yolo_bev_map이 이미 추론 중이면 모델을 또 올리지 않고
+        # 그 결과 envelope(std_msgs/String)를 직접 받는다. 영상 토픽/라벨과
+        # 같은 순서로 적으며, 값이 있으면 내장 YOLO보다 항상 우선한다.
+        self.declare_parameter('detection_topics_csv', '')
         self.declare_parameter('model_path', 'yolov8n.pt')
         # COCO 기본: 2=car 3=motorcycle 5=bus 7=truck. 사람은 [0].
         self.declare_parameter('yolo_class_ids', [2, 3, 5, 7])
@@ -1149,6 +1436,9 @@ class CameraPreviewNode(Node):
         self.declare_parameter('guidance_default_mission', '')
         # 마커가 이보다 오래됐으면 로봇을 못 보고 있는 것으로 친다.
         self.declare_parameter('robot_marker_stale_s', 2.0)
+        # 실제 주행용 cctv_robot_marker_node의 Bool gate가 이보다 오래되면
+        # FALSE로 단정하지 않고 '주행 노드 미수신'으로 표시한다.
+        self.declare_parameter('production_marker_visible_stale_s', 1.0)
         # --- 검출 깜빡임 완화 ---
         # 추론 한 번이 아무것도 못 찾았다고 바로 박스를 지우면, 다음 추론까지
         # (yolo_every_n / fps) 초 동안 화면이 빈다. 신뢰도가 문턱 근처에서
@@ -1199,6 +1489,13 @@ class CameraPreviewNode(Node):
         self.calib_w = int(self.get_parameter('calibration_width_px').value)
         self.calib_h = int(self.get_parameter('calibration_height_px').value)
         self.stale_after = float(self.get_parameter('stale_after_s').value)
+        if self.stale_after <= 0.0:
+            raise ValueError('stale_after_s must be positive')
+        self.relative_pose_frame = str(
+            self.get_parameter('relative_pose_frame').value)
+        self.relative_pose_gate = StampGate(
+            self.stale_after, float(self.get_parameter(
+                'relative_pose_future_tolerance_s').value))
         self.enable_aruco = bool(self.get_parameter('enable_aruco').value)
         self.marker_size_m = float(self.get_parameter('marker_size_m').value)
         if self.marker_size_m <= 0.0:
@@ -1207,10 +1504,17 @@ class CameraPreviewNode(Node):
         self.detector = None
         if self.enable_aruco:
             self.detector = ArucoDetectorCompat(
-                cv2, str(self.get_parameter('aruco_dict').value))
+                cv2, str(self.get_parameter('aruco_dict').value),
+                min_marker_distance_rate=float(self.get_parameter(
+                    'aruco_min_marker_distance_rate').value))
         self.web_host = str(self.get_parameter('web_host').value)
         self.web_port = int(self.get_parameter('web_port').value)
         self.enable_yolo = bool(self.get_parameter('enable_yolo').value)
+        self.external_detection_topics = parse_detection_topics(
+            self.get_parameter('detection_topics_csv').value, labels)
+        self.detection_source = (
+            'production' if self.external_detection_topics
+            else 'internal' if self.enable_yolo else 'off')
         self.yolo_cameras = {c.strip() for c in
                              str(self.get_parameter('yolo_cameras_csv').value).split(',')
                              if c.strip()}
@@ -1228,7 +1532,8 @@ class CameraPreviewNode(Node):
         self.mission_cameras = parse_mission_cameras(
             self.get_parameter('yolo_mission_cameras_csv').value)
         stray = sorted(set(self.mission_cameras.values()) - set(self._yolo_labels))
-        if self.enable_yolo and self.yolo_switch_mode == 'mission' and stray:
+        if (self.detection_source == 'internal'
+                and self.yolo_switch_mode == 'mission' and stray):
             raise ValueError(
                 f'yolo_mission_cameras_csv 에 없는 카메라 라벨: {stray}. '
                 f'가능한 라벨: {self._yolo_labels}')
@@ -1256,11 +1561,13 @@ class CameraPreviewNode(Node):
             self.yolo_regions = {}
             self._regions_source = None
         unknown = sorted(set(self.yolo_regions) - set(self._yolo_labels))
-        if self.enable_yolo and self.yolo_switch_mode == 'region' and unknown:
+        if (self.detection_source == 'internal'
+                and self.yolo_switch_mode == 'region' and unknown):
             raise ValueError(
                 f'yolo_regions_csv 에 없는 카메라 라벨이 있습니다: {unknown}. '
                 f'가능한 라벨: {self._yolo_labels}')
-        if (self.enable_yolo and self.yolo_switch_mode == 'region'
+        if (self.detection_source == 'internal'
+                and self.yolo_switch_mode == 'region'
                 and not self.yolo_regions):
             # 구역 없이 region 모드로 두면 담당이 안 정해져 아무 데서도
             # 추론이 안 도는 것처럼 보인다. 여기서 막는 편이 친절하다.
@@ -1304,6 +1611,10 @@ class CameraPreviewNode(Node):
             self.get_parameter('robot_marker_ids_csv').value)
         self.robot_marker_stale_s = float(
             self.get_parameter('robot_marker_stale_s').value)
+        self.production_marker_visible_stale_s = float(
+            self.get_parameter('production_marker_visible_stale_s').value)
+        if self.production_marker_visible_stale_s <= 0.0:
+            raise ValueError('production_marker_visible_stale_s must be positive')
         self.detection_hold_s = float(
             self.get_parameter('detection_hold_s').value)
         if self.detection_hold_s < 0.0:
@@ -1336,6 +1647,21 @@ class CameraPreviewNode(Node):
         # 종료 시 MJPEG 제너레이터가 빠져나오게 한다. 이게 없으면 Ctrl+C 후
         # 스트림 스레드가 남아 프로세스가 안 죽는다.
         self._stop_event = threading.Event()
+        self.production_marker_visibility = {
+            role: {
+                'topic': f'/{role}/cctv_marker_visible',
+                'visible': None,
+                'wall': 0.0,
+            }
+            for role in self.robot_marker_ids
+        }
+        self._production_marker_subscriptions = []
+        for role, runtime in self.production_marker_visibility.items():
+            subscription = self.create_subscription(
+                Bool, runtime['topic'],
+                lambda msg, r=role: self.production_marker_visible_cb(r, msg),
+                SENSOR_LATEST_QOS)
+            self._production_marker_subscriptions.append(subscription)
         self._mask_shape = None
         self.relative_pose_topic = str(
             self.get_parameter('relative_pose_topic').value).strip()
@@ -1361,11 +1687,26 @@ class CameraPreviewNode(Node):
                 'label': label, 'topic': topic, 'frame': None,
                 'wall': 0.0, 'count': 0, 'fps': 0.0, 'fps_wall': time.monotonic(),
                 'fps_count': 0, 'markers': [], 'marker_wall': 0.0,
+                # 최근 ArUco 검사 15회의 ID 집합. 프레임 FPS가 아니라 실제
+                # detector 실행 횟수를 분모로 써서 aruco_every_n과 무관하다.
+                'marker_history': [],
                 'detections': [], 'detection_wall': 0.0,
+                # 외부/내장 검출 공통 상태. ``detections``는 화면 깜빡임을
+                # 막기 위해 hold될 수 있지만 slot_detections는 최신 원본이다.
+                'slot_detections': [],
                 # inference_wall: 결과가 비었더라도 '추론이 돌았다'는 사실.
                 #   카메라가 살아 있는지 판단할 때 이걸 쓴다.
                 # detection_wall: 마지막으로 **뭔가 찾은** 시각. 유지 시간 계산용.
                 'inference_wall': 0.0, 'held': False, 'infer_ms': 0.0,
+                'detection_source': self.detection_source,
+                'detection_topic': self.external_detection_topics.get(label, ''),
+                'detection_camera_id': '', 'detection_sequence': 0,
+                'detection_stamp_ns': 0, 'detection_messages': 0,
+                'detection_invalid': 0, 'detection_dropped': 0,
+                'detection_rate_hz': 0.0, 'detection_rate_count': 0,
+                'detection_rate_wall': time.monotonic(),
+                'transport_age_s': None, 'homography_ok': None,
+                'source_coverage': None, 'detection_error': '',
             }
             self.cameras.append(state)
             self.create_subscription(
@@ -1381,6 +1722,19 @@ class CameraPreviewNode(Node):
 
         self._bev_mode = 'anaglyph'
         self._setup_bev(labels)
+
+        # 외부 envelope는 world->pixel 역투영에 homography가 필요하다.
+        # _setup_bev가 모든 행렬/슬롯 상태를 만든 뒤에 구독을 연결해야 첫
+        # 메시지가 생성자 중간에 들어와도 초기화 race가 없다.
+        self._external_detection_subscriptions = []
+        for state in self.cameras:
+            detection_topic = state['detection_topic']
+            if detection_topic:
+                subscription = self.create_subscription(
+                    String, detection_topic,
+                    lambda msg, s=state: self.external_detection_cb(s, msg),
+                    SENSOR_LATEST_QOS)
+                self._external_detection_subscriptions.append(subscription)
 
         self._app = self._make_app()
         self._server = make_server(
@@ -1398,7 +1752,9 @@ class CameraPreviewNode(Node):
             f'{self.web_port} 를 forward 하세요')
         for state in self.cameras:
             tag = ''
-            if self.yolo is not None:
+            if state['detection_topic']:
+                tag = f"  [Production 검출 {state['detection_topic']}]"
+            elif self.yolo is not None:
                 label = state['label']
                 if label not in self._yolo_labels:
                     tag = '  [YOLO 제외]'
@@ -1428,6 +1784,18 @@ class CameraPreviewNode(Node):
 
     # ------------------------------------------------------------------
     def relative_pose_cb(self, msg):
+        if msg.header.frame_id != self.relative_pose_frame:
+            self.get_logger().warn(
+                f'상대 pose frame 무시: {msg.header.frame_id}',
+                throttle_duration_sec=5.0)
+            return
+        accepted, reason = self.relative_pose_gate.accept(
+            stamp_to_ns(msg.header.stamp), self.get_clock().now().nanoseconds)
+        if not accepted:
+            self.get_logger().warn(
+                f'상대 pose stamp 무시: {reason}',
+                throttle_duration_sec=5.0)
+            return
         try:
             metrics = relative_pose_metrics(msg)
         except ValueError as exc:
@@ -1442,6 +1810,15 @@ class CameraPreviewNode(Node):
         with self._lock:
             self.marker_visible = bool(msg.data)
             self.marker_visible_wall = time.monotonic()
+
+    def production_marker_visible_cb(self, role, msg):
+        """실제 CCTV 절대 pose 노드의 역할별 유효성 gate를 저장한다."""
+        with self._lock:
+            runtime = self.production_marker_visibility.get(role)
+            if runtime is None:
+                return
+            runtime['visible'] = bool(msg.data)
+            runtime['wall'] = time.monotonic()
 
     def image_cb(self, state, msg):
         try:
@@ -1468,6 +1845,7 @@ class CameraPreviewNode(Node):
                 state['markers'] = markers
                 state['marker_wall'] = now
             if detections is not None:
+                state['slot_detections'] = detections
                 self._apply_detection_result(state, detections, now)
             state['count'] += 1
             state['fps_count'] += 1
@@ -1481,6 +1859,112 @@ class CameraPreviewNode(Node):
             # empty_confirm_frames 가 실제로는 훨씬 짧은 시간이 되어
             # 런타임(cctv_merge)과 판정 타이밍이 어긋난다.
             self._update_slots(now)
+
+    def _project_production_detection(self, label, item):
+        """Production world 검출을 현재 카메라 영상에 되투영한다.
+
+        envelope에는 일부러 픽셀 bbox를 중복 저장하지 않는다. segmentation
+        polygon과 중심은 map 좌표가 기준이므로, 프리뷰가 가진 같은
+        homography의 역행렬로 화면에 되그린다. polygon이 없는 COCO fallback은
+        중심 십자만 표시한다.
+        """
+        center = item.get('world')
+        if center is not None:
+            pixel = self._world_to_pixel(label, center[0], center[1])
+            if pixel is not None:
+                item['center_px'] = [round(pixel[0], 1), round(pixel[1], 1)]
+        polygon = item.get('world_polygon')
+        if polygon:
+            projected = [self._world_to_pixel(label, point[0], point[1])
+                         for point in polygon]
+            if all(point is not None for point in projected):
+                item['pixel_polygon'] = [
+                    [round(point[0], 1), round(point[1], 1)]
+                    for point in projected]
+                xs = [point[0] for point in projected]
+                ys = [point[1] for point in projected]
+                item['box'] = [round(min(xs), 1), round(min(ys), 1),
+                               round(max(xs), 1), round(max(ys), 1)]
+        return item
+
+    def external_detection_cb(self, state, msg):
+        """Production ``/<camera>/detections`` envelope를 프리뷰에 반영한다."""
+        now = time.monotonic()
+        try:
+            envelope = decode_detection_envelope(msg.data)
+        except (TypeError, ValueError) as exc:
+            with self._lock:
+                state['detection_invalid'] += 1
+                state['detection_error'] = f'JSON/envelope 오류: {exc}'
+            self.get_logger().warn(
+                f"[{state['label']}] {state['detection_topic']} 해석 실패: {exc}",
+                throttle_duration_sec=5.0)
+            return
+
+        camera_id = envelope['camera_id']
+        if not camera_ids_match(state['label'], camera_id):
+            reason = (f"camera_id 불일치: 화면={state['label']} "
+                      f'envelope={camera_id}')
+            with self._lock:
+                state['detection_invalid'] += 1
+                state['detection_error'] = reason
+            self.get_logger().warn(reason, throttle_duration_sec=5.0)
+            return
+
+        stamp_ns = int(envelope.get('stamp_ns') or 0)
+        sequence = int(envelope.get('sequence') or 0)
+        with self._lock:
+            previous_stamp = int(state.get('detection_stamp_ns') or 0)
+            previous_sequence = int(state.get('detection_sequence') or 0)
+            out_of_order = (
+                stamp_ns > 0 and previous_stamp > 0
+                and (stamp_ns < previous_stamp
+                     or (stamp_ns == previous_stamp
+                         and sequence <= previous_sequence)))
+            if out_of_order:
+                state['detection_dropped'] += 1
+                state['detection_error'] = (
+                    f'오래된 envelope 폐기: seq={sequence}, '
+                    f'이전={previous_sequence}')
+        if out_of_order:
+            return
+
+        items = [self._project_production_detection(
+                    state['label'], production_detection_item(detection))
+                 for detection in envelope['detections']]
+        self._update_tracks(state['label'], items)
+        self._note_yolo_target(items, now)
+
+        ros_now_ns = self.get_clock().now().nanoseconds
+        transport_age = (
+            None if stamp_ns <= 0
+            else round((ros_now_ns - stamp_ns) / 1_000_000_000.0, 3))
+        coverage = envelope.get('coverage_polygon')
+        coverage_json = (
+            None if coverage is None
+            else [[float(point[0]), float(point[1])] for point in coverage])
+        with self._lock:
+            state['detection_camera_id'] = camera_id
+            state['detection_sequence'] = sequence
+            state['detection_stamp_ns'] = stamp_ns
+            state['detection_messages'] += 1
+            state['detection_rate_count'] += 1
+            rate_elapsed = now - state['detection_rate_wall']
+            if rate_elapsed >= 1.0:
+                state['detection_rate_hz'] = (
+                    state['detection_rate_count'] / rate_elapsed)
+                state['detection_rate_count'] = 0
+                state['detection_rate_wall'] = now
+            state['transport_age_s'] = transport_age
+            state['homography_ok'] = bool(envelope.get('homography_ok', False))
+            state['source_coverage'] = coverage_json
+            state['detection_error'] = ''
+            state['slot_detections'] = items
+            state['infer_ms'] = 0.0
+            self._apply_detection_result(state, items, now)
+
+        # 슬롯 갱신은 _lock을 다시 잡으므로 위 임계영역 밖에서 호출한다.
+        self._update_slots(now)
 
     def _apply_detection_result(self, state, detections, now):
         """추론 결과를 카메라 상태에 반영한다.
@@ -1512,7 +1996,7 @@ class CameraPreviewNode(Node):
         return state
 
     def _detect_markers(self, frame, state):
-        """프레임에서 ArUco를 찾아 찌그러짐 지표까지 계산해 돌려준다."""
+        """프레임에서 ArUco를 찾아 주행 안정성 보조 지표까지 계산한다."""
         try:
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             corners, ids, _ = self.detector.detect_markers(gray)
@@ -1520,8 +2004,10 @@ class CameraPreviewNode(Node):
             self.get_logger().warn(
                 f"[{state['label']}] ArUco 검출 실패: {exc}",
                 throttle_duration_sec=10.0)
+            self._record_marker_sample(state, [])
             return []
         if ids is None:
+            self._record_marker_sample(state, [])
             return []
         try:
             flat_ids = [int(v) for v in ids.flatten()]
@@ -1529,6 +2015,10 @@ class CameraPreviewNode(Node):
             flat_ids = [int(v) for v in ids]
 
         found = []
+        frame_height, frame_width = frame.shape[:2]
+        role_by_id = {
+            marker_id: role for role, marker_id in self.robot_marker_ids.items()
+        }
         for index, marker_id in enumerate(flat_ids):
             candidate = corners[index]
             if len(candidate) == 1 and hasattr(candidate[0], '__len__'):
@@ -1536,32 +2026,111 @@ class CameraPreviewNode(Node):
             else:
                 points = candidate
             try:
-                metrics = marker_metrics(points, self.marker_size_m)
+                metrics = marker_metrics(
+                    points, self.marker_size_m, frame_width, frame_height)
             except (TypeError, ValueError):
                 continue
             metrics['id'] = marker_id
+            metrics['role'] = role_by_id.get(marker_id, '')
             metrics['corners'] = [[float(pt[0]), float(pt[1])] for pt in points]
             metrics['world'] = self._pixel_to_world(
                 state['label'], metrics['center'][0], metrics['center'][1])
             found.append(metrics)
         found.sort(key=lambda m: m['id'])
+        self._record_marker_sample(state, found)
         return found
+
+    @staticmethod
+    def _record_marker_sample(state, found):
+        """최근 detector 실행 15회의 ID별 검출률을 현재 행에 붙인다."""
+        history = state.setdefault('marker_history', [])
+        history.append({int(marker['id']) for marker in found})
+        del history[:-15]
+        samples = len(history)
+        for marker in found:
+            hits = sum(int(marker['id']) in sample for sample in history)
+            marker['history_hits'] = hits
+            marker['history_samples'] = samples
+            marker['detection_ratio'] = round(hits / max(1, samples), 4)
+
+    def _decorate_marker(self, marker, now):
+        """마커 행에 현재 Production gate 판정과 이유를 붙인다."""
+        item = dict(marker)
+        role = str(item.get('role') or '')
+        runtime = self.production_marker_visibility.get(role)
+        age = None
+        fresh = False
+        visible = None
+        if runtime is not None and runtime['wall'] > 0.0:
+            age = max(0.0, now - runtime['wall'])
+            fresh = age <= self.production_marker_visible_stale_s
+            visible = runtime['visible'] if fresh else None
+        item['production_topic'] = '' if runtime is None else runtime['topic']
+        item['production_age_s'] = None if age is None else round(age, 3)
+        item.update(marker_readiness(item, role, visible, fresh))
+        return item
+
+    def _drive_marker_summary(self, cameras, now):
+        """카메라별 표와 별개인 front/rear 실제 주행 gate 요약."""
+        rows = []
+        for role, marker_id in self.robot_marker_ids.items():
+            sightings = []
+            for camera in cameras:
+                for marker in camera.get('markers') or []:
+                    if int(marker.get('id', -1)) == int(marker_id):
+                        sightings.append((camera['label'], marker))
+            representative = None
+            if sightings:
+                representative = max(
+                    (marker for _, marker in sightings),
+                    key=lambda marker: float(marker.get('area_px') or 0.0))
+            runtime = self.production_marker_visibility[role]
+            age = (None if runtime['wall'] <= 0.0
+                   else max(0.0, now - runtime['wall']))
+            fresh = (age is not None and
+                     age <= self.production_marker_visible_stale_s)
+            visible = runtime['visible'] if fresh else None
+            assessment = marker_readiness(
+                representative, role, visible, fresh)
+            rows.append({
+                'role': role,
+                'id': int(marker_id),
+                'topic': runtime['topic'],
+                'production_fresh': bool(fresh),
+                'production_visible': visible,
+                'production_age_s': None if age is None else round(age, 3),
+                'seen_cameras': [label for label, _ in sightings],
+                'status': assessment['drive_status'],
+                'class': assessment['drive_class'],
+                'drive_ready': assessment['drive_ready'],
+                'reason': assessment['drive_reason'],
+            })
+        return rows
 
     def _draw_markers(self, canvas, markers):
         for marker in markers:
             pts = np.asarray(marker['corners'], dtype=np.int32)
-            # 변 길이 편차가 크면 빨강, 보통이면 노랑, 좋으면 초록
+            # 색은 raw 사다리꼴 정도가 아니라 실제 주행 gate를 따른다.
             spread = marker['side_spread']
-            colour = ((80, 230, 100) if spread < 0.05
-                      else (40, 200, 255) if spread < 0.12
-                      else (60, 60, 240))
+            drive_class = marker.get('drive_class')
+            colour = ({
+                'ok': (80, 230, 100),
+                'warn': (40, 200, 255),
+                'err': (60, 60, 240),
+            }.get(drive_class, (170, 170, 170)))
             cv2.polylines(canvas, [pts], True, colour, 2)
             # 첫 코너(TL)를 굵게 찍어 코너 순서를 눈으로 확인한다
             cv2.circle(canvas, tuple(pts[0]), 5, colour, -1)
             cx, cy = (int(marker['center'][0]), int(marker['center'][1]))
+            drive_tag = {
+                'ok': 'RUN OK', 'warn': 'RUN CHECK', 'err': 'RUN BLOCK',
+            }.get(drive_class, 'REFERENCE')
             lines = [
-                f"ID{marker['id']}  {marker['mean_side_px']:.0f}px",
-                f"dev {spread * 100:.1f}%  {marker['mm_per_px']:.1f}mm/px",
+                f"ID{marker['id']} {marker.get('role', '')}  {drive_tag}",
+                (f"min {marker['min_side_px']:.0f}px  "
+                 f"seen {marker.get('history_hits', 0)}/"
+                 f"{marker.get('history_samples', 0)}"),
+                f"perspective {spread * 100:.1f}% (info)",
             ]
             world = marker.get('world')
             if world is not None:
@@ -1587,6 +2156,11 @@ class CameraPreviewNode(Node):
         self.yolo = None
         self.yolo_error = ''
         self.yolo_names = {}
+        if self.detection_source == 'production':
+            self.yolo_error = ''
+            self.get_logger().info(
+                '프리뷰 내장 YOLO 생략 — Production 검출 토픽을 직접 구독')
+            return
         if not self.enable_yolo:
             self.yolo_error = 'enable_yolo=false'
             return
@@ -1941,6 +2515,9 @@ class CameraPreviewNode(Node):
         return {'path': self.yolo_regions_file, 'csv': text}
 
     def set_yolo_switch_mode(self, mode):
+        if getattr(self, 'detection_source', 'internal') != 'internal':
+            raise ValueError(
+                '카메라 전환은 프리뷰 내장 YOLO 모드에서만 바꿀 수 있습니다')
         mode = str(mode).strip().lower()
         if mode not in ('off', 'region', 'mission'):
             raise ValueError("yolo_switch_mode 는 'off' | 'region' | 'mission'")
@@ -1993,15 +2570,20 @@ class CameraPreviewNode(Node):
         live_coverage = {}
         with self._lock:
             snapshot = [(state['label'],
-                         state.get('detections') or [],
+                         ((state.get('slot_detections') or [])
+                          if 'slot_detections' in state
+                          else (state.get('detections') or [])),
                          # '검출이 있었나'가 아니라 '추론이 돌았나'로 본다.
                          # 빈 결과도 "저 칸에 차가 없다"는 유효한 관측이다.
-                         state.get('inference_wall', 0.0))
+                         state.get('inference_wall', 0.0),
+                         state.get('source_coverage'))
                         for state in self.cameras]
-        for label, found, wall in snapshot:
+        for label, found, wall, source_coverage in snapshot:
             if wall <= 0.0 or (now - wall) > self.slot_detection_stale_s:
                 continue
-            coverage = self.camera_coverage.get(label)
+            # Production envelope가 보낸 실제 coverage를 우선한다. 프리뷰가
+            # 따로 계산한 값과 달라져 화면 판정이 런타임과 어긋나는 일을 막는다.
+            coverage = source_coverage or self.camera_coverage.get(label)
             if coverage is None:
                 continue
             live_coverage[label] = coverage
@@ -2188,8 +2770,19 @@ class CameraPreviewNode(Node):
 
     def _draw_detections(self, canvas, detections):
         for item in detections:
-            x1, y1, x2, y2 = [int(round(v)) for v in item['box']]
-            cv2.rectangle(canvas, (x1, y1), (x2, y2), (255, 170, 60), 1)
+            box = item.get('box')
+            if box is not None:
+                x1, y1, x2, y2 = [int(round(v)) for v in box]
+                cv2.rectangle(canvas, (x1, y1), (x2, y2),
+                              (255, 170, 60), 1)
+            else:
+                x1 = y1 = 0
+
+            pixel_polygon = item.get('pixel_polygon')
+            if pixel_polygon:
+                polygon = np.asarray(pixel_polygon, dtype=np.int32)
+                cv2.polylines(canvas, [polygon], True, (80, 230, 100), 2,
+                              cv2.LINE_AA)
 
             geometry = item.get('geometry')
             if geometry is not None:
@@ -2216,7 +2809,16 @@ class CameraPreviewNode(Node):
                                cv2.MARKER_CROSS, 18, 2)
                 cv2.circle(canvas, (cx, cy), 6, (0, 0, 255), 2)
 
-            world = item['world']
+            center_px = item.get('center_px')
+            if center_px is not None and geometry is None:
+                cx, cy = int(round(center_px[0])), int(round(center_px[1]))
+                cv2.drawMarker(canvas, (cx, cy), (0, 0, 255),
+                               cv2.MARKER_CROSS, 18, 2)
+                cv2.circle(canvas, (cx, cy), 6, (0, 0, 255), 2)
+                if box is None:
+                    x1, y1 = cx, cy
+
+            world = item.get('world')
             text = f"{item['name']} {item['confidence']:.2f}"
             if world is not None:
                 text += f"  ({world[0]:.2f}, {world[1]:.2f})m"
@@ -2225,6 +2827,26 @@ class CameraPreviewNode(Node):
                         0.45, (0, 0, 0), 3, cv2.LINE_AA)
             cv2.putText(canvas, text, origin, cv2.FONT_HERSHEY_SIMPLEX,
                         0.45, (255, 170, 60), 1, cv2.LINE_AA)
+
+            if item.get('source') == 'production':
+                details = []
+                if (item.get('length_m') is not None
+                        and item.get('width_m') is not None):
+                    details.append(
+                        f"{item['length_m']:.2f}x{item['width_m']:.2f}m")
+                if item.get('yaw_deg') is not None:
+                    details.append(f"yaw {item['yaw_deg']:.1f}deg")
+                if item.get('in_waiting'):
+                    details.append('WAIT')
+                if details:
+                    detail_origin = (x1, max(30, y1 - 23))
+                    detail_text = '  '.join(details)
+                    cv2.putText(canvas, detail_text, detail_origin,
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.42,
+                                (0, 0, 0), 3, cv2.LINE_AA)
+                    cv2.putText(canvas, detail_text, detail_origin,
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.42,
+                                (80, 230, 100), 1, cv2.LINE_AA)
 
             if item.get('tracked'):
                 # cv2.putText 는 한글 글리프가 없어 ASCII 로 적는다.
@@ -2453,19 +3075,21 @@ class CameraPreviewNode(Node):
                 cv2.drawContours(canvas, contours, -1,
                                  palette[index % len(palette)], 2)
 
-        for index, label in enumerate(self._yolo_labels):
-            rect = self.yolo_regions.get(label)
-            if rect is None:
-                continue
-            colour = REGION_COLOURS[index % len(REGION_COLOURS)]
-            corner_a = to_px(rect[0], rect[3])
-            corner_b = to_px(rect[2], rect[1])
-            live = (label == self._yolo_active and not self._yolo_scanning)
-            cv2.rectangle(canvas, corner_a, corner_b, colour,
-                          3 if live else 1)
-            cv2.putText(canvas, label + (' <-YOLO' if live else ''),
-                        (corner_a[0] + 6, corner_a[1] + 18),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 1, cv2.LINE_AA)
+        if self.detection_source == 'internal':
+            for index, label in enumerate(self._yolo_labels):
+                rect = self.yolo_regions.get(label)
+                if rect is None:
+                    continue
+                colour = REGION_COLOURS[index % len(REGION_COLOURS)]
+                corner_a = to_px(rect[0], rect[3])
+                corner_b = to_px(rect[2], rect[1])
+                live = (label == self._yolo_active and not self._yolo_scanning)
+                cv2.rectangle(canvas, corner_a, corner_b, colour,
+                              3 if live else 1)
+                cv2.putText(canvas, label + (' <-YOLO' if live else ''),
+                            (corner_a[0] + 6, corner_a[1] + 18),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 1,
+                            cv2.LINE_AA)
 
         for slot_id, polygon in self.slots:
             pts = np.asarray([to_px(x, y) for x, y in polygon], dtype=np.int32)
@@ -2497,10 +3121,18 @@ class CameraPreviewNode(Node):
                 world = item.get('world')
                 if world is None:
                     continue
+                world_polygon = item.get('world_polygon')
+                if world_polygon:
+                    polygon = np.asarray(
+                        [to_px(point[0], point[1])
+                         for point in world_polygon], dtype=np.int32)
+                    cv2.polylines(canvas, [polygon], True, colour, 2,
+                                  cv2.LINE_AA)
                 point = to_px(world[0], world[1])
                 cv2.circle(canvas, point, 7, colour, -1)
                 cv2.circle(canvas, point, 7, (0, 0, 0), 1)
                 text = (f"{item['name']} "
+                        f"{item['confidence']:.2f} "
                         f"({world[0]:.2f},{world[1]:.2f})")
                 for thickness, shade in ((3, (0, 0, 0)), (1, colour)):
                     cv2.putText(canvas, text, (point[0] + 10, point[1] - 6),
@@ -2705,6 +3337,8 @@ class CameraPreviewNode(Node):
         영상에서는 원근 때문에 **직사각형이 아니라 사다리꼴**로 보인다.
         그게 정상이고, 오히려 바닥에 제대로 붙었다는 표시다.
         """
+        if self.detection_source != 'internal':
+            return
         rect = self.yolo_regions.get(label)
         # numpy 배열은 truthiness 로 검사하면 ValueError 가 난다. is None 으로만 본다.
         if rect is None or self.pixel_to_world_H.get(label) is None:
@@ -2751,7 +3385,14 @@ class CameraPreviewNode(Node):
         cv2.line(canvas, (cx - 18, cy), (cx + 18, cy), (0, 200, 255), 1)
         cv2.line(canvas, (cx, cy - 18), (cx, cy + 18), (0, 200, 255), 1)
         label = f"{state['label']}  {width}x{height}  {state['fps']:.1f}fps"
-        if state.get('infer_ms'):
+        if state.get('detection_source') == 'production':
+            age = (time.monotonic() - state['inference_wall']
+                   if state.get('inference_wall') else None)
+            label += (f"  PROD {state.get('detection_rate_hz', 0.0):.1f}Hz"
+                      f"  det {len(state.get('detections') or [])}")
+            if age is not None:
+                label += f"  age {age:.2f}s"
+        elif state.get('infer_ms'):
             label += f"  yolo {state['infer_ms']:.0f}ms"
         if state.get('held'):
             label += '  [HOLD]'
@@ -2784,6 +3425,11 @@ class CameraPreviewNode(Node):
             state = self.cameras[index]
             frame = None if state['frame'] is None else state['frame'].copy()
             snapshot = dict(state)
+            now = time.monotonic()
+            snapshot['markers'] = [
+                self._decorate_marker(marker, now)
+                for marker in (state.get('markers') or [])
+            ]
         canvas = self._placeholder(snapshot) if frame is None \
             else self._annotate(frame, snapshot)
         ok, buf = cv2.imencode(
@@ -2810,6 +3456,13 @@ class CameraPreviewNode(Node):
                     frame = state['frame']
                     alive = (frame is not None and
                              now - state['wall'] <= self.stale_after)
+                    inference_age = (
+                        None if not state.get('inference_wall')
+                        else max(0.0, now - state['inference_wall']))
+                    transport_age = state.get('transport_age_s')
+                    source_age = (
+                        None if transport_age is None or inference_age is None
+                        else round(float(transport_age) + inference_age, 3))
                     payload.append({
                         'label': state['label'],
                         'topic': state['topic'],
@@ -2821,7 +3474,9 @@ class CameraPreviewNode(Node):
                         'calib_width': self.calib_w,
                         'calib_height': self.calib_h,
                         'markers': [
-                            {k: v for k, v in m.items() if k != 'corners'}
+                            {k: v for k, v in
+                             self._decorate_marker(m, now).items()
+                             if k != 'corners'}
                             for m in (state['markers'] or [])
                         ] if now - state['marker_wall'] <= self.stale_after else [],
                         'detections': (
@@ -2830,9 +3485,29 @@ class CameraPreviewNode(Node):
                             else []),
                         'held': bool(state.get('held')),
                         'infer_ms': float(state.get('infer_ms') or 0.0),
-                        'infer_age_s': (
-                            None if not state.get('inference_wall')
-                            else round(now - state['inference_wall'], 2)),
+                        'infer_age_s': (None if inference_age is None
+                                        else round(inference_age, 2)),
+                        'detection_live': bool(
+                            inference_age is not None
+                            and inference_age <= self.stale_after),
+                        'detection_source': state.get('detection_source', 'off'),
+                        'detection_topic': state.get('detection_topic', ''),
+                        'detection_camera_id': state.get(
+                            'detection_camera_id', ''),
+                        'detection_sequence': int(state.get(
+                            'detection_sequence', 0)),
+                        'detection_messages': int(state.get(
+                            'detection_messages', 0)),
+                        'detection_invalid': int(state.get(
+                            'detection_invalid', 0)),
+                        'detection_dropped': int(state.get(
+                            'detection_dropped', 0)),
+                        'detection_rate_hz': round(float(state.get(
+                            'detection_rate_hz', 0.0)), 2),
+                        'source_age_s': source_age,
+                        'transport_age_s': transport_age,
+                        'homography_ok': state.get('homography_ok'),
+                        'detection_error': state.get('detection_error', ''),
                     })
                 pose = None if self.relative_pose is None \
                     else dict(self.relative_pose)
@@ -2843,6 +3518,7 @@ class CameraPreviewNode(Node):
                 visible = self.marker_visible \
                     if (visible_age is not None and
                         visible_age <= self.stale_after) else None
+                drive_markers = self._drive_marker_summary(payload, now)
             relative_pose = {
                 'configured': bool(self.relative_pose_topic),
                 'topic': self.relative_pose_topic,
@@ -2860,6 +3536,16 @@ class CameraPreviewNode(Node):
                 for marker in cam['markers']:
                     seen.setdefault(marker['id'], []).append(cam['label'])
             shared = sorted(mid for mid, cams in seen.items() if len(cams) > 1)
+            live_detection_labels = [
+                camera['label'] for camera in payload
+                if camera['detection_live']]
+            if self.detection_source == 'production':
+                detection_ready = bool(live_detection_labels)
+                detection_error = (
+                    '' if detection_ready else 'Production 검출 토픽 수신 대기')
+            else:
+                detection_ready = self.yolo is not None
+                detection_error = self.yolo_error
             return jsonify({
                 'cameras': payload,
                 'grid_step_px': self.grid_step,
@@ -2876,9 +3562,13 @@ class CameraPreviewNode(Node):
                     for label, track in self.tracks.items()
                 },
                 'relative_pose': relative_pose,
+                'drive_markers': drive_markers,
                 'yolo': {
-                    'ready': self.yolo is not None,
-                    'error': self.yolo_error,
+                    'ready': detection_ready,
+                    'error': detection_error,
+                    'source': self.detection_source,
+                    'live_cameras': live_detection_labels,
+                    'configured_topics': dict(self.external_detection_topics),
                     'classes': (sorted(self.yolo_class_ids)
                                 if self.yolo is not None else []),
                     'cameras': sorted(self.yolo_cameras) or 'all',
@@ -2898,6 +3588,7 @@ class CameraPreviewNode(Node):
                     'regions_source': self._regions_source,
                     'labels': list(self._yolo_labels),
                     'target': self._yolo_target,
+                    'controls_enabled': self.detection_source == 'internal',
                 },
                 'slots': {
                     'ready': self.slot_tracker is not None,

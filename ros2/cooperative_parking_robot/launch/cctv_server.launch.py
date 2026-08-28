@@ -101,7 +101,7 @@ def generate_launch_description():
         DeclareLaunchArgument('rear_marker_id', default_value='1'),
         DeclareLaunchArgument('min_marker_area_px', default_value='100.0'),
         DeclareLaunchArgument('min_marker_area_ratio', default_value='0.0003'),
-        DeclareLaunchArgument('marker_size_m', default_value='0.175'),
+        DeclareLaunchArgument('marker_size_m', default_value='0.24'),
         DeclareLaunchArgument('front_yaw_offset_deg', default_value='0.0'),
         DeclareLaunchArgument('rear_yaw_offset_deg', default_value='0.0'),
         DeclareLaunchArgument('front_marker_offset_x_m', default_value='0.0'),

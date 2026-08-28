@@ -25,6 +25,11 @@ def resolve_camera_source(camera_device: str, camera_id: int):
     return device if device else int(camera_id)
 
 
+def preview_frame_due(now: float, last: float | None, period: float) -> bool:
+    """Return whether a rate-limited diagnostic preview should publish."""
+    return last is None or now - last >= period
+
+
 class OpenCvCameraNode(Node):
     def __init__(self):
         super().__init__('opencv_camera_node')
@@ -33,6 +38,10 @@ class OpenCvCameraNode(Node):
         self.declare_parameter('camera_device', '')
         self.declare_parameter('gstreamer_pipeline', '')
         self.declare_parameter('output_topic', '/cctv/image_raw')
+        self.declare_parameter('preview_topic', '')
+        self.declare_parameter('preview_width', 640)
+        self.declare_parameter('preview_height', 360)
+        self.declare_parameter('preview_fps', 4.0)
         self.declare_parameter('frame_id', 'cctv_camera')
         self.declare_parameter('width', 1280)
         self.declare_parameter('height', 720)
@@ -52,10 +61,18 @@ class OpenCvCameraNode(Node):
             self.camera_device, self.camera_id)
         self.pipeline = str(self.get_parameter('gstreamer_pipeline').value)
         self.output_topic = str(self.get_parameter('output_topic').value)
+        self.preview_topic = str(
+            self.get_parameter('preview_topic').value).strip()
         self.frame_id = str(self.get_parameter('frame_id').value)
         self.width = int(self.get_parameter('width').value)
         self.height = int(self.get_parameter('height').value)
         self.fps = float(self.get_parameter('fps').value)
+        self.preview_width = int(
+            self.get_parameter('preview_width').value)
+        self.preview_height = int(
+            self.get_parameter('preview_height').value)
+        self.preview_fps = float(
+            self.get_parameter('preview_fps').value)
         self.buffer_size = int(self.get_parameter('buffer_size').value)
         self.require_camera = bool(self.get_parameter('require_camera').value)
         self.reopen_interval = float(
@@ -65,6 +82,14 @@ class OpenCvCameraNode(Node):
             raise ValueError('camera width/height must be positive')
         if self.fps <= 0.0:
             raise ValueError('camera fps must be positive')
+        if self.preview_topic and (
+                self.preview_width <= 0 or self.preview_height <= 0 or
+                self.preview_width > self.width or
+                self.preview_height > self.height or
+                self.preview_fps <= 0.0 or self.preview_fps > self.fps):
+            raise ValueError(
+                'preview size must fit the main image and preview_fps must '
+                'be in (0, fps]')
         if self.reopen_interval <= 0.0:
             raise ValueError('reopen_interval_s must be positive')
         if not self.output_topic:
@@ -73,6 +98,13 @@ class OpenCvCameraNode(Node):
         self.bridge = CvBridge()
         self.publisher = self.create_publisher(
             Image, self.output_topic, qos_profile_sensor_data)
+        self.preview_publisher = None
+        self.preview_period = None
+        self.last_preview_publish = None
+        if self.preview_topic:
+            self.preview_publisher = self.create_publisher(
+                Image, self.preview_topic, qos_profile_sensor_data)
+            self.preview_period = 1.0 / self.preview_fps
         self.capture = None
         self.last_open_attempt = 0.0
         self.failure_count = 0
@@ -151,6 +183,24 @@ class OpenCvCameraNode(Node):
         message.header.stamp = self.get_clock().now().to_msg()
         message.header.frame_id = self.frame_id
         self.publisher.publish(message)
+
+        now = time.monotonic()
+        if (self.preview_publisher is not None and
+                preview_frame_due(
+                    now, self.last_preview_publish, self.preview_period)):
+            if (frame.shape[1] == self.preview_width and
+                    frame.shape[0] == self.preview_height):
+                preview = frame
+            else:
+                preview = cv2.resize(
+                    frame, (self.preview_width, self.preview_height),
+                    interpolation=cv2.INTER_AREA)
+            preview_message = self.bridge.cv2_to_imgmsg(
+                preview, encoding='bgr8')
+            preview_message.header.stamp = message.header.stamp
+            preview_message.header.frame_id = self.frame_id
+            self.preview_publisher.publish(preview_message)
+            self.last_preview_publish = now
 
     def _release_camera(self) -> None:
         if self.capture is not None:

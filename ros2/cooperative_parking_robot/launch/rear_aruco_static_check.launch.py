@@ -12,9 +12,10 @@ from pathlib import Path
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+from launch_ros.substitutions import FindPackageShare
 
 
 def _float(name):
@@ -26,6 +27,9 @@ def _int(name):
 
 
 def generate_launch_description():
+    id0_calibration = PathJoinSubstitution([
+        FindPackageShare("cooperative_parking_robot"),
+        "config", "id0_calibration.yaml"])
     return LaunchDescription([
         DeclareLaunchArgument(
             "camera_device", default_value="",
@@ -41,7 +45,7 @@ def generate_launch_description():
         DeclareLaunchArgument("image_topic", default_value="/rear/marker_camera/image"),
         DeclareLaunchArgument("width", default_value="1280"),
         DeclareLaunchArgument("height", default_value="720"),
-        DeclareLaunchArgument("fps", default_value="12.0"),
+        DeclareLaunchArgument("fps", default_value="8.0"),
         DeclareLaunchArgument("marker_id", default_value="0"),
         DeclareLaunchArgument(
             "marker_size_m", default_value="0.10",
@@ -76,7 +80,7 @@ def generate_launch_description():
             package="cooperative_parking_robot",
             executable="aruco_tracker",
             name="aruco_tracker_node",
-            parameters=[{
+            parameters=[id0_calibration, {
                 "image_topic": LaunchConfiguration("image_topic"),
                 "marker_id": _int("marker_id"),
                 "marker_size_m": _float("marker_size_m"),
@@ -110,8 +114,8 @@ def generate_launch_description():
                 "marker_size_m": _float("marker_size_m"),
                 "aruco_min_marker_distance_rate": _float(
                     "aruco_min_marker_distance_rate"),
-                # Keep the real tracker at 12 Hz; the diagnostic overlay only
-                # needs 6 Hz and otherwise duplicates the full 720p workload.
+                # Keep the real tracker at 8 Hz; the diagnostic overlay only
+                # needs 4 Hz and otherwise duplicates the full 720p workload.
                 "aruco_every_n": 2,
                 "relative_pose_topic": "/sync/relative_pose",
                 "marker_visible_topic": "/sync/marker_visible",

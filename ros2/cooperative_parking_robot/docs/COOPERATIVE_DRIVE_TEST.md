@@ -45,7 +45,7 @@ ros2 launch cooperative_parking_robot cooperative_drive_test_rear.launch.py \
   serial_port:="REAR_STABLE_SERIAL_BY_ID" \
   camera_device:="/dev/v4l/by-path/REAR_WHITE_OV2710-video-index0" \
   camera_calib:="$HOME/ov2710_calib_23mm_white.npz" \
-  width:=1280 height:=720 fps:=12.0 marker_size_m:=0.10 \
+  width:=1280 height:=720 fps:=8.0 marker_size_m:=0.10 \
   wheel_radius:="REAR_MEASURED_WHEEL_RADIUS" \
   encoder_ppr:="REAR_ENCODER_PPR" \
   lx:="REAR_LX" ly:="REAR_LY"

@@ -19,6 +19,7 @@ sys.path.insert(0, str(PACKAGE_ROOT))
 
 from cooperative_parking_robot.aruco_utils import (  # noqa: E402
     ArucoDetectorCompat,
+    apply_relative_pose_alignment,
     marker_center_to_base_link,
     relative_yaw_from_rotation,
 )
@@ -27,6 +28,21 @@ from cooperative_parking_robot.kalman_filter import PoseEKF, ScalarKalman  # noq
 
 
 class LocalizationMathTest(unittest.TestCase):
+    def test_aligned_pose_calibration_zeros_measured_mounting_bias(self):
+        forward, lateral, yaw = apply_relative_pose_alignment(
+            0.215930574, 0.012879378, math.radians(-3.155371),
+            lateral_offset_m=-0.012879378,
+            yaw_offset_rad=math.radians(3.155371))
+        self.assertAlmostEqual(forward, 0.215930574)
+        self.assertAlmostEqual(lateral, 0.0)
+        self.assertAlmostEqual(yaw, 0.0)
+
+    def test_aligned_pose_calibration_rejects_nonfinite_values(self):
+        with self.assertRaises(ValueError):
+            apply_relative_pose_alignment(
+                0.2, float('nan'), 0.0,
+                lateral_offset_m=0.0, yaw_offset_rad=0.0)
+
     def test_rear_marker_yaw_uses_negative_normal(self):
         for expected_deg in (0.0, 20.0, -20.0):
             yaw = math.radians(expected_deg)

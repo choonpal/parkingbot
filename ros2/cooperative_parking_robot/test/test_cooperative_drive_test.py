@@ -94,6 +94,12 @@ def test_real_test_launches_do_not_start_production_motion_stack():
     assert "Path.home() / 'ov2710_calib_23mm_white.npz'" in rear
     assert "'width', default_value='1280'" in rear
     assert "'height', default_value='720'" in rear
+    assert "DeclareLaunchArgument('fps', default_value='8.0')" in rear
+    assert "'preview_width', default_value='640'" in rear
+    assert "'preview_height', default_value='360'" in rear
+    assert "'preview_fps', default_value='4.0'" in rear
+    assert "'preview_topic': LaunchConfiguration('preview_image_topic')" in rear
+    assert "'image_topics_csv': LaunchConfiguration('preview_image_topic')" in rear
     assert "'marker_size_m', default_value='0.10'" in rear
     assert "'aruco_every_n': 2" in rear
     assert "'preview_enable_aruco', default_value='false'" in rear

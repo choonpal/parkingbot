@@ -30,6 +30,7 @@ from cooperative_parking_robot.camera_calibration import (
 )
 from cooperative_parking_robot.aruco_utils import (
     ArucoDetectorCompat,
+    apply_relative_pose_alignment,
     normalize_angle,
     relative_yaw_from_rotation,
 )
@@ -53,6 +54,10 @@ class ArucoTrackerNode(Node):
         self.declare_parameter('marker_size_m', 0.05)
         self.declare_parameter('camera_calib', 'rear_camera_calibration.npz')
         self.declare_parameter('aruco_dict', 'DICT_4X4_50')
+        # Shared aligned-pose extrinsics from config/id0_calibration.yaml.
+        # yaw_offset_deg remains as a backward-compatible launch-time trim.
+        self.declare_parameter('aruco_lateral_offset_m', 0.0)
+        self.declare_parameter('aruco_yaw_offset_deg', 0.0)
         self.declare_parameter('yaw_offset_deg', 0.0)
         self.declare_parameter('yaw_sign', 1.0)
         self.declare_parameter('allow_uncalibrated', False)
@@ -64,8 +69,17 @@ class ArucoTrackerNode(Node):
 
         self.marker_id = self.get_parameter('marker_id').value
         self.marker_size = self.get_parameter('marker_size_m').value
-        self.yaw_offset = math.radians(
+        self.lateral_offset = float(
+            self.get_parameter('aruco_lateral_offset_m').value)
+        calibrated_yaw_offset = float(
+            self.get_parameter('aruco_yaw_offset_deg').value)
+        legacy_yaw_trim = float(
             self.get_parameter('yaw_offset_deg').value)
+        self.yaw_offset = math.radians(
+            calibrated_yaw_offset + legacy_yaw_trim)
+        if (not math.isfinite(self.lateral_offset) or
+                not math.isfinite(self.yaw_offset)):
+            raise ValueError('ArUco lateral/yaw calibration must be finite')
         self.yaw_sign = float(self.get_parameter('yaw_sign').value)
         if self.yaw_sign not in (-1.0, 1.0):
             raise ValueError('yaw_sign must be +1.0 or -1.0')
@@ -95,7 +109,9 @@ class ArucoTrackerNode(Node):
 
         self.last_visible = False
         self.get_logger().info(
-            f'aruco_tracker_node 시작 | image={self.image_topic}')
+            f'aruco_tracker_node 시작 | image={self.image_topic} | '
+            f'aligned_offset_y={self.lateral_offset:+.4f}m '
+            f'yaw={math.degrees(self.yaw_offset):+.3f}deg')
 
     def _load_calib(self):
         cf = str(self.get_parameter('camera_calib').value)
@@ -199,16 +215,23 @@ class ArucoTrackerNode(Node):
                 rot, _ = cv2.Rodrigues(rvec)
                 # 마커 +Z 법선은 카메라 쪽, 로봇 진행축은 카메라 반대쪽을
                 # 향하므로 -R[:,2]의 X-Z 투영을 heading으로 사용한다.
-                yaw = normalize_angle(
-                    self.yaw_sign * relative_yaw_from_rotation(rot)
-                    + self.yaw_offset)
+                raw_yaw = normalize_angle(
+                    self.yaw_sign * relative_yaw_from_rotation(rot))
+                forward, lateral, yaw = apply_relative_pose_alignment(
+                    z, -x, raw_yaw,
+                    lateral_offset_m=self.lateral_offset,
+                    yaw_offset_rad=self.yaw_offset)
 
                 msg_out = PoseStamped()
                 # 처리/전송 지연을 숨기지 않도록 촬영시각을 보존한다.
                 msg_out.header.stamp = msg.header.stamp
                 msg_out.header.frame_id = 'rear_base'
-                msg_out.pose.position.x = z       # 전방 거리
-                msg_out.pose.position.y = -x      # 좌우
+                msg_out.pose.position.x = forward
+                # The camera optical centre/mount angle need not coincide
+                # perfectly with Rear base. The shared aligned-pose offsets
+                # make a physically aligned pair publish y=0 and yaw=0 for
+                # every downstream consumer, not just the dashboard.
+                msg_out.pose.position.y = lateral
                 msg_out.pose.orientation.z = math.sin(yaw/2)
                 msg_out.pose.orientation.w = math.cos(yaw/2)
                 self.pub_pose.publish(msg_out)

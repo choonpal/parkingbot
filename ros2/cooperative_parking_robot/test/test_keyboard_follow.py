@@ -105,6 +105,11 @@ def test_keyboard_web_uses_fixed_repeat_and_keyup_stop():
     assert "window.addEventListener('blur', stopHeld)" in source
     assert 'pendingKey = k' in source
     assert 'const next = pendingKey' in source
+    assert 'setInterval(tick, 500)' in source
+    assert "make_server(host, port, app, threaded=False)" in source
+    assert "logging.getLogger('werkzeug').setLevel(logging.ERROR)" in source
+    assert 'jsonify(self._status_payload())' not in source
+    assert 'self._status_json, mimetype=' in source
 
 
 def _continue_kwargs():

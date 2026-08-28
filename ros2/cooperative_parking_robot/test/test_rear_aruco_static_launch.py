@@ -10,6 +10,7 @@ def test_static_aruco_launch_is_perception_only_and_site_configured():
 
     assert 'executable="opencv_camera"' in source
     assert 'executable="aruco_tracker"' in source
+    assert 'parameters=[id0_calibration, {' in source
     assert 'executable="camera_preview"' in source
     for forbidden in (
             'executable="stm32_bridge"',
@@ -20,6 +21,7 @@ def test_static_aruco_launch_is_perception_only_and_site_configured():
 
     assert 'default_value="1280"' in source
     assert 'default_value="720"' in source
+    assert 'DeclareLaunchArgument("fps", default_value="8.0")' in source
     assert 'default_value="0.10"' in source
     assert '"aruco_every_n": 2' in source
     assert '"aruco_min_marker_distance_rate", default_value="0.02"' in source

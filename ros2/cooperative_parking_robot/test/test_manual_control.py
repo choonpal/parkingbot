@@ -35,7 +35,7 @@ def test_default_state_uses_default_speeds():
     state.handle_key('w', 0.0)
     assert state.velocity(0.1) == (DEFAULT_LINEAR_SPEED_MPS, 0.0, 0.0)
     state.handle_key('q', 0.0)
-    assert state.velocity(0.1) == (0.0, 0.0, DEFAULT_ANGULAR_SPEED_RPS)
+    assert state.velocity(0.1) == (0.0, 0.0, -DEFAULT_ANGULAR_SPEED_RPS)
 
 
 def test_keyboard_mapping_and_deadman_stop():
@@ -46,9 +46,9 @@ def test_keyboard_mapping_and_deadman_stop():
     assert state.velocity(1.31) == ZERO_VELOCITY
 
     state.handle_key('a', 2.0)
-    assert state.velocity(2.1) == (0.0, 0.05, 0.0)
+    assert state.velocity(2.1) == (0.0, -0.05, 0.0)
     state.handle_key('q', 2.2)
-    assert state.velocity(2.3) == (0.0, 0.0, 0.30)
+    assert state.velocity(2.3) == (0.0, 0.0, -0.30)
     state.handle_key(' ', 2.31)
     assert state.velocity(2.31) == ZERO_VELOCITY
 

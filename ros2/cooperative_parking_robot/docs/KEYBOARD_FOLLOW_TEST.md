@@ -114,7 +114,7 @@ ros2 launch cooperative_parking_robot cooperative_drive_test_rear.launch.py \
   serial_port:=/dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066AFF485270535067112511-if02 \
   camera_device:=/dev/v4l/by-path/platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.1:1.0-video-index0 \
   camera_calib:=/home/robot/ov2710_calib_23mm_white.npz \
-  width:=1280 height:=720 fps:=12.0 marker_size_m:=0.10 \
+  width:=1280 height:=720 fps:=8.0 marker_size_m:=0.10 \
   wheel_radius:=0.05 encoder_ppr:=5182.0 \
   lx:=0.2225 ly:=0.21 \
   enable_drive_test_dashboard:=false \
@@ -123,6 +123,9 @@ ros2 launch cooperative_parking_robot cooperative_drive_test_rear.launch.py \
 
 `enable_drive_test_dashboard:=false`는 기존 주행 UI와 명령이 충돌하지 않게 하는
 필수 설정입니다.
+
+제어용 ID0 검출은 `1280x720 @ 8 fps` 원본을 그대로 사용합니다. 5007에 삽입되는
+영상만 별도 `640x360 @ 4 fps` 토픽을 사용해 UI 때문에 pose가 밀리지 않게 합니다.
 
 ## 6. 카메라와 정렬 확인
 

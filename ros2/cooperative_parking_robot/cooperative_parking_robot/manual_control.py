@@ -35,10 +35,10 @@ class KeyboardTeleopState:
         movement = {
             'w': (self.linear_speed, 0.0, 0.0),
             's': (-self.linear_speed, 0.0, 0.0),
-            'a': (0.0, self.linear_speed, 0.0),
-            'd': (0.0, -self.linear_speed, 0.0),
-            'q': (0.0, 0.0, self.angular_speed),
-            'e': (0.0, 0.0, -self.angular_speed),
+            'a': (0.0, -self.linear_speed, 0.0),
+            'd': (0.0, self.linear_speed, 0.0),
+            'q': (0.0, 0.0, -self.angular_speed),
+            'e': (0.0, 0.0, self.angular_speed),
         }
         key = key.lower()
         if key in movement:

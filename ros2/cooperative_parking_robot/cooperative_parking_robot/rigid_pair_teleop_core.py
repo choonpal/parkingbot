@@ -65,13 +65,14 @@ class PlacementGuide:
 
 
 class MarkerRecoveryGate:
-    """Bound a raw ArUco dropout without ever driving on one good frame.
+    """Bound an ArUco dropout without discarding a newer valid pose.
 
-    A negative visibility sample makes the gate stale immediately. The
-    controller may hold zero during ``loss_grace_s``, but freshness returns
-    only after ``recovery_samples`` consecutive pose samples. Repeated misses
-    keep the original loss start time so an unstable stream cannot extend the
-    grace indefinitely.
+    ``marker_visible`` is an unstamped Bool topic, so its delivery order cannot
+    be compared safely with the stamped pose topic.  A delayed negative Bool
+    therefore never invalidates a pose that is still within ``timeout_s``.
+    Actual loss is decided by the valid-pose age.  Once that age expires, the
+    controller holds zero during ``loss_grace_s`` and requires
+    ``recovery_samples`` new poses before motion can resume.
     """
 
     def __init__(self, timeout_s=0.35, loss_grace_s=0.60,
@@ -129,23 +130,33 @@ class MarkerRecoveryGate:
             self.true_time = now
             return
         self.false_time = now
-        self.recovery_count = 0
-        if self.unstable_since is None:
-            self.unstable_since = now
+        # Bool has no source stamp and may arrive after a newer PoseStamped.
+        # Preserve that valid pose until its own bounded freshness timeout.
+        if (self.pose_time is None or
+                now - self.pose_time > self.timeout_s):
+            self.recovery_count = 0
+            if self.unstable_since is None:
+                self.unstable_since = now
 
     def fresh(self, now):
         now = self._stamp(now)
         return (
-            self.visible and self.pose_time is not None and
-            self.true_time is not None and
+            self.pose_time is not None and
             self.recovery_count >= self.recovery_samples and
-            0.0 <= now - self.pose_time <= self.timeout_s and
-            0.0 <= now - self.true_time <= self.timeout_s and
-            (self.false_time is None or self.pose_time >= self.false_time))
+            0.0 <= now - self.pose_time <= self.timeout_s)
 
     def recovery_pending(self, now):
         now = self._stamp(now)
-        if self.fresh(now) or self.unstable_since is None:
+        if self.fresh(now):
+            return False
+        # A camera/transport stop produces no further visibility callbacks.
+        # Start a bounded zero-hold from the exact pose-expiry instant rather
+        # than faulting merely because no negative Bool arrived afterwards.
+        if (self.unstable_since is None and self.pose_time is not None and
+                now - self.pose_time > self.timeout_s):
+            self.unstable_since = self.pose_time + self.timeout_s
+            self.recovery_count = 0
+        if self.unstable_since is None:
             return False
         return 0.0 <= now - self.unstable_since <= self.loss_grace_s
 

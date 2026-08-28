@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections import deque
 import json
+import logging
 import math
 import os
 import queue
@@ -75,7 +76,8 @@ _HTML = r'''<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>강체 쌍 키보드 제어</title><style>
 :root{color-scheme:dark;--bg:#0c1118;--panel:#151e29;--line:#304157;
---text:#eef4fb;--muted:#9fb0c4;--ok:#45d483;--bad:#ff6b70;--warn:#ffba55}
+--text:#eef4fb;--muted:#9fb0c4;--ok:#45d483;--bad:#ff6b70;--warn:#ffba55;
+--blue:#52a8ff}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);
 font-family:system-ui,sans-serif}header{display:flex;gap:12px;align-items:center;
 padding:14px 18px;border-bottom:1px solid var(--line);flex-wrap:wrap}h1{font-size:19px;
@@ -95,6 +97,13 @@ justify-content:center;margin:13px}.key{padding:14px 4px;font-size:17px}.blank{v
 padding:10px;border-radius:8px}.card h3{font-size:14px;margin:0 0 7px}.row{display:flex;
 justify-content:space-between;gap:8px;font-size:13px;padding:3px 0}.value{text-align:right;
 font-variant-numeric:tabular-nums}.small{font-size:12px;line-height:1.45;color:var(--muted)}
+.guides{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:9px}
+.guide{min-height:100px;padding:7px;border:1px solid var(--line);border-radius:8px;
+display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+.guide.need{border-color:var(--bad);background:#30171b;color:var(--bad)}
+.guide.aligned{border-color:var(--blue);background:#10243a;color:var(--blue)}
+.guide.unknown{color:var(--muted)}.guide-label{font-size:11px}.guide-arrow{font-size:31px;
+font-weight:900;line-height:1.05;margin:3px}.guide-text{font-size:11px;font-weight:700}
 .blockers{color:var(--warn);font-size:13px;padding-left:20px}</style></head><body>
 <header><h1>가상 강체 쌍 키보드 제어</h1><span id="state" class="pill">연결 중…</span>
 <span class="small">페이지를 클릭한 뒤 WASD / Q·E / Space</span></header><main>
@@ -139,6 +148,21 @@ const row = (k, v) =>
 const n = (v, d=1, u='') => v == null ? '—' : Number(v).toFixed(d) + u;
 const signed = (v, d=1, u='') => v == null ? '—' :
   (Number(v) >= 0 ? '+' : '') + Number(v).toFixed(d) + u;
+const directionGuide = (label, value, tolerance, negative, positive) => {
+  if (value == null || !Number.isFinite(Number(value)) ||
+      !Number.isFinite(Number(tolerance))) {
+    return `<div class="guide unknown"><span class="guide-label">${esc(label)}</span>` +
+      '<span class="guide-arrow">—</span><span class="guide-text">측정 대기</span></div>';
+  }
+  if (Math.abs(Number(value)) <= Number(tolerance)) {
+    return `<div class="guide aligned"><span class="guide-label">${esc(label)}</span>` +
+      '<span class="guide-arrow">—</span><span class="guide-text">정렬됨</span></div>';
+  }
+  const action = Number(value) < 0 ? negative : positive;
+  return `<div class="guide need"><span class="guide-label">${esc(label)}</span>` +
+    `<span class="guide-arrow">${esc(action.arrow)}</span>` +
+    `<span class="guide-text">${esc(action.text)}</span></div>`;
+};
 let keySending = false;
 let pendingKey = null;
 async function key(k) {
@@ -206,8 +230,8 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) stopHeld();
 });
 let statusInFlight = false;
-const STATUS_FETCH_TIMEOUT_MS = 800;
-const STATUS_WATCHDOG_MS = 1000;
+const STATUS_FETCH_TIMEOUT_MS = 1000;
+const STATUS_WATCHDOG_MS = 1500;
 let statusGeneration = 0;
 let lastSuccessfulStatusMs = 0;
 let statusWatchdogStartedMs = Date.now();
@@ -288,7 +312,17 @@ async function tick() {
     row('Front 이동', n(s.distance.front_cm, 1, ' cm')) +
     row('Rear 이동', n(s.distance.rear_cm, 1, ' cm'));
   document.getElementById('placement').innerHTML =
-    row('상태', esc(g.state)) +
+    '<div class="guides">' +
+    directionGuide('앞뒤 간격', g.centre_error_cm, g.centre_tolerance_cm,
+      {arrow:'↑', text:'Front를 Rear에서 멀리'},
+      {arrow:'↓', text:'Front를 Rear 쪽으로'}) +
+    directionGuide('좌우 정렬', g.raw_lateral_cm, g.lateral_tolerance_cm,
+      {arrow:'←', text:'Front를 왼쪽으로'},
+      {arrow:'→', text:'Front를 오른쪽으로'}) +
+    directionGuide('각도 정렬', g.raw_yaw_deg, g.yaw_tolerance_deg,
+      {arrow:'↺', text:'Front를 반시계 회전'},
+      {arrow:'↻', text:'Front를 시계 회전'}) +
+    '</div>' + row('상태', esc(g.state)) +
     row('ID0 raw forward(카메라→마커)', n(g.raw_forward_cm, 1, ' cm')) +
     row('추정 중심 종방향 간격(raw x+offset)', n(g.centre_distance_cm, 1, ' cm')) +
     row('종방향 기준 오차(+ = 추정값 큼)', signed(g.centre_error_cm, 1, ' cm')) +
@@ -315,7 +349,7 @@ async function boot() {
     renderDisconnected();
   }
   tick();
-  setInterval(tick, 250);
+  setInterval(tick, 500);
   setInterval(statusWatchdog, 100);
 }
 boot();
@@ -371,6 +405,7 @@ class RigidPairTeleopNode(Node):
         self.declare_parameter('fused_odom_timeout_s', 0.50)
         self.declare_parameter('require_cctv_marker', False)
         self.declare_parameter('cctv_marker_timeout_s', 0.50)
+        self.declare_parameter('graph_check_period_s', 0.20)
         self.declare_parameter('marker_timeout_s', 0.35)
         self.declare_parameter('marker_loss_grace_s', 0.60)
         self.declare_parameter('marker_recovery_samples', 3)
@@ -431,6 +466,8 @@ class RigidPairTeleopNode(Node):
             gp('require_cctv_marker').value)
         self.cctv_marker_timeout = float(
             gp('cctv_marker_timeout_s').value)
+        self.graph_check_period = float(
+            gp('graph_check_period_s').value)
         self.marker_timeout = float(gp('marker_timeout_s').value)
         self.marker_loss_grace = float(
             gp('marker_loss_grace_s').value)
@@ -467,7 +504,9 @@ class RigidPairTeleopNode(Node):
                 self.relative_stable_window < self.marker_timeout or
                 self.relative_outlier_forward_step <= 0.0 or
                 self.relative_outlier_lateral_step <= 0.0 or
-                self.relative_outlier_yaw_step <= 0.0):
+                self.relative_outlier_yaw_step <= 0.0 or
+                not math.isfinite(self.graph_check_period) or
+                not 0.10 <= self.graph_check_period <= 1.0):
             raise ValueError('invalid rigid-pair sensor safety parameter')
         if (not all(math.isfinite(value) and value > 0.0 for value in (
                     self.placement_centre_tolerance,
@@ -511,6 +550,8 @@ class RigidPairTeleopNode(Node):
             for role in ('front', 'rear')}
         self.relative_gate = StampGate(
             self.marker_timeout, self.source_future_tolerance)
+        self._graph_conflicts_cache = ()
+        self._graph_conflicts_checked_at = float('-inf')
         self.last_commands = {'front': (0.0, 0.0, 0.0),
                               'rear': (0.0, 0.0, 0.0)}
         self.key_intent = '정지'
@@ -568,6 +609,8 @@ class RigidPairTeleopNode(Node):
         self.create_timer(0.25, self._publish_status)
         if self._terminal_enabled:
             self.create_timer(0.02, self._poll_terminal)
+        self._status_json = '{}'
+        self._refresh_status_cache()
         self._start_web()
         self.get_logger().warn(
             f'강체 쌍 키보드 제어: http://{str(gp("web_host").value)}:'
@@ -662,9 +705,9 @@ class RigidPairTeleopNode(Node):
         self.marker_gate.note_pose(now)
 
     def _marker_cb(self, msg):
-        # Keep the median history through a one-frame miss. The recovery gate
-        # makes the command stale immediately and only reopens after three new
-        # poses; a long pose gap is still cleared in ``_relative_cb``.
+        # Bool has no source timestamp, so a delayed false sample must not
+        # invalidate a newer stamped pose.  The recovery gate uses actual pose
+        # age for loss and keeps the median history through a short miss.
         self.marker_gate.note_visibility(bool(msg.data), time.monotonic())
 
     def _estop_cb(self, msg):
@@ -732,7 +775,17 @@ class RigidPairTeleopNode(Node):
                 lateral_span_m=self.relative_stable_lateral_span,
                 yaw_span_rad=self.relative_stable_yaw_span))
 
-    def _graph_conflicts(self):
+    def _graph_conflicts(self, now=None):
+        """Return a bounded-age ROS graph snapshot.
+
+        Graph introspection is much heavier than a normal subscription read.
+        Calling it from the 50 Hz control loop starves pose callbacks on the
+        Raspberry Pi, so one ROS-thread-owned snapshot is reused for a short,
+        safety-bounded interval.
+        """
+        now = time.monotonic() if now is None else float(now)
+        if now - self._graph_conflicts_checked_at < self.graph_check_period:
+            return list(self._graph_conflicts_cache)
         conflicts = []
         try:
             for role in ('front', 'rear'):
@@ -745,7 +798,9 @@ class RigidPairTeleopNode(Node):
                     conflicts.append(manual_topic)
         except Exception:
             conflicts.append('ROS graph 조회 실패')
-        return conflicts
+        self._graph_conflicts_cache = tuple(conflicts)
+        self._graph_conflicts_checked_at = now
+        return list(self._graph_conflicts_cache)
 
     def _blockers(self, now, require_manual=False):
         blockers = []
@@ -1065,6 +1120,12 @@ class RigidPairTeleopNode(Node):
                 'calibration_available': placement.calibration_available,
                 'estimate_available': placement.estimate_available,
                 'target_centre_cm': self.pair_separation_m * 100.0,
+                'centre_tolerance_cm':
+                self.placement_centre_tolerance * 100.0,
+                'lateral_tolerance_cm':
+                self.placement_lateral_tolerance * 100.0,
+                'yaw_tolerance_deg':
+                math.degrees(self.placement_yaw_tolerance),
                 'offset_cm': self.aruco_distance_offset_m * 100.0
                 if placement.calibration_available else None,
                 'tolerances': (
@@ -1075,11 +1136,20 @@ class RigidPairTeleopNode(Node):
             },
         }
 
-    def _publish_status(self):
+    def _refresh_status_cache(self):
         try:
             data = json.dumps(
                 self._status_payload(), ensure_ascii=False, allow_nan=False)
         except (TypeError, ValueError):
+            return None
+        # Atomic reference replacement under CPython. The web thread only
+        # returns this immutable string and never reads ROS state directly.
+        self._status_json = data
+        return data
+
+    def _publish_status(self):
+        data = self._refresh_status_cache()
+        if data is None:
             return
         message = String(data=data)
         self.pub_status.publish(message)
@@ -1096,15 +1166,18 @@ class RigidPairTeleopNode(Node):
 
         @app.get('/api/status')
         def status():
-            return jsonify(self._status_payload())
+            return app.response_class(
+                self._status_json, mimetype='application/json')
 
+        config_json = json.dumps({
+            'preview_port': int(self.get_parameter('preview_port').value),
+            'preview_path': str(self.get_parameter('preview_path').value),
+            'deadman_s': self.teleop.deadman_s,
+        })
         @app.get('/api/config')
         def config():
-            return jsonify({
-                'preview_port': int(self.get_parameter('preview_port').value),
-                'preview_path': str(self.get_parameter('preview_path').value),
-                'deadman_s': self.teleop.deadman_s,
-            })
+            return app.response_class(
+                config_json, mimetype='application/json')
 
         @app.post('/api/key')
         def key():
@@ -1144,7 +1217,12 @@ class RigidPairTeleopNode(Node):
 
         host = str(self.get_parameter('web_host').value)
         port = int(self.get_parameter('web_port').value)
-        self._server = make_server(host, port, app, threaded=True)
+        # Access logging and per-request threads caused enough GIL/I/O pressure
+        # to delay valid pose callbacks beyond marker_timeout_s while a key was
+        # held. Status is cached and key routes are constant-time, so one quiet
+        # server thread is sufficient and deterministic.
+        logging.getLogger('werkzeug').setLevel(logging.ERROR)
+        self._server = make_server(host, port, app, threaded=False)
         self._web_thread = threading.Thread(
             target=self._server.serve_forever,
             name='keyboard-follow-web', daemon=True)

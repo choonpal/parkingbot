@@ -20,6 +20,21 @@ def relative_yaw_from_rotation(rotation):
                                       -float(rotation[2][2])))
 
 
+def apply_relative_pose_alignment(forward, lateral, yaw, *,
+                                  lateral_offset_m=0.0,
+                                  yaw_offset_rad=0.0):
+    """Apply measured Rear-camera mounting offsets to an ID0 planar pose."""
+    values = tuple(float(value) for value in (
+        forward, lateral, yaw, lateral_offset_m, yaw_offset_rad))
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError('relative-pose alignment values must be finite')
+    return (
+        values[0],
+        values[1] + values[3],
+        normalize_angle(values[2] + values[4]),
+    )
+
+
 def marker_center_to_base_link(marker_x, marker_y, yaw, offset_x):
     """Shift a marker-center world pose to the robot rotation centre (base_link).
 

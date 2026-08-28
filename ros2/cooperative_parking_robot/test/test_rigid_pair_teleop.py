@@ -94,7 +94,7 @@ def test_arm_requires_three_tightly_clustered_id0_samples():
         (0.215, 0.0, 0.0), (0.235, 0.0, 0.0), (0.216, 0.0, 0.0)])
 
 
-def test_one_marker_miss_stops_for_grace_then_requires_three_good_poses():
+def test_one_unstamped_false_does_not_discard_a_recent_valid_pose():
     gate = MarkerRecoveryGate(
         timeout_s=0.35, loss_grace_s=0.25, recovery_samples=3)
     for stamp in (10.00, 10.03, 10.06):
@@ -102,20 +102,11 @@ def test_one_marker_miss_stops_for_grace_then_requires_three_good_poses():
     assert gate.fresh(10.07)
 
     gate.note_visibility(False, 10.08)
-    assert not gate.fresh(10.08)
-    assert gate.recovery_pending(10.08)
+    assert gate.fresh(10.08)
+    assert not gate.recovery_pending(10.08)
 
     gate.note_pose(10.11)
-    gate.note_visibility(True, 10.11)
-    gate.note_pose(10.14)
-    gate.note_visibility(True, 10.14)
-    assert not gate.fresh(10.14)
-    assert gate.recovery_pending(10.14)
-
-    gate.note_pose(10.17)
-    gate.note_visibility(True, 10.17)
-    assert gate.fresh(10.18)
-    assert not gate.recovery_pending(10.18)
+    assert gate.fresh(10.12)
 
 
 def test_continuous_marker_loss_expires_the_bounded_recovery_grace():
@@ -125,9 +116,11 @@ def test_continuous_marker_loss_expires_the_bounded_recovery_grace():
         gate.note_pose(stamp)
     gate.note_visibility(False, 20.08)
 
-    assert gate.recovery_pending(20.32)
-    assert not gate.recovery_pending(20.34)
-    assert not gate.fresh(20.34)
+    assert gate.fresh(20.32)
+    gate.note_visibility(False, 20.42)
+    assert not gate.fresh(20.42)
+    assert gate.recovery_pending(20.60)
+    assert not gate.recovery_pending(20.68)
 
 
 def test_zero_hold_can_outlast_pose_timeout_to_collect_three_slow_frames():
@@ -136,15 +129,18 @@ def test_zero_hold_can_outlast_pose_timeout_to_collect_three_slow_frames():
     for stamp in (30.00, 30.10, 30.20):
         gate.note_pose(stamp)
     gate.note_visibility(False, 30.25)
-    gate.note_pose(30.45)
+    gate.note_visibility(False, 30.56)
     gate.note_pose(30.65)
-    assert gate.recovery_pending(30.65)
     gate.note_pose(30.80)
-    assert gate.fresh(30.81)
+    assert gate.recovery_pending(30.80)
+    gate.note_pose(30.95)
+    assert gate.fresh(30.96)
 
 
 def test_one_false_visibility_sample_preserves_median_filter_history(monkeypatch):
     gate = MarkerRecoveryGate()
+    for stamp in (1.00, 1.03, 1.06):
+        gate.note_pose(stamp)
     samples = deque([(0.21, 0.0, 0.0)] * 3, maxlen=3)
     sample_times = deque([1.00, 1.03, 1.06], maxlen=3)
     node = SimpleNamespace(
@@ -159,14 +155,15 @@ def test_one_false_visibility_sample_preserves_median_filter_history(monkeypatch
 
     assert list(node.relative_samples) == [(0.21, 0.0, 0.0)] * 3
     assert list(node.relative_sample_times) == [1.00, 1.03, 1.06]
-    assert gate.recovery_pending(1.08)
+    assert gate.fresh(1.08)
+    assert not gate.recovery_pending(1.08)
 
 
 def test_marker_recovery_hold_forces_zero_without_leaving_armed_state():
     gate = MarkerRecoveryGate()
     for stamp in (2.00, 2.03, 2.06):
         gate.note_pose(stamp)
-    gate.note_visibility(False, 2.08)
+    gate.note_visibility(False, 2.42)
 
     calls = []
     teleop = SimpleNamespace(stop=lambda: calls.append('stop'))
@@ -175,7 +172,7 @@ def test_marker_recovery_hold_forces_zero_without_leaving_armed_state():
         marker_pause_active=False, key_intent='', decision='',
         _publish_zero=lambda: calls.append('zero'))
 
-    assert RigidPairTeleopNode._hold_for_marker_recovery(node, 2.10)
+    assert RigidPairTeleopNode._hold_for_marker_recovery(node, 2.43)
     assert node.state == 'ARMED'
     assert node.marker_pause_active
     assert node.key_intent == 'ArUco 재검출 대기'
@@ -347,7 +344,9 @@ def test_launch_does_not_start_auto_drive_and_rigid_teleop_together_by_default()
     assert "default_value=str(DEFAULT_WHEELBASE_M)" in source
     assert "'enable_keyboard_follow', default_value='false'" in source
     assert "'id0_calibration'" in source
-    assert source.count("parameters=[LaunchConfiguration('id0_calibration'), {") == 2
+    # ArUco tracker plus canonical and legacy-compatible teleop nodes all
+    # consume the same measured ID0 calibration file.
+    assert source.count("parameters=[LaunchConfiguration('id0_calibration'), {") == 3
     assert "FindPackageShare('cooperative_parking_robot')" in source
     assert source.count("'pair_separation_m': _float('rigid_pair_separation_m')") == 2
     assert 'respawn=True' in source
@@ -376,15 +375,46 @@ def test_status_ui_exposes_read_only_camera_placement_guide_only():
     assert 'invalid status payload' in node_source
     assert 'invalid config' in node_source
     assert 'AbortController' in node_source
-    assert 'STATUS_FETCH_TIMEOUT_MS = 800' in node_source
-    assert 'STATUS_WATCHDOG_MS = 1000' in node_source
+    assert 'STATUS_FETCH_TIMEOUT_MS = 1000' in node_source
+    assert 'STATUS_WATCHDOG_MS = 1500' in node_source
     assert 'lastSuccessfulStatusMs' in node_source
     assert 'setInterval(statusWatchdog, 100)' in node_source
     assert 'calibration_available' in node_source
     assert 'estimate_available' in node_source
     assert 'Front ID0가 Rear 기준 왼쪽, 목표 0' in node_source
     assert 'Front가 Rear보다 CCW, 목표 0' in node_source
+    assert "directionGuide('앞뒤 간격'" in node_source
+    assert "{arrow:'↑', text:'Front를 Rear에서 멀리'}" in node_source
+    assert "{arrow:'↓', text:'Front를 Rear 쪽으로'}" in node_source
+    assert "{arrow:'←', text:'Front를 왼쪽으로'}" in node_source
+    assert "{arrow:'→', text:'Front를 오른쪽으로'}" in node_source
+    assert "{arrow:'↺', text:'Front를 반시계 회전'}" in node_source
+    assert "{arrow:'↻', text:'Front를 시계 회전'}" in node_source
+    assert 'class="guide aligned"' in node_source
+    assert 'class="guide need"' in node_source
     assert 'inference_available' not in node_source
+
+
+def test_ros_graph_conflict_checks_are_rate_limited():
+    calls = []
+
+    def publishers(topic):
+        calls.append(topic)
+        return []
+
+    node = SimpleNamespace(
+        graph_check_period=0.20,
+        _graph_conflicts_cache=(),
+        _graph_conflicts_checked_at=float('-inf'),
+        get_publishers_info_by_topic=publishers,
+    )
+
+    assert RigidPairTeleopNode._graph_conflicts(node, 10.00) == []
+    assert len(calls) == 4
+    assert RigidPairTeleopNode._graph_conflicts(node, 10.10) == []
+    assert len(calls) == 4
+    assert RigidPairTeleopNode._graph_conflicts(node, 10.21) == []
+    assert len(calls) == 8
 
 
 def test_preview_pose_badge_requires_true_visible_and_valid_pose_contract():

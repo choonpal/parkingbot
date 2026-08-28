@@ -18,9 +18,12 @@ def test_static_aruco_launch_is_perception_only_and_site_configured():
             'executable="rigid_body_sync"'):
         assert forbidden not in source
 
-    assert 'default_value="640"' in source
-    assert 'default_value="480"' in source
-    assert 'default_value="0.05"' in source
+    assert 'default_value="1280"' in source
+    assert 'default_value="720"' in source
+    assert 'default_value="0.10"' in source
+    assert '"aruco_every_n": 2' in source
+    assert '"aruco_min_marker_distance_rate", default_value="0.02"' in source
+    assert '"min_marker_distance_rate": _float(' in source
     assert 'Path.home() / "ov2710_calib_23mm_white.npz"' in source
     assert '"allow_uncalibrated": False' in source
     assert '"enable_bev": False' in source

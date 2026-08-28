@@ -92,9 +92,14 @@ def test_real_test_launches_do_not_start_production_motion_stack():
     assert "executable='cooperative_drive_test'" in rear
     assert "executable='camera_preview'" in rear
     assert "Path.home() / 'ov2710_calib_23mm_white.npz'" in rear
-    assert "'width', default_value='640'" in rear
-    assert "'height', default_value='480'" in rear
-    assert "'marker_size_m', default_value='0.05'" in rear
+    assert "'width', default_value='1280'" in rear
+    assert "'height', default_value='720'" in rear
+    assert "'marker_size_m', default_value='0.10'" in rear
+    assert "'aruco_every_n': 2" in rear
+    assert "'preview_enable_aruco', default_value='false'" in rear
+    assert "'enable_aruco': _bool('preview_enable_aruco')" in rear
+    assert "'aruco_min_marker_distance_rate', default_value='0.02'" in rear
+    assert "'min_marker_distance_rate': _float(" in rear
     for forbidden in (
             "executable='rigid_body_sync'",
             "executable='state_machine'",

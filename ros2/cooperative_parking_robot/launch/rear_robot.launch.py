@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """ROS 2 Humble / Rear Raspberry Pi real-robot launch."""
 
+from pathlib import Path
+
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
@@ -43,6 +45,8 @@ def generate_launch_description():
     yaw_offset = _float("yaw_offset_deg")
     yaw_sign = _float("yaw_sign")
     gray_gain = _float("gray_gain")
+    aruco_min_marker_distance_rate = _float(
+        "aruco_min_marker_distance_rate")
     allow_uncalibrated = _bool("allow_uncalibrated")
     enable_serial = _bool("enable_serial")
     require_serial = _bool("require_serial")
@@ -137,18 +141,23 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "rear_camera_gst", default_value="",
             description="비우면 V4L2, 채우면 GStreamer 파이프라인 사용"),
-        DeclareLaunchArgument("rear_camera_width", default_value="640"),
-        DeclareLaunchArgument("rear_camera_height", default_value="480"),
+        DeclareLaunchArgument("rear_camera_width", default_value="1280"),
+        DeclareLaunchArgument("rear_camera_height", default_value="720"),
         DeclareLaunchArgument("rear_camera_fps", default_value="12.0"),
         DeclareLaunchArgument(
             "camera_calib",
-            default_value="rear_camera_calibration.npz"),
+            default_value=str(
+                Path.home() / "ov2710_calib_23mm_white.npz")),
         DeclareLaunchArgument(
             "allow_uncalibrated", default_value="false"),
-        DeclareLaunchArgument("marker_size_m", default_value="0.05"),
+        DeclareLaunchArgument(
+            "marker_size_m", default_value="0.10",
+            description="Front rear-face ID0 black-square side length"),
         DeclareLaunchArgument("yaw_offset_deg", default_value="0.0"),
         DeclareLaunchArgument("yaw_sign", default_value="1.0"),
         DeclareLaunchArgument("gray_gain", default_value="1.0"),
+        DeclareLaunchArgument(
+            "aruco_min_marker_distance_rate", default_value="0.02"),
         DeclareLaunchArgument("wheelbase", default_value="0.785"),
         DeclareLaunchArgument(
             "vehicle_half_length_m", default_value="0.45"),
@@ -252,6 +261,7 @@ def generate_launch_description():
                 "yaw_offset_deg": yaw_offset,
                 "yaw_sign": yaw_sign,
                 "gray_gain": gray_gain,
+                "min_marker_distance_rate": aruco_min_marker_distance_rate,
                 "allow_uncalibrated": allow_uncalibrated,
             }],
             output="screen"),

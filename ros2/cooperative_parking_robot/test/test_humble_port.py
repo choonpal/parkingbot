@@ -117,7 +117,8 @@ def test_full_system_defaults_to_safe_smoke_mode():
 def test_humble_scripts_are_executable():
     for relative in (
             'scripts/humble_build_check.sh',
-            'scripts/humble_topic_check.sh'):
+            'scripts/humble_topic_check.sh',
+            'scripts/run_feature_tests.sh'):
         path = ROOT / relative
         assert path.is_file()
         assert path.stat().st_mode & 0o111
@@ -182,7 +183,11 @@ def test_ceiling_calibration_is_separate_from_rear_calibration():
     assert "'cctv_raw_topic'" in cctv_launch
     assert "'cctv_rect_topic'" in cctv_launch
     assert "'config', 'cctv_camera_calibration.npz'" in cctv_launch
-    assert "default_value='rear_camera_calibration.npz'" in rear_launch
+    assert "Path.home() / 'ov2710_calib_23mm_white.npz'" in rear_launch
+    assert "'rear_camera_width', default_value='1280'" in rear_launch
+    assert "'rear_camera_height', default_value='720'" in rear_launch
+    assert "'rear_camera_fps', default_value='12.0'" in rear_launch
+    assert "'marker_size_m', default_value='0.10'" in rear_launch
     assert "rear_camera_calib" in full_launch
     assert "cctv_camera_calib" in full_launch
     assert 'cctv_camera_calibration.npz' not in rear_launch

@@ -11,9 +11,16 @@ from pathlib import Path
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import (
+    LaunchConfiguration,
+    PathJoinSubstitution,
+    PythonExpression,
+)
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+from launch_ros.substitutions import FindPackageShare
+
+from cooperative_parking_robot.vehicle_entry import DEFAULT_WHEELBASE_M
 
 
 def _float(name):
@@ -44,13 +51,17 @@ def generate_launch_description():
                 Path.home() / 'ov2710_calib_23mm_white.npz')),
         DeclareLaunchArgument(
             'image_topic', default_value='/rear/marker_camera/image'),
-        DeclareLaunchArgument('width', default_value='640'),
-        DeclareLaunchArgument('height', default_value='480'),
+        DeclareLaunchArgument('width', default_value='1280'),
+        DeclareLaunchArgument('height', default_value='720'),
         DeclareLaunchArgument('fps', default_value='12.0'),
-        DeclareLaunchArgument('marker_size_m', default_value='0.05'),
+        DeclareLaunchArgument(
+            'marker_size_m', default_value='0.10',
+            description='Front rear-face ID0 black-square side length'),
         DeclareLaunchArgument('yaw_offset_deg', default_value='0.0'),
         DeclareLaunchArgument('yaw_sign', default_value='1.0'),
         DeclareLaunchArgument('gray_gain', default_value='1.0'),
+        DeclareLaunchArgument(
+            'aruco_min_marker_distance_rate', default_value='0.02'),
         DeclareLaunchArgument('wheel_radius', default_value='0.05'),
         DeclareLaunchArgument('encoder_ppr', default_value='5182.0'),
         DeclareLaunchArgument('lx', default_value='0.10'),
@@ -60,12 +71,44 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'ultrasonic_frame_timeout_s', default_value='0.50'),
         DeclareLaunchArgument('preview_port', default_value='5005'),
+        DeclareLaunchArgument(
+            'preview_enable_aruco', default_value='false',
+            description=(
+                'The control tracker already detects every frame; enable only '
+                'when a duplicate diagnostic overlay is worth the CPU cost')),
         DeclareLaunchArgument('dashboard_port', default_value='5006'),
         DeclareLaunchArgument('test_speed_mps', default_value='0.0628'),
         DeclareLaunchArgument('test_distance_m', default_value='0.10'),
         DeclareLaunchArgument('max_duration_s', default_value='4.0'),
         DeclareLaunchArgument(
             'enable_drive_test_dashboard', default_value='true'),
+        DeclareLaunchArgument(
+            'enable_rigid_pair_teleop', default_value='false'),
+        DeclareLaunchArgument('rigid_pair_dashboard_port', default_value='5007'),
+        DeclareLaunchArgument('rigid_pair_linear_speed_mps', default_value='0.0628'),
+        DeclareLaunchArgument('rigid_pair_angular_speed_rps', default_value='0.12'),
+        DeclareLaunchArgument(
+            'rigid_pair_marker_loss_grace_s', default_value='0.60'),
+        DeclareLaunchArgument(
+            'rigid_pair_marker_recovery_samples', default_value='3'),
+        DeclareLaunchArgument(
+            'rigid_pair_separation_m',
+            default_value=str(DEFAULT_WHEELBASE_M)),
+        DeclareLaunchArgument(
+            'id0_calibration', default_value=PathJoinSubstitution([
+                FindPackageShare('cooperative_parking_robot'), 'config',
+                'id0_calibration.yaml']),
+            description='shared raw ID0 forward-offset calibration YAML'),
+        DeclareLaunchArgument(
+            'rigid_pair_max_session_distance_m', default_value='0.30'),
+        DeclareLaunchArgument(
+            'require_fused_odom', default_value='false',
+            description='also require /front|rear/odom freshness'),
+        DeclareLaunchArgument(
+            'require_cctv_marker', default_value='false',
+            description='also require /front|rear/cctv_marker_visible'),
+        # Legacy keyboard_follow launch arguments.  They start the compatible
+        # executable only when the canonical option is not enabled.
         DeclareLaunchArgument(
             'enable_keyboard_follow', default_value='false'),
         DeclareLaunchArgument('follow_dashboard_port', default_value='5007'),
@@ -89,6 +132,11 @@ def generate_launch_description():
                 'buffer_size': 1,
                 'require_camera': True,
             }],
+            # USB UVC devices can remain busy briefly after a rapid test
+            # restart. Keep strict open failure, but retry this sensor process;
+            # the controller remains blocked without fresh ArUco pose.
+            respawn=True,
+            respawn_delay=2.0,
             output='screen'),
 
         Node(
@@ -104,6 +152,8 @@ def generate_launch_description():
                 'yaw_offset_deg': _float('yaw_offset_deg'),
                 'yaw_sign': _float('yaw_sign'),
                 'gray_gain': _float('gray_gain'),
+                'min_marker_distance_rate': _float(
+                    'aruco_min_marker_distance_rate'),
                 'allow_uncalibrated': False,
             }],
             output='screen'),
@@ -122,10 +172,15 @@ def generate_launch_description():
                 'calibration_width_px': _int('width'),
                 'calibration_height_px': _int('height'),
                 'stale_after_s': 1.0,
-                'enable_aruco': True,
+                'enable_aruco': _bool('preview_enable_aruco'),
                 'aruco_dict': 'DICT_4X4_50',
                 'marker_size_m': _float('marker_size_m'),
-                'aruco_every_n': 1,
+                'aruco_min_marker_distance_rate': _float(
+                    'aruco_min_marker_distance_rate'),
+                # The control tracker keeps all 12 Hz frames. The browser
+                # overlay is diagnostic-only, so detect at 6 Hz to avoid a
+                # second full-core 720p ArUco workload on Raspberry Pi 4.
+                'aruco_every_n': 2,
                 'relative_pose_topic': '/sync/relative_pose',
                 'marker_visible_topic': '/sync/marker_visible',
                 'enable_bev': False,
@@ -180,15 +235,57 @@ def generate_launch_description():
 
         Node(
             package='cooperative_parking_robot',
+            executable='rigid_pair_teleop',
+            name='rigid_pair_teleop',
+            # A manual test dashboard is another manual command owner.  Do
+            # not start both even if a user accidentally enables both flags.
+            condition=IfCondition(PythonExpression([
+                "'", LaunchConfiguration('enable_rigid_pair_teleop'),
+                "' == 'true' and '",
+                LaunchConfiguration('enable_drive_test_dashboard'),
+                "' != 'true'",
+            ])),
+            parameters=[LaunchConfiguration('id0_calibration'), {
+                'linear_speed_mps': _float('rigid_pair_linear_speed_mps'),
+                'angular_speed_rps': _float('rigid_pair_angular_speed_rps'),
+                'marker_loss_grace_s': _float(
+                    'rigid_pair_marker_loss_grace_s'),
+                'marker_recovery_samples': _int(
+                    'rigid_pair_marker_recovery_samples'),
+                'pair_separation_m': _float('rigid_pair_separation_m'),
+                'max_session_distance_m': _float(
+                    'rigid_pair_max_session_distance_m'),
+                'require_fused_odom': _bool('require_fused_odom'),
+                'require_cctv_marker': _bool('require_cctv_marker'),
+                'web_host': '0.0.0.0',
+                'web_port': _int('rigid_pair_dashboard_port'),
+                'preview_port': _int('preview_port'),
+                'preview_path': '/video/0',
+            }],
+            output='screen'),
+
+        Node(
+            package='cooperative_parking_robot',
             executable='keyboard_follow',
-            name='keyboard_follow_dashboard',
-            condition=IfCondition(
-                LaunchConfiguration('enable_keyboard_follow')),
-            parameters=[{
+            name='keyboard_follow_legacy',
+            condition=IfCondition(PythonExpression([
+                "'", LaunchConfiguration('enable_keyboard_follow'),
+                "' == 'true' and '",
+                LaunchConfiguration('enable_rigid_pair_teleop'),
+                "' != 'true' and '",
+                LaunchConfiguration('enable_drive_test_dashboard'),
+                "' != 'true'",
+            ])),
+            parameters=[LaunchConfiguration('id0_calibration'), {
                 'linear_speed_mps': _float('follow_linear_speed_mps'),
                 'angular_speed_rps': _float('follow_angular_speed_rps'),
+                'marker_loss_grace_s': _float(
+                    'rigid_pair_marker_loss_grace_s'),
+                'marker_recovery_samples': _int(
+                    'rigid_pair_marker_recovery_samples'),
                 'max_session_distance_m': _float(
                     'follow_max_session_distance_m'),
+                'pair_separation_m': _float('rigid_pair_separation_m'),
                 'web_host': '0.0.0.0',
                 'web_port': _int('follow_dashboard_port'),
                 'preview_port': _int('preview_port'),

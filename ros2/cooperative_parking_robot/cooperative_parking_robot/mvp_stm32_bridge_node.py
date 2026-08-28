@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Production entry point for the phase-scoped STM32 bridge."""
 
+import signal
+
 import rclpy
 
 from cooperative_parking_robot.stm32_bridge_node import Stm32BridgeNode
@@ -18,6 +20,7 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
         node.shutdown_stop()
         node.destroy_node()
         if rclpy.ok():

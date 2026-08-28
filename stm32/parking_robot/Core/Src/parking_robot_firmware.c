@@ -258,6 +258,8 @@ static volatile uint8_t g_rx_command_head = 0U;
 static volatile uint8_t g_rx_command_tail = 0U;
 static volatile uint8_t g_rx_command_count = 0U;
 static volatile uint8_t g_rx_queue_overflow = 0U;
+static volatile uint8_t g_uart_rx_error_pending = 0U;
+static volatile uint8_t g_uart_rx_rearm_pending = 0U;
 
 /* ISR에서는 blocking UART 송신을 하지 않고 main loop가 응답을 보낸다. */
 #define TX_ACK          (1U << 0)
@@ -285,6 +287,9 @@ static void QueueError(const char *code);
 static bool ErrorIsCommunicationTimeout(const char *code);
 static bool ErrorIsRecoverableRejection(const char *code);
 static bool SessionIdIsValid(const char *session_id);
+static bool ProtocolActuationAllowed(void);
+static bool UART_ArmReceive(void);
+static void UART_MaintainRx(void);
 static void UART_ProcessPendingCommands(void);
 static void UART_QueueRxCommand(const char *command);
 static bool UART_TransmitFrame(const char *line);
@@ -360,6 +365,10 @@ void Robot_Init(void)
     g_rx_command_tail = 0U;
     g_rx_command_count = 0U;
     g_rx_queue_overflow = 0U;
+    g_uart_rx_error_pending = 0U;
+    g_uart_rx_rearm_pending = 0U;
+    uart_rx_idx = 0U;
+    uart_frame_active = 0U;
     g_ultrasonic.next_side = ULTRA_LEFT;
 
     // 서보 초기값 (열림)
@@ -402,8 +411,10 @@ void Robot_Init(void)
     g_ultrasonic.last_trigger_ms =
         HAL_GetTick() - ULTRASONIC_INTERVAL_MS;
 
-    // UART 인터럽트 수신 시작
-    HAL_UART_Receive_IT(&huart2, &uart_rx_byte, 1);
+    // UART 인터럽트 수신 시작. 실패하면 main loop에서 안전 정지 후 재시도한다.
+    if (!UART_ArmReceive()) {
+        g_uart_rx_error_pending = 1U;
+    }
 }
 
 static void QueueAck(const char *value)
@@ -445,6 +456,7 @@ static bool ErrorIsRecoverableRejection(const char *code)
            strcmp(code, "BAD_MOTOR_TEST") == 0 ||
            strcmp(code, "BAD_SERVO_COMMAND") == 0 ||
            strcmp(code, "RX_QUEUE_OVERFLOW") == 0 ||
+           strcmp(code, "UART_RX_ERROR") == 0 ||
            strcmp(code, "TX_FRAME_INVALID") == 0 ||
            strcmp(code, "UNKNOWN_COMMAND") == 0 ||
            strcmp(code, "SERVO_TIMEOUT") == 0 ||
@@ -452,6 +464,13 @@ static bool ErrorIsRecoverableRejection(const char *code)
            strcmp(code, "HEARTBEAT_REQUIRED") == 0 ||
            strcmp(code, "COMMAND_REQUIRED") == 0 ||
            strcmp(code, "STARTUP_SEQUENCE") == 0;
+}
+
+static bool ErrorRequiresNewSession(const char *code)
+{
+    return strcmp(code, "RX_QUEUE_OVERFLOW") == 0 ||
+           strcmp(code, "UART_RX_ERROR") == 0 ||
+           strcmp(code, "UNKNOWN_COMMAND") == 0;
 }
 
 static bool SessionIdIsValid(const char *session_id)
@@ -470,19 +489,92 @@ static bool SessionIdIsValid(const char *session_id)
     return true;
 }
 
+/* 모든 비상정지 외 actuator 경로가 동일한 v2 session gate를 사용한다.
+ * UART 오류 뒤 남은 byte가 legacy 명령으로 보이더라도 새 HELLO/HB/zero
+ * probe 전에는 모터와 서보를 다시 움직일 수 없다. */
+static bool ProtocolActuationAllowed(void)
+{
+    uint32_t now = HAL_GetTick();
+
+    if (g_uart_rx_error_pending) {
+        Robot_StopMotorsImmediate();
+        Robot_HoldServosImmediate();
+        return false;
+    }
+    if (g_robot.estop_latched) {
+        Robot_StopMotorsImmediate();
+        QueueError("ESTOP_LATCHED");
+        return false;
+    }
+    if (g_robot.safety_fault_latched) {
+        Robot_StopMotorsImmediate();
+        QueueError(g_robot.safety_fault_code);
+        return false;
+    }
+    if (!g_robot.protocol_session_active) {
+        Robot_StopMotorsImmediate();
+        QueueError("HELLO_REQUIRED");
+        return false;
+    }
+    if (g_robot.heartbeat_seen &&
+        now - g_robot.last_heartbeat_time > HEARTBEAT_TIMEOUT_MS) {
+        g_robot.heartbeat_timed_out = 1U;
+    }
+    if (!g_robot.heartbeat_seen || g_robot.heartbeat_timed_out) {
+        Robot_StopMotorsImmediate();
+        QueueError(g_robot.heartbeat_timed_out
+            ? "HEARTBEAT_TIMEOUT" : "HEARTBEAT_REQUIRED");
+        return false;
+    }
+    if (g_robot.command_seen &&
+        now - g_robot.last_cmd_time > COMMAND_TIMEOUT_MS) {
+        g_robot.command_timed_out = 1U;
+    }
+    if (!g_robot.command_seen || g_robot.command_timed_out) {
+        Robot_StopMotorsImmediate();
+        QueueError(g_robot.command_timed_out
+            ? "COMMAND_TIMEOUT" : "COMMAND_REQUIRED");
+        return false;
+    }
+    return true;
+}
+
 static void QueueError(const char *code)
 {
     /* Session/protocol/configuration rejections stop immediately but do not
      * become reset-required. Only explicitly physical/internal safety faults
      * survive HELLO in safety_fault_latched. */
-    bool recoverable = ErrorIsCommunicationTimeout(code) ||
-                       ErrorIsRecoverableRejection(code);
+    bool communication_timeout = ErrorIsCommunicationTimeout(code);
+    bool recoverable_rejection = ErrorIsRecoverableRejection(code);
+    bool requires_new_session = ErrorRequiresNewSession(code);
+    bool recoverable = communication_timeout || recoverable_rejection;
     if (recoverable) {
         /* A recoverable rejection is still a safety stop. Discard target/PID
          * state immediately; a later valid session/command must start from
          * zero instead of resuming the rejected command's predecessor. */
         Robot_StopMotorsImmediate();
     }
+    /* Loss of the controller/session is fail-closed for every actuator.
+     * Hold an in-progress servo at its current pulse instead of allowing its
+     * old trajectory to continue after communication authority is gone. */
+    if (communication_timeout || requires_new_session) {
+        Robot_StopMotorsImmediate();
+        Robot_HoldServosImmediate();
+    }
+    if (requires_new_session) {
+        /* A corrupted/unknown frame makes the current byte-stream boundary
+         * untrustworthy.  Keep the robot stopped and reject HB/V/servo until
+         * a complete HELLO establishes every startup gate again. */
+        g_robot.protocol_session_active = 0U;
+        g_robot.session_id[0] = '\0';
+        g_robot.heartbeat_seen = 0U;
+        g_robot.command_seen = 0U;
+        g_robot.manual_mode = 0U;
+        g_robot.manual_open_loop = 0U;
+        g_robot.servo_attached = 0U;
+        g_robot.last_command = 'X';
+    }
+    /* Physical/internal faults still survive HELLO and require manual reset. */
     if (!recoverable &&
         strcmp(code, "ESTOP_LATCHED") != 0) {
         if (!g_robot.safety_fault_latched) {
@@ -563,6 +655,53 @@ static void UART_SendPending(void)
  * [3-1] uart_comm_task — 라즈베리파이 통신
  * ================================================== */
 
+static bool UART_ArmReceive(void)
+{
+    HAL_StatusTypeDef status =
+        HAL_UART_Receive_IT(&huart2, &uart_rx_byte, 1U);
+    if (status == HAL_OK ||
+        (status == HAL_BUSY &&
+         huart2.RxState == HAL_UART_STATE_BUSY_RX)) {
+        g_uart_rx_rearm_pending = 0U;
+        return true;
+    }
+    g_uart_rx_rearm_pending = 1U;
+    return false;
+}
+
+/* UART error callback은 ISR context이므로 actuator나 blocking TX를 건드리지
+ * 않는다. main loop가 fault를 처리하며, 여기서는 끊어진 byte RX만 복구한다. */
+static void UART_MaintainRx(void)
+{
+    uint8_t report_error = 0U;
+
+    __disable_irq();
+    if (g_uart_rx_error_pending) {
+        g_uart_rx_error_pending = 0U;
+        g_rx_queue_overflow = 0U;
+        g_rx_command_head = 0U;
+        g_rx_command_tail = 0U;
+        g_rx_command_count = 0U;
+        uart_rx_idx = 0U;
+        uart_frame_active = 0U;
+        report_error = 1U;
+    }
+    __enable_irq();
+
+    if (report_error) {
+        QueueError("UART_RX_ERROR");
+    }
+
+    if (g_uart_rx_rearm_pending) {
+        if (huart2.RxState == HAL_UART_STATE_READY) {
+            (void)UART_ArmReceive();
+        } else if (huart2.RxState == HAL_UART_STATE_BUSY_RX) {
+            /* Non-blocking FE/NE errors keep the existing receive alive. */
+            g_uart_rx_rearm_pending = 0U;
+        }
+    }
+}
+
 static void UART_QueueRxCommand(const char *command)
 {
     if (g_rx_command_count >= RX_COMMAND_QUEUE_DEPTH) {
@@ -580,6 +719,11 @@ static void UART_QueueRxCommand(const char *command)
 
 static void UART_ProcessPendingCommands(void)
 {
+    /* Error ISR가 Maintain 이후에 끼어들면 현재 loop에서는 어떤 queued
+     * command도 실행하지 않는다. 다음 Maintain이 queue/session을 폐기한다. */
+    if (g_uart_rx_error_pending) {
+        return;
+    }
     if (g_rx_queue_overflow) {
         __disable_irq();
         g_rx_queue_overflow = 0U;
@@ -594,6 +738,9 @@ static void UART_ProcessPendingCommands(void)
 
     while (g_rx_command_count > 0U) {
         char command[sizeof(uart_rx_buf)];
+        if (g_uart_rx_error_pending) {
+            return;
+        }
         __disable_irq();
         strncpy(command, g_rx_commands[g_rx_command_tail],
                 sizeof(command) - 1U);
@@ -602,6 +749,10 @@ static void UART_ProcessPendingCommands(void)
             (g_rx_command_tail + 1U) % RX_COMMAND_QUEUE_DEPTH);
         g_rx_command_count--;
         __enable_irq();
+
+        if (g_uart_rx_error_pending) {
+            return;
+        }
 
         if (command[0] != '\0' && command[1] == '\0') {
             Legacy_ApplyCommand((uint8_t)command[0]);
@@ -620,6 +771,14 @@ static void UART_ProcessPendingCommands(void)
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     if (huart->Instance == USART2) {
+        /* ErrorCallback 이후 main loop가 session을 무효화하기 전에는 손상
+         * frame의 tail byte를 해석하거나 다음 byte RX를 열지 않는다. */
+        if (g_uart_rx_error_pending) {
+            uart_rx_idx = 0U;
+            uart_frame_active = 0U;
+            g_uart_rx_rearm_pending = 1U;
+            return;
+        }
         if (!uart_frame_active) {
             if (uart_rx_byte == '@') {
                 uart_frame_active = 1U;
@@ -641,8 +800,23 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             uart_frame_active = 0U;
             g_rx_queue_overflow = 1U;
         }
-        HAL_UART_Receive_IT(&huart2, &uart_rx_byte, 1);
+        (void)UART_ArmReceive();
     }
+}
+
+/* ORE는 STM32 HAL 내부에서 RX interrupt를 종료한 뒤 이 callback을 부른다.
+ * ISR에서는 partial frame 폐기와 fault 표시만 한다. main loop가 먼저
+ * actuator/session을 fail-closed 처리한 뒤 byte RX를 다시 건다. */
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance != USART2) {
+        return;
+    }
+
+    uart_rx_idx = 0U;
+    uart_frame_active = 0U;
+    g_uart_rx_error_pending = 1U;
+    g_uart_rx_rearm_pending = 1U;
 }
 
 /* 명령 파싱: HELLO / V / S / HB / ESTOP.
@@ -862,6 +1036,9 @@ void UART_ParseCommand(char *cmd)
             QueueAck("MOTOR_STOP");
             return;
         }
+        if (!ProtocolActuationAllowed()) {
+            return;
+        }
 
         int motor_index = -1;
         const char *pwm_text = NULL;
@@ -1044,6 +1221,17 @@ static void Legacy_SetOpenLoop(float forward, float right, float clockwise)
 static void Legacy_ApplyCommand(uint8_t command)
 {
     float *target;
+    const char *safe_commands = "Xx 12";
+    const char *actuation_commands = "WSADQEwsadqeUuJjIiKkTtGgOo";
+
+    if (strchr(safe_commands, (int)command) == NULL &&
+        strchr(actuation_commands, (int)command) == NULL) {
+        return;
+    }
+    if (strchr(actuation_commands, (int)command) != NULL &&
+        !ProtocolActuationAllowed()) {
+        return;
+    }
     if (strchr("UuJjIiKkTtGg", (int)command) != NULL &&
         !g_robot.servo_attached) {
         Robot_StopMotorsImmediate();
@@ -1616,8 +1804,12 @@ void Robot_MainLoop(void)
     static uint32_t last_telemetry_tx = 0;
     uint32_t now = HAL_GetTick();
 
-    /* RX ISR이 만든 완전한 command frame을 main-loop에서만 처리한다. */
+    /* RX fault를 먼저 fail-closed 처리하고, 완전한 frame만 실행한다. */
+    UART_MaintainRx();
     UART_ProcessPendingCommands();
+    /* Maintain 직후 또는 queue 처리 중 발생한 RX fault도 actuator task보다
+     * 먼저 처리한다. */
+    UART_MaintainRx();
 
     // 실차에서 검증된 모터 제어 주기: 20Hz (50ms)
     if (now - last_control >= 50) {

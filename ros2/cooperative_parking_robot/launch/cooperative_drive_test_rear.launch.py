@@ -79,6 +79,10 @@ def generate_launch_description():
         DeclareLaunchArgument('rigid_pair_linear_speed_mps', default_value='0.0628'),
         DeclareLaunchArgument('rigid_pair_angular_speed_rps', default_value='0.12'),
         DeclareLaunchArgument(
+            'rigid_pair_marker_loss_grace_s', default_value='0.60'),
+        DeclareLaunchArgument(
+            'rigid_pair_marker_recovery_samples', default_value='3'),
+        DeclareLaunchArgument(
             'rigid_pair_separation_m',
             default_value=str(DEFAULT_WHEELBASE_M)),
         DeclareLaunchArgument(
@@ -119,6 +123,11 @@ def generate_launch_description():
                 'buffer_size': 1,
                 'require_camera': True,
             }],
+            # USB UVC devices can remain busy briefly after a rapid test
+            # restart. Keep strict open failure, but retry this sensor process;
+            # the controller remains blocked without fresh ArUco pose.
+            respawn=True,
+            respawn_delay=2.0,
             output='screen'),
 
         Node(
@@ -223,6 +232,10 @@ def generate_launch_description():
             parameters=[LaunchConfiguration('id0_calibration'), {
                 'linear_speed_mps': _float('rigid_pair_linear_speed_mps'),
                 'angular_speed_rps': _float('rigid_pair_angular_speed_rps'),
+                'marker_loss_grace_s': _float(
+                    'rigid_pair_marker_loss_grace_s'),
+                'marker_recovery_samples': _int(
+                    'rigid_pair_marker_recovery_samples'),
                 'pair_separation_m': _float('rigid_pair_separation_m'),
                 'max_session_distance_m': _float(
                     'rigid_pair_max_session_distance_m'),
@@ -250,6 +263,10 @@ def generate_launch_description():
             parameters=[LaunchConfiguration('id0_calibration'), {
                 'linear_speed_mps': _float('follow_linear_speed_mps'),
                 'angular_speed_rps': _float('follow_angular_speed_rps'),
+                'marker_loss_grace_s': _float(
+                    'rigid_pair_marker_loss_grace_s'),
+                'marker_recovery_samples': _int(
+                    'rigid_pair_marker_recovery_samples'),
                 'max_session_distance_m': _float(
                     'follow_max_session_distance_m'),
                 'pair_separation_m': _float('rigid_pair_separation_m'),

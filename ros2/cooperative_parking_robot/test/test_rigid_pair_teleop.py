@@ -1,6 +1,7 @@
 """ROS-independent regression tests for virtual rigid-pair teleoperation."""
 
 import math
+from collections import deque
 from pathlib import Path
 from types import MethodType, SimpleNamespace
 
@@ -9,6 +10,7 @@ from builtin_interfaces.msg import Time
 
 from cooperative_parking_robot.keyboard_follow_node import RigidPairTeleopNode
 from cooperative_parking_robot.rigid_pair_teleop_core import (
+    MarkerRecoveryGate,
     RigidPairTeleopLimits,
     capture_pair_reference,
     evaluate_rigid_pair,
@@ -90,6 +92,106 @@ def test_arm_requires_three_tightly_clustered_id0_samples():
     assert not relative_pose_is_stable(stable[:2])
     assert not relative_pose_is_stable([
         (0.215, 0.0, 0.0), (0.235, 0.0, 0.0), (0.216, 0.0, 0.0)])
+
+
+def test_one_marker_miss_stops_for_grace_then_requires_three_good_poses():
+    gate = MarkerRecoveryGate(
+        timeout_s=0.35, loss_grace_s=0.25, recovery_samples=3)
+    for stamp in (10.00, 10.03, 10.06):
+        gate.note_pose(stamp)
+    assert gate.fresh(10.07)
+
+    gate.note_visibility(False, 10.08)
+    assert not gate.fresh(10.08)
+    assert gate.recovery_pending(10.08)
+
+    gate.note_pose(10.11)
+    gate.note_visibility(True, 10.11)
+    gate.note_pose(10.14)
+    gate.note_visibility(True, 10.14)
+    assert not gate.fresh(10.14)
+    assert gate.recovery_pending(10.14)
+
+    gate.note_pose(10.17)
+    gate.note_visibility(True, 10.17)
+    assert gate.fresh(10.18)
+    assert not gate.recovery_pending(10.18)
+
+
+def test_continuous_marker_loss_expires_the_bounded_recovery_grace():
+    gate = MarkerRecoveryGate(
+        timeout_s=0.35, loss_grace_s=0.25, recovery_samples=3)
+    for stamp in (20.00, 20.03, 20.06):
+        gate.note_pose(stamp)
+    gate.note_visibility(False, 20.08)
+
+    assert gate.recovery_pending(20.32)
+    assert not gate.recovery_pending(20.34)
+    assert not gate.fresh(20.34)
+
+
+def test_zero_hold_can_outlast_pose_timeout_to_collect_three_slow_frames():
+    gate = MarkerRecoveryGate(
+        timeout_s=0.35, loss_grace_s=0.60, recovery_samples=3)
+    for stamp in (30.00, 30.10, 30.20):
+        gate.note_pose(stamp)
+    gate.note_visibility(False, 30.25)
+    gate.note_pose(30.45)
+    gate.note_pose(30.65)
+    assert gate.recovery_pending(30.65)
+    gate.note_pose(30.80)
+    assert gate.fresh(30.81)
+
+
+def test_one_false_visibility_sample_preserves_median_filter_history(monkeypatch):
+    gate = MarkerRecoveryGate()
+    samples = deque([(0.21, 0.0, 0.0)] * 3, maxlen=3)
+    sample_times = deque([1.00, 1.03, 1.06], maxlen=3)
+    node = SimpleNamespace(
+        marker_gate=gate,
+        relative_samples=samples,
+        relative_sample_times=sample_times)
+    monkeypatch.setattr(
+        'cooperative_parking_robot.keyboard_follow_node.time.monotonic',
+        lambda: 1.08)
+
+    RigidPairTeleopNode._marker_cb(node, SimpleNamespace(data=False))
+
+    assert list(node.relative_samples) == [(0.21, 0.0, 0.0)] * 3
+    assert list(node.relative_sample_times) == [1.00, 1.03, 1.06]
+    assert gate.recovery_pending(1.08)
+
+
+def test_marker_recovery_hold_forces_zero_without_leaving_armed_state():
+    gate = MarkerRecoveryGate()
+    for stamp in (2.00, 2.03, 2.06):
+        gate.note_pose(stamp)
+    gate.note_visibility(False, 2.08)
+
+    calls = []
+    teleop = SimpleNamespace(stop=lambda: calls.append('stop'))
+    node = SimpleNamespace(
+        state='ARMED', marker_gate=gate, teleop=teleop,
+        marker_pause_active=False, key_intent='', decision='',
+        _publish_zero=lambda: calls.append('zero'))
+
+    assert RigidPairTeleopNode._hold_for_marker_recovery(node, 2.10)
+    assert node.state == 'ARMED'
+    assert node.marker_pause_active
+    assert node.key_intent == 'ArUco 재검출 대기'
+    assert calls == ['stop', 'zero']
+    assert '양쪽 0속도' in node.decision
+
+
+@pytest.mark.parametrize('kwargs', [
+    {'timeout_s': 0.0},
+    {'loss_grace_s': 0.0},
+    {'loss_grace_s': 2.01},
+    {'recovery_samples': 0},
+])
+def test_marker_recovery_gate_rejects_unsafe_configuration(kwargs):
+    with pytest.raises(ValueError):
+        MarkerRecoveryGate(**kwargs)
 
 
 def test_read_only_placement_guide_progresses_without_authorizing_motion():
@@ -213,6 +315,20 @@ def test_canonical_entrypoint_owns_a_real_main_function():
     assert 'return _main(args=args)' in source
 
 
+def test_aruco_tracker_shutdown_is_idempotent_after_launch_sigint():
+    source = (Path(__file__).parents[1] / 'cooperative_parking_robot' /
+              'aruco_tracker_node.py').read_text(encoding='utf-8')
+    assert 'if rclpy.ok():\n        rclpy.shutdown()' in source
+
+
+def test_rigid_pair_shutdown_only_suppresses_an_invalidated_context_race():
+    source = (Path(__file__).parents[1] / 'cooperative_parking_robot' /
+              'keyboard_follow_node.py').read_text(encoding='utf-8')
+    assert 'except RuntimeError:' in source
+    assert 'if rclpy.ok():\n            raise' in source
+    assert 'if rclpy.ok():\n            rclpy.shutdown()' in source
+
+
 def test_web_post_origin_guard_allows_cli_but_rejects_other_sites():
     assert request_origin_is_same_host(None, 'robot-1.local:5007')
     assert request_origin_is_same_host(
@@ -234,6 +350,8 @@ def test_launch_does_not_start_auto_drive_and_rigid_teleop_together_by_default()
     assert source.count("parameters=[LaunchConfiguration('id0_calibration'), {") == 2
     assert "FindPackageShare('cooperative_parking_robot')" in source
     assert source.count("'pair_separation_m': _float('rigid_pair_separation_m')") == 2
+    assert 'respawn=True' in source
+    assert 'respawn_delay=2.0' in source
 
 
 def test_status_ui_exposes_read_only_camera_placement_guide_only():

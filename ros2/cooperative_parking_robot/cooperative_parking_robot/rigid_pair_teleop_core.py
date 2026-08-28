@@ -64,6 +64,98 @@ class PlacementGuide:
     estimate_available: bool = False
 
 
+class MarkerRecoveryGate:
+    """Bound a raw ArUco dropout without ever driving on one good frame.
+
+    A negative visibility sample makes the gate stale immediately. The
+    controller may hold zero during ``loss_grace_s``, but freshness returns
+    only after ``recovery_samples`` consecutive pose samples. Repeated misses
+    keep the original loss start time so an unstable stream cannot extend the
+    grace indefinitely.
+    """
+
+    def __init__(self, timeout_s=0.35, loss_grace_s=0.60,
+                 recovery_samples=3):
+        self.timeout_s = float(timeout_s)
+        self.loss_grace_s = float(loss_grace_s)
+        if isinstance(recovery_samples, bool):
+            raise ValueError('recovery_samples must be a positive integer')
+        self.recovery_samples = int(recovery_samples)
+        if (not math.isfinite(self.timeout_s) or self.timeout_s <= 0.0 or
+                not math.isfinite(self.loss_grace_s) or
+                self.loss_grace_s <= 0.0 or
+                self.loss_grace_s > 2.0):
+            raise ValueError(
+                'marker timeout/grace must be positive and grace <= 2 seconds')
+        if (self.recovery_samples <= 0 or
+                self.recovery_samples != recovery_samples):
+            raise ValueError('recovery_samples must be a positive integer')
+        self.visible = False
+        self.pose_time = None
+        self.true_time = None
+        self.false_time = None
+        self.unstable_since = None
+        self.recovery_count = 0
+
+    @staticmethod
+    def _stamp(now):
+        value = float(now)
+        if not math.isfinite(value) or value < 0.0:
+            raise ValueError('marker event time must be finite and non-negative')
+        return value
+
+    def note_pose(self, now):
+        now = self._stamp(now)
+        if self.pose_time is not None and now < self.pose_time:
+            return False
+        if (self.pose_time is not None and
+                now - self.pose_time > self.timeout_s):
+            self.recovery_count = 0
+            if self.unstable_since is None:
+                self.unstable_since = now
+        self.pose_time = now
+        self.true_time = now
+        self.visible = True
+        self.recovery_count = min(
+            self.recovery_samples, self.recovery_count + 1)
+        if self.recovery_count >= self.recovery_samples:
+            self.unstable_since = None
+        return True
+
+    def note_visibility(self, visible, now):
+        now = self._stamp(now)
+        self.visible = bool(visible)
+        if self.visible:
+            self.true_time = now
+            return
+        self.false_time = now
+        self.recovery_count = 0
+        if self.unstable_since is None:
+            self.unstable_since = now
+
+    def fresh(self, now):
+        now = self._stamp(now)
+        return (
+            self.visible and self.pose_time is not None and
+            self.true_time is not None and
+            self.recovery_count >= self.recovery_samples and
+            0.0 <= now - self.pose_time <= self.timeout_s and
+            0.0 <= now - self.true_time <= self.timeout_s and
+            (self.false_time is None or self.pose_time >= self.false_time))
+
+    def recovery_pending(self, now):
+        now = self._stamp(now)
+        if self.fresh(now) or self.unstable_since is None:
+            return False
+        return 0.0 <= now - self.unstable_since <= self.loss_grace_s
+
+    def unstable_age_s(self, now):
+        now = self._stamp(now)
+        if self.unstable_since is None:
+            return None
+        return max(0.0, now - self.unstable_since)
+
+
 def evaluate_placement_guide(*, relative_pose, marker_fresh, stable,
                              pair_separation_m, aruco_distance_offset_m,
                              centre_tolerance_m=0.015,
@@ -133,6 +225,24 @@ def median_relative_pose(samples):
         statistics.median(sample[1] for sample in values),
         angle_norm(statistics.median(unwrapped_yaws)),
     )
+
+
+def relative_pose_step_is_plausible(
+        previous, candidate, *, forward_step_m=0.020,
+        lateral_step_m=0.020, yaw_step_rad=math.radians(3.0)):
+    """Reject camera pose jumps faster than the bounded pair can produce."""
+    old = tuple(float(value) for value in previous)
+    new = tuple(float(value) for value in candidate)
+    limits = (float(forward_step_m), float(lateral_step_m),
+              float(yaw_step_rad))
+    if (len(old) != 3 or len(new) != 3 or
+            not all(math.isfinite(value) for value in old + new + limits) or
+            not all(value > 0.0 for value in limits)):
+        raise ValueError('relative pose values/step limits must be finite')
+    return (
+        abs(new[0] - old[0]) <= limits[0] and
+        abs(new[1] - old[1]) <= limits[1] and
+        abs(angle_norm(new[2] - old[2])) <= limits[2])
 
 
 def clamp(value, limit):

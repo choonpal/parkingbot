@@ -10,6 +10,9 @@ from cooperative_parking_robot.keyboard_follow_core import (
     follow_pair_commands,
     median_relative_pose,
 )
+from cooperative_parking_robot.rigid_pair_teleop_core import (
+    relative_pose_step_is_plausible,
+)
 
 
 def test_aruco_reference_is_captured_exactly_without_geometry_offset():
@@ -43,6 +46,22 @@ def test_three_pose_median_preserves_sustained_yaw_change_and_wraparound():
         (0.21, 0.0, math.radians(178.0)),
     ])
     assert abs(math.degrees(wrapped[2])) == pytest.approx(179.0)
+
+
+def test_impossible_pnp_pose_jump_is_rejected_before_the_median_filter():
+    baseline = (0.376, 0.015, math.radians(1.0))
+    assert relative_pose_step_is_plausible(
+        baseline, (0.379, 0.014, math.radians(2.0)))
+    assert not relative_pose_step_is_plausible(
+        baseline, (0.376, 0.015, math.radians(7.3)))
+    assert not relative_pose_step_is_plausible(
+        baseline, (0.401, 0.015, math.radians(1.0)))
+
+
+def test_pose_step_plausibility_handles_yaw_wraparound():
+    assert relative_pose_step_is_plausible(
+        (0.30, 0.0, math.radians(179.0)),
+        (0.30, 0.0, math.radians(-179.0)))
 
 
 def test_keyboard_web_uses_fixed_repeat_and_keyup_stop():

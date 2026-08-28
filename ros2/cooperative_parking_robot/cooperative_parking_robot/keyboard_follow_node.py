@@ -31,6 +31,7 @@ from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import Bool, String
 
 from cooperative_parking_robot.rigid_pair_teleop_core import (
+    MarkerRecoveryGate,
     RigidPairTeleopLimits,
     angle_norm,
     capture_pair_reference,
@@ -39,6 +40,7 @@ from cooperative_parking_robot.rigid_pair_teleop_core import (
     is_zero,
     median_relative_pose,
     OdomPathAccumulator,
+    relative_pose_step_is_plausible,
     relative_pose_is_stable,
     request_origin_is_same_host,
     evaluate_placement_guide,
@@ -276,7 +278,9 @@ async function tick() {
     row('간격 오차', n(p.gap_error_cm, 1, ' cm')) +
     row('좌우 오차', n(p.lateral_error_cm, 1, ' cm')) +
     row('각도 오차(3프레임)', n(p.yaw_error_deg, 1, '°')) +
-    row('각도 원시값', n(p.raw_yaw_error_deg, 1, '°'));
+    row('각도 원시값', n(p.raw_yaw_error_deg, 1, '°')) +
+    row('마커 안전상태', esc(p.marker_tracking) + ' (' +
+      Number(p.recovery_samples) + '/' + Number(p.recovery_required) + ')');
   document.getElementById('commands').innerHTML =
     row('키 입력', esc(s.key_intent)) +
     row('Front x/y/ω', c.front.map(v => Number(v).toFixed(3)).join(' / ')) +
@@ -348,11 +352,16 @@ class RigidPairTeleopNode(Node):
         self.declare_parameter('relative_stable_forward_span_m', 0.010)
         self.declare_parameter('relative_stable_lateral_span_m', 0.010)
         self.declare_parameter('relative_stable_yaw_span_deg', 2.0)
+        self.declare_parameter('relative_outlier_forward_step_m', 0.020)
+        self.declare_parameter('relative_outlier_lateral_step_m', 0.020)
+        self.declare_parameter('relative_outlier_yaw_step_deg', 3.0)
         self.declare_parameter('require_fused_odom', False)
         self.declare_parameter('fused_odom_timeout_s', 0.50)
         self.declare_parameter('require_cctv_marker', False)
         self.declare_parameter('cctv_marker_timeout_s', 0.50)
         self.declare_parameter('marker_timeout_s', 0.35)
+        self.declare_parameter('marker_loss_grace_s', 0.60)
+        self.declare_parameter('marker_recovery_samples', 3)
         self.declare_parameter('pair_separation_m', DEFAULT_WHEELBASE_M)
         self.declare_parameter('aruco_distance_offset_m', 0.0)
         self.declare_parameter('placement_centre_tolerance_m', 0.015)
@@ -396,6 +405,12 @@ class RigidPairTeleopNode(Node):
             gp('relative_stable_lateral_span_m').value)
         self.relative_stable_yaw_span = math.radians(float(
             gp('relative_stable_yaw_span_deg').value))
+        self.relative_outlier_forward_step = float(
+            gp('relative_outlier_forward_step_m').value)
+        self.relative_outlier_lateral_step = float(
+            gp('relative_outlier_lateral_step_m').value)
+        self.relative_outlier_yaw_step = math.radians(float(
+            gp('relative_outlier_yaw_step_deg').value))
         self.require_fused_odom = bool(gp('require_fused_odom').value)
         self.fused_odom_timeout = float(gp('fused_odom_timeout_s').value)
         self.require_cctv_marker = bool(
@@ -403,6 +418,14 @@ class RigidPairTeleopNode(Node):
         self.cctv_marker_timeout = float(
             gp('cctv_marker_timeout_s').value)
         self.marker_timeout = float(gp('marker_timeout_s').value)
+        self.marker_loss_grace = float(
+            gp('marker_loss_grace_s').value)
+        self.marker_recovery_samples = int(
+            gp('marker_recovery_samples').value)
+        self.marker_gate = MarkerRecoveryGate(
+            timeout_s=self.marker_timeout,
+            loss_grace_s=self.marker_loss_grace,
+            recovery_samples=self.marker_recovery_samples)
         self.pair_separation_m = float(gp('pair_separation_m').value)
         self.aruco_distance_offset_m = float(
             gp('aruco_distance_offset_m').value)
@@ -425,7 +448,10 @@ class RigidPairTeleopNode(Node):
                 self.odom_max_step_m <= 0.0 or
                 self.relative_stable_forward_span <= 0.0 or
                 self.relative_stable_lateral_span <= 0.0 or
-                self.relative_stable_yaw_span <= 0.0):
+                self.relative_stable_yaw_span <= 0.0 or
+                self.relative_outlier_forward_step <= 0.0 or
+                self.relative_outlier_lateral_step <= 0.0 or
+                self.relative_outlier_yaw_step <= 0.0):
             raise ValueError('invalid rigid-pair sensor safety parameter')
         if (not all(math.isfinite(value) and value > 0.0 for value in (
                     self.placement_centre_tolerance,
@@ -444,9 +470,7 @@ class RigidPairTeleopNode(Node):
         self.relative_samples = deque(maxlen=3)
         self.relative_sample_times = deque(maxlen=3)
         self.relative_time = 0.0
-        self.marker_visible = False
-        self.marker_true_time = 0.0
-        self.marker_false_time = 0.0
+        self.marker_pause_active = False
         self.ready = {role: {'value': False, 'time': 0.0}
                       for role in ('front', 'rear')}
         self.manual = {role: {'value': False, 'time': 0.0}
@@ -598,24 +622,34 @@ class RigidPairTeleopNode(Node):
             self.relative_samples.clear()
             self.relative_sample_times.clear()
         self.raw_relative = values
+        if (self.relative is not None and self.relative_time > 0.0 and
+                now - self.relative_time <= self.marker_timeout and
+                not relative_pose_step_is_plausible(
+                    self.relative, values,
+                    forward_step_m=self.relative_outlier_forward_step,
+                    lateral_step_m=self.relative_outlier_lateral_step,
+                    yaw_step_rad=self.relative_outlier_yaw_step)):
+            # A solved PnP pose can briefly jump to the wrong planar branch.
+            # Treat that as a negative observation: zero immediately, keep
+            # the old median, and require three plausible poses to recover.
+            self.marker_gate.note_visibility(False, now)
+            self.get_logger().warn(
+                'ID0 pose outlier rejected; holding zero for reacquisition',
+                throttle_duration_sec=1.0)
+            return
         self.relative_samples.append(values)
         self.relative_sample_times.append(now)
         self.relative = median_relative_pose(self.relative_samples)
         self.relative_time = now
-        # A valid, fresh ID0 pose is positive visibility evidence.  This
-        # prevents Bool/Pose callback ordering from falsely stopping a pair.
-        self.marker_visible = True
-        self.marker_true_time = now
+        # A valid pose is positive evidence, but after any negative frame the
+        # gate still requires three consecutive poses before motion resumes.
+        self.marker_gate.note_pose(now)
 
     def _marker_cb(self, msg):
-        self.marker_visible = bool(msg.data)
-        if self.marker_visible:
-            self.marker_true_time = time.monotonic()
-        else:
-            # A camera-confirmed disappearance is immediate fail-closed.
-            self.marker_false_time = time.monotonic()
-            self.relative_samples.clear()
-            self.relative_sample_times.clear()
+        # Keep the median history through a one-frame miss. The recovery gate
+        # makes the command stale immediately and only reopens after three new
+        # poses; a long pose gap is still cleared in ``_relative_cb``.
+        self.marker_gate.note_visibility(bool(msg.data), time.monotonic())
 
     def _estop_cb(self, msg):
         if msg.data:
@@ -653,10 +687,23 @@ class RigidPairTeleopNode(Node):
             self.cctv_marker[role], self.cctv_marker_timeout, now)
 
     def _marker_fresh(self, now):
-        return (self.marker_visible and self.relative is not None and
-                0.0 <= now - self.relative_time <= self.marker_timeout and
-                0.0 <= now - self.marker_true_time <= self.marker_timeout and
-                self.relative_time >= self.marker_false_time)
+        return self.relative is not None and self.marker_gate.fresh(now)
+
+    def _hold_for_marker_recovery(self, now):
+        """Stop both robots while a short, bounded reacquisition is possible."""
+        if not self.marker_gate.recovery_pending(now):
+            return False
+        self.teleop.stop()
+        self.key_intent = 'ArUco 재검출 대기'
+        self._publish_zero()
+        self.marker_pause_active = True
+        age_ms = self.marker_gate.unstable_age_s(now) * 1000.0
+        self.decision = (
+            f'ArUco 순간 누락 · 양쪽 0속도 · 재검출 '
+            f'{self.marker_gate.recovery_count}/'
+            f'{self.marker_gate.recovery_samples} '
+            f'({age_ms:.0f} ms)')
+        return True
 
     def _relative_stable_for_arm(self, now):
         return (
@@ -871,11 +918,15 @@ class RigidPairTeleopNode(Node):
         yaw_error = angle_norm(yaw - self.reference[2])
         front_distance, rear_distance = self._session_distances()
         conflicts = self._graph_conflicts()
+        marker_ok = self._marker_fresh(now)
+        # Marker-derived deviations are not trusted while reacquiring. All
+        # independent gates (E-stop, graph, hardware, manual, odom, distance)
+        # are still evaluated and may fault immediately during the zero hold.
         decision = evaluate_rigid_pair(
             self.limits,
-            gap_error_m=gap_error,
-            lateral_error_m=lateral_error,
-            yaw_error_rad=yaw_error,
+            gap_error_m=gap_error if marker_ok else 0.0,
+            lateral_error_m=lateral_error if marker_ok else 0.0,
+            yaw_error_rad=yaw_error if marker_ok else 0.0,
             front_distance_m=front_distance,
             rear_distance_m=rear_distance,
             hardware_ok=all(self._fresh(
@@ -884,7 +935,7 @@ class RigidPairTeleopNode(Node):
             manual_ok=all(self._fresh(
                 self.manual[role], self.manual_timeout, now)
                 for role in ('front', 'rear')),
-            marker_ok=self._marker_fresh(now),
+            marker_ok=True,
             odom_ok=(
                 all(self._odom_fresh(role, now)
                     for role in ('front', 'rear')) and
@@ -902,6 +953,15 @@ class RigidPairTeleopNode(Node):
                 'LIMIT', 'ESTOP'} else 'FAULT'
             self._fault(state, decision.reason)
             return
+        if not marker_ok:
+            if self._hold_for_marker_recovery(now):
+                return
+            self._fault('FAULT', 'ArUco 관측이 끊기거나 오래됨')
+            return
+        if self.marker_pause_active:
+            self.marker_pause_active = False
+            self.decision = (
+                'ArUco 3프레임 재검출 완료 · 새 키 입력 전까지 정지합니다.')
 
         intent = self.teleop.velocity(now)
         if is_zero(intent):
@@ -928,8 +988,9 @@ class RigidPairTeleopNode(Node):
         yaw_error = None if relative is None or reference is None else angle_norm(
             relative[2] - reference[2])
         raw_yaw_error = (
-            None if relative is None or reference is None
-            else angle_norm(relative[2] - reference[2]))
+            None if relative is None or self.raw_relative is None or
+            reference is None
+            else angle_norm(self.raw_relative[2] - reference[2]))
         placement = evaluate_placement_guide(
             relative_pose=relative, marker_fresh=self._marker_fresh(now),
             stable=self._relative_stable_for_arm(now),
@@ -958,6 +1019,12 @@ class RigidPairTeleopNode(Node):
                 'raw_yaw_error_deg': None if raw_yaw_error is None else
                 math.degrees(raw_yaw_error),
                 'filter_samples': len(self.relative_samples),
+                'marker_tracking': (
+                    '안정' if self._marker_fresh(now) else
+                    '0속도 재검출 대기' if
+                    self.marker_gate.recovery_pending(now) else '끊김'),
+                'recovery_samples': self.marker_gate.recovery_count,
+                'recovery_required': self.marker_gate.recovery_samples,
             },
             'commands': {
                 'front': self.last_commands['front'],
@@ -1091,9 +1158,16 @@ def main(args=None):
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
+    except RuntimeError:
+        # A launch-wide SIGINT can invalidate the ROS context while the
+        # executor is converting a just-taken subscription. Keep genuine
+        # runtime failures visible; only suppress that shutdown race.
+        if rclpy.ok():
+            raise
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

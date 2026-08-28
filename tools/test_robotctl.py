@@ -168,6 +168,15 @@ def test_launch_commands_use_documented_production_launches_and_no_force():
         ops.launch_command(config, role) for role in ops.ROLES)
 
 
+def test_stop_after_align_is_forwarded_to_both_robot_launches():
+    config = valid_config()
+    config["STOP_AFTER_ALIGN"] = "true"
+
+    assert "stop_after_align:=true" in ops.launch_command(config, "front")
+    assert "stop_after_align:=true" in ops.launch_command(config, "rear")
+    assert "stop_after_align" not in ops.launch_command(config, "jetson")
+
+
 def test_local_ros_commands_always_source_underlay_and_control_overlay():
     config = valid_config()
     config.update({

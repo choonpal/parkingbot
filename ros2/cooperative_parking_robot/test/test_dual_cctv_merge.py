@@ -8,8 +8,10 @@
 """
 
 import math
+import json
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -24,10 +26,13 @@ from cooperative_parking_robot.bev_fusion_core import (
     encode_detection_envelope,
     image_corner_coverage,
     merge_detections,
+    perception_is_available,
     point_in_polygon,
     slot_observability,
     summarize_merge,
+    target_presence_state,
 )
+from cooperative_parking_robot.cctv_merge_node import CctvMergeNode
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -316,6 +321,90 @@ def test_visible_movement_revokes_ready_without_waiting_for_miss_timeout():
 
     assert latch.update((0.52, 0.68), 0.1) is None
     assert latch.latched is None
+
+
+def test_target_presence_states_distinguish_absent_ready_and_unavailable():
+    assert target_presence_state(False, False, True) == 'ABSENT'
+    assert target_presence_state(False, True, True) == 'DETECTING'
+    assert target_presence_state(True, True, True) == 'READY'
+    assert target_presence_state(False, False, False) == (
+        'PERCEPTION_UNAVAILABLE')
+    # A stale stream may never retain READY from its previous frame.
+    assert target_presence_state(True, True, False) == (
+        'PERCEPTION_UNAVAILABLE')
+
+
+@pytest.mark.parametrize('stale_camera', ['cam0', 'cam2'])
+def test_required_camera_timeout_makes_perception_unavailable(stale_camera):
+    states = {'cam0': {'alive': True}, 'cam2': {'alive': True}}
+    states[stale_camera]['alive'] = False
+
+    assert not perception_is_available(states, require_all_cameras=True)
+    assert target_presence_state(True, True, False) == (
+        'PERCEPTION_UNAVAILABLE')
+
+
+def test_target_presence_recovers_using_only_new_healthy_observations():
+    assert perception_is_available(
+        {'cam0': {'alive': True}, 'cam2': {'alive': True}},
+        require_all_cameras=True)
+    assert target_presence_state(False, True, False) == (
+        'PERCEPTION_UNAVAILABLE')
+    assert target_presence_state(False, True, True) == 'DETECTING'
+    assert target_presence_state(True, True, True) == 'READY'
+    assert target_presence_state(False, False, True) == 'ABSENT'
+
+
+class RecordingPublisher:
+    def __init__(self):
+        self.messages = []
+
+    def publish(self, message):
+        self.messages.append(message)
+
+
+class ResetTracker:
+    def __init__(self):
+        self.reset_count = 0
+        self.stable_since = None
+        self.tolerance = 0.05
+        self.hold_s = 1.0
+        self.timeout_s = 1.0
+
+    def reset(self):
+        self.reset_count += 1
+
+
+def test_publish_fail_closed_resets_trackers_and_publishes_unavailable():
+    node = CctvMergeNode.__new__(CctvMergeNode)
+    node.target_tracker = ResetTracker()
+    node.dimension_tracker = ResetTracker()
+    node.spec_sent = True
+    node.spec_last_publish_wall = 1.0
+    node.latest_vehicle_class = 'car'
+    node.latest_classified_wheelbase = 0.7
+    node.fixed_wheelbase = 0.6
+    node._last_target_ready = True
+    node._last_target_state = 'READY'
+    node._target_last_observed_wall = 1.0
+    node.target_presence_timeout_s = 1.0
+    node.pub_target_ready = RecordingPublisher()
+    node.pub_target_status = RecordingPublisher()
+    node._publish_empty_slots = lambda **_kwargs: None
+    node._publish_map = lambda *_args: None
+    node._publish_status = lambda *_args: None
+    node.get_logger = lambda: SimpleNamespace(info=lambda *_args: None)
+
+    CctvMergeNode._publish_fail_closed(node, {
+        'cam0': {'alive': False}, 'cam2': {'alive': True}})
+
+    status = json.loads(node.pub_target_status.messages[-1].data)
+    assert node.target_tracker.reset_count == 1
+    assert node.dimension_tracker.reset_count == 1
+    assert node.pub_target_ready.messages[-1].data is False
+    assert node._last_target_ready is False
+    assert status['state'] == 'PERCEPTION_UNAVAILABLE'
+    assert status['ready'] is False
 
 
 def test_dual_launch_fails_closed_when_any_camera_is_missing_by_default():

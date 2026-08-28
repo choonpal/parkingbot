@@ -102,6 +102,9 @@ from cooperative_parking_robot.latest_qos import (
 from cooperative_parking_robot.freshness import StampGate, stamp_to_ns
 # 런타임(cctv_merge)이 쓰는 것과 **같은** 점유 판정 로직을 그대로 쓴다.
 # 프리뷰가 자체 규칙으로 판정하면 화면과 실제 발행값이 어긋난다.
+# 바닥 homography 는 바닥 위의 점만 맞는다. 높이가 있는 점을 되돌리는
+# 역변환은 런타임 yolo_bev_map 이 쓰는 것과 **같은 함수**를 쓴다.
+from cooperative_parking_robot.vision_utils import correct_floor_projection
 from cooperative_parking_robot.bev_fusion_core import (
     SlotOccupancyTracker,
     # 런타임 merge_detections 와 **같은** 중복 판정을 쓰기 위해 가져온다.
@@ -168,11 +171,64 @@ _HTML = r'''<!doctype html>
   .warn{color:var(--orange)}
   .err{color:var(--red)}
   .ok{color:var(--green)}
+
+  /* ---- 관제탑 ---- */
+  #tower{padding:14px 14px 0}
+  .tw-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+    gap:12px;margin-bottom:12px}
+  .tw-tile{background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;padding:12px 14px;border-left:5px solid #46586f}
+  .tw-tile.good{border-left-color:var(--green)}
+  .tw-tile.warn{border-left-color:var(--orange)}
+  .tw-tile.bad{border-left-color:var(--red)}
+  .tw-tile .k{font-size:12px;color:#8fa3ba;letter-spacing:.03em}
+  .tw-tile .v{font-size:26px;font-weight:650;margin:3px 0 1px;
+    line-height:1.15}
+  .tw-tile .s{font-size:12px;color:#aebcd0;min-height:16px}
+  .tw-panels{display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:12px}
+  .tw-card{background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;padding:12px 14px}
+  .tw-card h3{margin:0 0 10px;font-size:13px;font-weight:600;
+    display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+  .tw-sub{font-size:12px;color:#8fa3ba;font-weight:400}
+  .tw-slots{display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px}
+  .slot{border-radius:8px;padding:9px 6px;text-align:center;
+    border:1px solid #2c394c;background:#0d141e}
+  .slot .id{font-size:15px;font-weight:650}
+  .slot .st{font-size:11px;margin-top:2px}
+  .slot.free{background:#12301f;border-color:#2b6b45}
+  .slot.free .st{color:#8ef0b5}
+  .slot.busy{background:#33161c;border-color:#7a3540}
+  .slot.busy .st{color:#ffb3b3}
+  .slot.unk{background:#1b222c;border-color:#3b4a5e}
+  .slot.unk .st{color:#9fb0c4}
+  .tw-legend{display:flex;gap:14px;margin-top:10px;font-size:12px;
+    color:#9fb0c4;flex-wrap:wrap}
+  .tw-legend i{display:inline-block;width:10px;height:10px;border-radius:3px;
+    margin-right:5px;vertical-align:-1px}
+  .tw-legend i.free{background:#2b6b45}
+  .tw-legend i.busy{background:#7a3540}
+  .tw-legend i.unk{background:#3b4a5e}
+  .tw-chain{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .step{border-radius:7px;padding:6px 9px;font-size:12px;background:#0d141e;
+    border:1px solid #2c394c;white-space:nowrap}
+  .step.good{border-color:#2b6b45;color:#8ef0b5}
+  .step.warn{border-color:#7a5a2a;color:#ffd79a}
+  .step.bad{border-color:#7a3540;color:#ffb3b3}
+  .step .n{display:block;font-size:10px;color:#8fa3ba}
+  .arrow{color:#5a6d84;font-size:13px}
+  .tw-note{margin-top:9px;font-size:12px;color:#aebcd0;min-height:16px}
+  .tw-kv{display:grid;grid-template-columns:auto 1fr;gap:5px 12px;
+    font-size:12.5px;align-items:baseline}
+  .tw-kv .k{color:#8fa3ba}
+  .tw-kv .v{color:#edf3fa}
 </style>
 </head>
 <body>
 <header>
-  <h1>천장 카메라 프리뷰</h1>
+  <h1>CCTV 관제탑</h1>
   <div class="controls">
     <label>격자 <input id="grid" type="number" value="100" min="0" step="10">px</label>
     <button onclick="applyGrid()">적용</button>
@@ -192,6 +248,29 @@ _HTML = r'''<!doctype html>
     <span id="hint" class="meta">영상 클릭 = 픽셀 좌표. ArUco 한 변 <b id="msize">0.18</b> m 기준.</span>
   </div>
 </header>
+<section id="tower">
+  <div class="tw-row" id="twTiles"></div>
+  <div class="tw-panels">
+    <div class="tw-card">
+      <h3><span>주차면 현황</span><span class="tw-sub" id="twSlotSub">확인 중…</span></h3>
+      <div class="tw-slots" id="twSlots"></div>
+      <div class="tw-legend">
+        <span><i class="free"></i>빈자리</span>
+        <span><i class="busy"></i>점유</span>
+        <span><i class="unk"></i>미관측 — 카메라가 못 본 칸</span>
+      </div>
+    </div>
+    <div class="tw-card">
+      <h3><span>CCTV 파이프라인</span><span class="tw-sub" id="twChainSub">—</span></h3>
+      <div class="tw-chain" id="twChain"></div>
+      <div class="tw-note" id="twChainNote">—</div>
+    </div>
+    <div class="tw-card">
+      <h3><span>로봇 · 미션</span><span class="tw-sub" id="twRobotSub">—</span></h3>
+      <div class="tw-kv" id="twRobots"></div>
+    </div>
+  </div>
+</section>
 <main id="grid-root"></main>
 <section id="bevbox" style="padding:0 14px 20px">
   <div class="cam">
@@ -259,6 +338,174 @@ async function boot(){
   }
   tick();
   setInterval(tick, 700);
+}
+
+function twTile(k, v, s, cls){
+  return '<div class="tw-tile ' + cls + '"><div class="k">' + k + '</div>'
+       + '<div class="v">' + v + '</div><div class="s">' + s + '</div></div>';
+}
+
+function twStep(name, label, cls){
+  return '<div class="step ' + cls + '"><span class="n">' + name + '</span>'
+       + label + '</div>';
+}
+
+// 관제탑은 판정을 새로 하지 않는다. /api/info 가 이미 실어 보낸 값을
+// 사람이 읽는 순서로 다시 배치할 뿐이다.
+function renderTower(info){
+  const cams = info.cameras || [];
+  const alive = cams.filter(c => c.alive);
+  const sl = info.slots || {};
+  const items = (sl.ready && sl.items) ? sl.items : [];
+  const free = items.filter(x => x.observed && !x.occupied);
+  const busy = items.filter(x => x.observed && x.occupied);
+  const unk  = items.filter(x => !x.observed);
+  const y = info.yolo || {};
+  const g = info.guidance || {};
+  const rp = info.relative_pose || {};
+  const roles = Object.keys(g.robots || {});
+
+  // ---- 상태 타일 ----
+  let tiles = '';
+  tiles += twTile('카메라 인식',
+    alive.length + ' / ' + cams.length,
+    alive.length ? alive.map(c => esc(c.label) + ' ' + c.fps.toFixed(0) + 'fps')
+                       .join(' · ')
+                 : '수신 없음',
+    !cams.length ? 'bad' : (alive.length === cams.length ? 'good'
+                            : (alive.length ? 'warn' : 'bad')));
+
+  // YOLO 가 죽은 뒤에도 직전 검출이 payload 에 남을 수 있다. 그 숫자를
+  // 그대로 띄우면 "잡히고 있다"는 오해를 준다.
+  const detN = cams.reduce((s,c) => s + (c.detections || []).length, 0);
+  tiles += twTile('차량 검출',
+    y.ready ? detN + '대' : '—',
+    y.ready ? ('담당 ' + (y.active || '전체')
+               + (y.scanning ? ' (스캔 중)' : ''))
+            : ('YOLO ' + (y.error || '비활성')),
+    y.ready ? (detN ? 'good' : '') : 'bad');
+
+  tiles += twTile('빈자리',
+    sl.ready ? (free.length + ' / ' + items.length) : '—',
+    !sl.ready ? 'layout 또는 homography 없음'
+      : (free.length ? free.map(x => esc(x.id)).join(', ') : '없음')
+        + (unk.length ? ' · 미관측 ' + unk.length : ''),
+    !sl.ready ? 'bad' : (unk.length ? 'warn' : (free.length ? 'good' : '')));
+
+  const missionKo = {park:'입차', retrieve:'출차'}[g.mission] || null;
+  tiles += twTile('미션',
+    missionKo || '대기',
+    g.distance_m !== null && g.distance_m !== undefined
+      ? (esc(g.goal) + '까지 ' + (g.distance_m * 100).toFixed(0) + ' cm')
+      : (g.reason || '—'),
+    missionKo ? (g.distance_m === null ? 'warn' : 'good') : '');
+  document.getElementById('twTiles').innerHTML = tiles;
+
+  // ---- 주차면 현황판 ----
+  const box = document.getElementById('twSlots');
+  if(!sl.ready){
+    box.innerHTML = '<div class="tw-note">슬롯 정보 없음 — '
+      + 'parking_layout.yaml 과 homography 를 확인하세요.</div>';
+    document.getElementById('twSlotSub').textContent = '준비 안 됨';
+  } else {
+    box.innerHTML = items.map(x => {
+      const cls = !x.observed ? 'unk' : (x.occupied ? 'busy' : 'free');
+      const st  = !x.observed ? '미관측' : (x.occupied ? '점유' : '빈자리');
+      return '<div class="slot ' + cls + '"><div class="id">' + esc(x.id)
+           + '</div><div class="st">' + st + '</div></div>';
+    }).join('');
+    document.getElementById('twSlotSub').textContent =
+      '빈 ' + free.length + ' · 점유 ' + busy.length
+      + (unk.length ? ' · 미관측 ' + unk.length : '')
+      + ' · 겹침판정 ' + (sl.overlap_threshold * 100).toFixed(0) + '%';
+  }
+
+  // ---- 파이프라인 체인 ----
+  // 앞 단계가 막히면 뒤 단계 초록은 의미가 없다. 막힌 첫 지점을 알리려고
+  // 단계를 순서대로 늘어놓는다.
+  const bev = info.bev || {};
+  const steps = [];
+  steps.push(['카메라',
+    alive.length + '/' + cams.length,
+    alive.length === cams.length && cams.length ? 'good'
+      : (alive.length ? 'warn' : 'bad')]);
+  const mismatch = cams.filter(c => c.alive && c.calib_width &&
+    (c.width !== c.calib_width || c.height !== c.calib_height));
+  steps.push(['해상도',
+    mismatch.length ? '불일치 ' + mismatch.length : '일치',
+    mismatch.length ? 'warn' : 'good']);
+  steps.push(['BEV 정합',
+    bev.ready ? (bev.cameras || []).length + '대' : '없음',
+    bev.ready ? 'good' : 'bad']);
+  steps.push(['YOLO',
+    y.ready ? detN + '검출' : '비활성',
+    y.ready ? 'good' : 'bad']);
+  steps.push(['슬롯 판정',
+    sl.ready ? (items.length - unk.length) + '/' + items.length + ' 관측'
+             : '없음',
+    !sl.ready ? 'bad' : (unk.length ? 'warn' : 'good')]);
+  steps.push(['안내',
+    (g.distance_m !== null && g.distance_m !== undefined) ? '산출됨' : '대기',
+    (g.distance_m !== null && g.distance_m !== undefined) ? 'good'
+      : (g.mission ? 'warn' : '')]);
+  document.getElementById('twChain').innerHTML = steps
+    .map(s => twStep(s[0], s[1], s[2]))
+    .join('<span class="arrow">›</span>');
+
+  // 끊긴 것(bad)과 주의(warn)는 말을 다르게 한다. 미관측 한 칸 때문에
+  // "막혀 있다"고 하면 실제 정지 상황과 구분이 안 된다.
+  const stopped = steps.find(s => s[2] === 'bad');
+  const caution = steps.find(s => s[2] === 'warn');
+  document.getElementById('twChainNote').innerHTML = stopped
+    ? '<span class="err">' + esc(stopped[0]) + ' 단계에서 끊겼습니다.</span>'
+      + (g.reason ? ' · ' + esc(g.reason) : '')
+    : (caution
+        ? '<span class="warn">' + esc(caution[0]) + ' 단계 주의</span>'
+          + (g.reason ? ' · ' + esc(g.reason) : '')
+        : '<span class="ok">전 구간 정상</span>');
+  document.getElementById('twChainSub').textContent =
+    (y.switch_mode === 'off' ? '전환 끔'
+     : y.switch_mode === 'region' ? '구역 전환'
+     : y.switch_mode === 'mission' ? '미션 전환' : y.switch_mode || '');
+
+  // ---- 로봇 · 미션 ----
+  let kv = '';
+  const ko = {front:'Front', rear:'Rear'};
+  ['front','rear'].forEach(role => {
+    const p = (g.robots || {})[role];
+    kv += '<div class="k">' + (ko[role] || role) + ' 마커</div><div class="v">'
+       + (p ? p[0].toFixed(2) + ', ' + p[1].toFixed(2) + ' m'
+            : '<span class="err">미검출</span>') + '</div>';
+  });
+  if(rp.configured){
+    kv += '<div class="k">Rear→Front</div><div class="v">'
+       + (rp.fresh && rp.visible !== false
+          ? (rp.forward_m * 100).toFixed(1) + ' cm · 좌우 '
+            + (rp.lateral_m * 100).toFixed(1) + ' cm · '
+            + rp.yaw_deg.toFixed(1) + '°'
+          : (rp.visible === false ? '<span class="err">마커 미검출</span>'
+                                  : '<span class="warn">수신 대기</span>'))
+       + '</div>';
+  }
+  kv += '<div class="k">미션</div><div class="v">'
+     + (missionKo || '대기')
+     + (g.forced ? ' <span class="warn">(수동 지정)</span>' : '')
+     + '</div>';
+  if(g.goal){
+    kv += '<div class="k">목적지</div><div class="v">' + esc(g.goal) + '</div>';
+  }
+  if(g.distance_m !== null && g.distance_m !== undefined){
+    kv += '<div class="k">남은 거리</div><div class="v">'
+       + (g.distance_m * 100).toFixed(0) + ' cm · 방위 '
+       + g.heading_deg.toFixed(0) + '°</div>';
+  }
+  if(g.reason){
+    kv += '<div class="k">사유</div><div class="v warn">'
+       + esc(g.reason) + '</div>';
+  }
+  document.getElementById('twRobots').innerHTML = kv;
+  document.getElementById('twRobotSub').textContent =
+    roles.length + ' / 2 마커';
 }
 
 async function tick(){
@@ -343,6 +590,8 @@ async function tick(){
       yb.textContent = 'YOLO: ' + (y.error || '비활성');
     }
   }
+
+  try { renderTower(info); } catch(e){ /* 관제탑 실패가 영상을 막지 않게 */ }
 
   if((++BEVTICK % 3) === 0) refreshBev();
 
@@ -906,6 +1155,42 @@ def dedupe_detections(detections, center_gate_m=0.35, overlap_ratio=0.30):
     return kept
 
 
+def parse_camera_optics(text):
+    """``'cctv0:2.463,1.982,2.610; cctv2:...'`` 를 광학 정보 표로 바꾼다.
+
+    값은 순서대로 광축 지상점 X(m), Y(m), 카메라 높이(m) 다. 광축 지상점은
+    렌즈에서 추를 내렸을 때 바닥에 닿는 점이며, homography 와 **같은 map
+    좌표계**여야 한다.
+    """
+    optics = {}
+    for chunk in str(text or '').replace('\n', ';').split(';'):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if ':' not in chunk:
+            raise ValueError(
+                f"camera_optics_csv 항목은 'label:x,y,height' 형식이어야 "
+                f"합니다: {chunk!r}")
+        label, values = chunk.split(':', 1)
+        label = label.strip()
+        if not label:
+            raise ValueError(f'camera_optics_csv 라벨이 비어 있습니다: {chunk!r}')
+        parts = [p.strip() for p in values.split(',') if p.strip()]
+        if len(parts) != 3:
+            raise ValueError(
+                f'{label}: x,y,height 세 값이 필요합니다 (받은 값 {len(parts)}개)')
+        try:
+            x, y, height = (float(p) for p in parts)
+        except ValueError as exc:
+            raise ValueError(f'{label}: 숫자로 읽을 수 없습니다: {values!r}') from exc
+        if not (math.isfinite(x) and math.isfinite(y) and math.isfinite(height)):
+            raise ValueError(f'{label}: NaN/Inf 는 쓸 수 없습니다')
+        if height <= 0.0:
+            raise ValueError(f'{label}: 카메라 높이는 0보다 커야 합니다')
+        optics[label] = (x, y, height)
+    return optics
+
+
 def parse_robot_markers(text):
     """``'front:2, rear:1'`` 을 ``{역할: 마커ID}`` 로 바꾼다."""
     mapping = {}
@@ -1074,7 +1359,7 @@ class CameraPreviewNode(Node):
         # 마커는 실제로 정사각형이라 "보정이 맞는지" 재는 자로 쓸 수 있다.
         self.declare_parameter('enable_aruco', True)
         self.declare_parameter('aruco_dict', 'DICT_4X4_50')
-        self.declare_parameter('marker_size_m', 0.18)
+        self.declare_parameter('marker_size_m', 0.24)
         # 검출은 매 프레임 할 필요가 없다. CPU를 아낀다.
         self.declare_parameter('aruco_every_n', 3)
         # aruco_tracker_node가 보정된 카메라 행렬로 계산한 실제 상대 pose.
@@ -1144,6 +1429,15 @@ class CameraPreviewNode(Node):
         self.declare_parameter('slot_detection_stale_s', 1.5)
         # 슬롯 사각형을 카메라 원본 화면에도 되짚어 그릴지.
         self.declare_parameter('draw_slots_on_camera', True)
+        # --- 높이(시차) 보정 ---
+        # 바닥 homography 는 바닥 점만 맞다. 높이가 있는 점은 카메라마다
+        # 자기 광축 지상점 바깥으로 밀린다. 두 카메라가 서로 다른 방향으로
+        # 밀어내므로 BEV 에서 같은 차가 두 곳에 보인다.
+        #   오차 = (물체높이 / 카메라높이) x 광축지상점에서의 거리
+        # 값을 안 주면(높이 0) 보정하지 않으므로 기존 동작 그대로다.
+        self.declare_parameter('camera_optics_csv', '')
+        self.declare_parameter('vehicle_detection_height_m', 0.0)
+        self.declare_parameter('marker_height_m', 0.0)
         # --- 로봇 안내 화살표 ---
         # 천장에서 보이는 ArUco 두 개가 Front/Rear 주차로봇이다.
         # 기본값은 cctv_robot_marker_node 와 같게 둔다.
@@ -1310,6 +1604,24 @@ class CameraPreviewNode(Node):
         self.slot_tracker = None
         self.slot_state = {}
         self.camera_coverage = {}
+        self.camera_optics = parse_camera_optics(
+            self.get_parameter('camera_optics_csv').value)
+        self.vehicle_detection_height = float(
+            self.get_parameter('vehicle_detection_height_m').value)
+        self.marker_height = float(self.get_parameter('marker_height_m').value)
+        for name, value in (('vehicle_detection_height_m',
+                             self.vehicle_detection_height),
+                            ('marker_height_m', self.marker_height)):
+            if value < 0.0:
+                raise ValueError(f'{name} 는 0 이상이어야 합니다')
+        # 카메라보다 높은 물체는 이 모형으로 되돌릴 수 없다. 조용히 이상한
+        # 좌표를 내놓느니 기동에서 막는다.
+        for label, (_x, _y, height) in self.camera_optics.items():
+            worst = max(self.vehicle_detection_height, self.marker_height)
+            if worst >= height:
+                raise ValueError(
+                    f'{label}: 카메라 높이 {height:.3f} m 가 물체 높이 '
+                    f'{worst:.3f} m 이하입니다')
         self.robot_marker_ids = parse_robot_markers(
             self.get_parameter('robot_marker_ids_csv').value)
         self.robot_marker_stale_s = float(
@@ -1563,8 +1875,10 @@ class CameraPreviewNode(Node):
                 continue
             metrics['id'] = marker_id
             metrics['corners'] = [[float(pt[0]), float(pt[1])] for pt in points]
+            # ArUco 는 로봇 상판 위에 있다. 바닥 평면이 아니다.
             metrics['world'] = self._pixel_to_world(
-                state['label'], metrics['center'][0], metrics['center'][1])
+                state['label'], metrics['center'][0], metrics['center'][1],
+                self.marker_height)
             found.append(metrics)
         found.sort(key=lambda m: m['id'])
         return found
@@ -1691,7 +2005,8 @@ class CameraPreviewNode(Node):
                     center = ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
                     center_source = 'bbox'
 
-                world_center = self._pixel_to_world(state['label'], *center)
+                world_center = self._pixel_to_world(
+                    state['label'], *center, self.vehicle_detection_height)
                 item = {
                     'class_id': class_id,
                     'name': self.yolo_names.get(class_id, str(class_id)),
@@ -1705,8 +2020,11 @@ class CameraPreviewNode(Node):
                 if geometry is not None:
                     item['geometry'] = geometry
                     # 중복 판정과 슬롯 겹침 계산에 쓰려고 여기서 한 번만 낸다.
-                    corners = [self._pixel_to_world(state['label'], x, y)
-                               for x, y in geometry['corners']]
+                    corners = [
+                        self._pixel_to_world(
+                            state['label'], x, y,
+                            self.vehicle_detection_height)
+                        for x, y in geometry['corners']]
                     item['world_polygon'] = (
                         None if any(c is None for c in corners)
                         else [tuple(c) for c in corners])
@@ -1724,8 +2042,10 @@ class CameraPreviewNode(Node):
 
     def _world_length(self, label, segment):
         """중심선 양 끝점을 world 로 옮겨 실제 길이(m)를 잰다."""
-        start = self._pixel_to_world(label, segment[0][0], segment[0][1])
-        end = self._pixel_to_world(label, segment[1][0], segment[1][1])
+        start = self._pixel_to_world(label, segment[0][0], segment[0][1],
+                                     self.vehicle_detection_height)
+        end = self._pixel_to_world(label, segment[1][0], segment[1][1],
+                                   self.vehicle_detection_height)
         if start is None or end is None:
             return None
         return round(math.dist(start, end), 3)
@@ -2102,6 +2422,33 @@ class CameraPreviewNode(Node):
             return None, '대기영역 미등록'
         return None, '미션 없음'
 
+    def _marker_disagreement(self):
+        """같은 ArUco 를 두 카메라가 본 위치 차이(m). 높이 조정의 기준.
+
+        두 카메라의 밀림 방향이 다르므로, 높이 값이 실제와 맞을수록 이
+        값이 줄어든다. 화면에서 이 숫자를 보며 높이를 맞추면 된다.
+        """
+        now = time.monotonic()
+        seen = {}
+        with self._lock:
+            for state in self.cameras:
+                if now - state['marker_wall'] > self.stale_after:
+                    continue
+                for marker in (state['markers'] or []):
+                    world = marker.get('world')
+                    if world is None:
+                        continue
+                    seen.setdefault(marker['id'], []).append(tuple(world))
+        gaps = {}
+        for marker_id, points in seen.items():
+            if len(points) < 2:
+                continue
+            gaps[str(marker_id)] = round(
+                max(math.dist(a, b)
+                    for i, a in enumerate(points)
+                    for b in points[i + 1:]), 3)
+        return gaps or None
+
     def _guidance(self, now):
         """지금 화면에 그릴 안내. 조건이 안 되면 사유를 담아 돌려준다."""
         mission = self.guidance_forced_mission or self._mission_type
@@ -2194,8 +2541,14 @@ class CameraPreviewNode(Node):
             slot_id for slot_id, item in self.slot_state.items()
             if item['observed'] and not item['occupied'])
 
-    def _pixel_to_world(self, label, px, py):
-        """영상 픽셀을 map 좌표(m)로. H가 없으면 None."""
+    def _pixel_to_world(self, label, px, py, height=0.0):
+        """영상 픽셀을 map 좌표(m)로. H가 없으면 None.
+
+        ``height`` 가 0 보다 크고 그 카메라의 광학 정보가 있으면, 바닥
+        homography 가 낸 점을 실제 물체 높이의 평면으로 되돌린다. 광학
+        정보가 없으면 보정 없이 그대로 둔다 — 틀린 값으로 보정하는 것보다
+        보정을 안 하는 편이 낫고, 화면에도 그 사실이 표시된다.
+        """
         matrix = self.pixel_to_world_H.get(label)
         if matrix is None:
             return None
@@ -2206,7 +2559,30 @@ class CameraPreviewNode(Node):
         y = float(vector[1] / vector[2])
         if not (math.isfinite(x) and math.isfinite(y)):
             return None
+        optics = self.camera_optics.get(label)
+        if optics is not None and float(height) > 0.0:
+            ground_x, ground_y, cam_height = optics
+            try:
+                x, y = correct_floor_projection(
+                    x, y, ground_x, ground_y, cam_height, float(height))
+            except ValueError:
+                # 기동에서 이미 막았지만, 파라미터가 런타임에 바뀌어도
+                # 화면이 죽지는 않게 한다.
+                pass
         return [round(x, 3), round(y, 3)]
+
+    def parallax_shift_m(self, label, height):
+        """이 카메라·높이에서 화면 가장자리가 얼마나 밀리는지(m). 화면 표시용."""
+        optics = self.camera_optics.get(label)
+        if optics is None or float(height) <= 0.0:
+            return None
+        _gx, _gy, cam_height = optics
+        coverage = self.camera_coverage.get(label)
+        if not coverage:
+            return None
+        ground = (optics[0], optics[1])
+        far = max(math.dist(ground, point) for point in coverage)
+        return round(far * float(height) / float(cam_height), 3)
 
     def _draw_detections(self, canvas, detections):
         for item in detections:
@@ -2934,6 +3310,22 @@ class CameraPreviewNode(Node):
                     'coverage_cameras': sorted(self.camera_coverage),
                     'overlap_threshold': self.slot_overlap_threshold,
                     'confirm_frames': self.slot_empty_confirm_frames,
+                },
+                'parallax': {
+                    'configured': bool(self.camera_optics),
+                    'vehicle_height_m': self.vehicle_detection_height,
+                    'marker_height_m': self.marker_height,
+                    'cameras': {
+                        label: {'ground': [optics[0], optics[1]],
+                                'height_m': optics[2],
+                                'vehicle_edge_shift_m': self.parallax_shift_m(
+                                    label, self.vehicle_detection_height),
+                                'marker_edge_shift_m': self.parallax_shift_m(
+                                    label, self.marker_height)}
+                        for label, optics in self.camera_optics.items()},
+                    # 같은 마커를 두 카메라가 볼 때 두 추정 사이의 거리.
+                    # 높이 값이 맞을수록 0 에 가까워지므로 조정 기준이 된다.
+                    'marker_disagreement_m': self._marker_disagreement(),
                 },
                 'guidance': self._guidance(time.monotonic()),
                 'bev': {

@@ -39,6 +39,21 @@ from cooperative_parking_robot.parking_geometry import polygon_overlap_ratio
 DETECTION_ENVELOPE_VERSION = 1
 
 
+def target_presence_state(ready, observed_recently, perception_available=True):
+    """Keep perception health distinct from an observed vehicle absence."""
+    if not perception_available:
+        return 'PERCEPTION_UNAVAILABLE'
+    if ready:
+        return 'READY'
+    return 'DETECTING' if observed_recently else 'ABSENT'
+
+
+def perception_is_available(camera_states, require_all_cameras=True):
+    alive = [bool(state.get('alive', False))
+             for state in camera_states.values()]
+    return bool(alive) and (all(alive) if require_all_cameras else any(alive))
+
+
 # ======================================================================
 # 1. 검출 envelope 직렬화/역직렬화
 # ======================================================================

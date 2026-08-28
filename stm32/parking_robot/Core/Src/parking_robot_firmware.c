@@ -228,6 +228,7 @@ typedef struct {
 RobotState_t g_robot;
 
 typedef struct {
+    uint8_t enabled;
     uint8_t active_side;
     uint8_t next_side;
     volatile uint8_t waiting_echo;
@@ -263,8 +264,10 @@ static volatile uint8_t g_rx_queue_overflow = 0U;
 #define TX_ERR          (1U << 1)
 #define TX_GRIP_DONE    (1U << 2)
 #define TX_RELEASE_DONE (1U << 3)
+#define TX_HEARTBEAT_ACK (1U << 4)
 static volatile uint8_t g_tx_flags = 0;
 static char g_ack_value[48];
+static char g_heartbeat_ack_value[48];
 static char g_error_code[32];
 static uint8_t g_uart_tx_fault = 0U;
 
@@ -277,6 +280,7 @@ static void Robot_StopMotorsImmediate(void);
 static void Robot_HoldServosImmediate(void);
 static bool Robot_IsStopped(void);
 static void QueueAck(const char *value);
+static void QueueHeartbeatAck(const char *value);
 static void QueueError(const char *code);
 static bool ErrorIsCommunicationTimeout(const char *code);
 static bool ErrorIsRecoverableRejection(const char *code);
@@ -286,6 +290,7 @@ static void UART_QueueRxCommand(const char *command);
 static bool UART_TransmitFrame(const char *line);
 static void UART_SendPending(void);
 static void UART_SendUltrasonicPending(void);
+static void Ultrasonic_SetEnabled(bool enabled);
 static void QueueUltrasonic(uint8_t side, int32_t distance_mm);
 static void Ultrasonic_Task(void);
 static void Ultrasonic_StartMeasurement(uint8_t side);
@@ -349,6 +354,7 @@ void Robot_Init(void)
     g_tx_flags = 0U;
     g_uart_tx_fault = 0U;
     g_ack_value[0] = '\0';
+    g_heartbeat_ack_value[0] = '\0';
     g_error_code[0] = '\0';
     g_rx_command_head = 0U;
     g_rx_command_tail = 0U;
@@ -407,6 +413,16 @@ static void QueueAck(const char *value)
     g_tx_flags |= TX_ACK;
 }
 
+static void QueueHeartbeatAck(const char *value)
+{
+    /* Heartbeat evidence must not share the general ACK mailbox.  A later
+     * action/handshake ACK may replace g_ack_value, but can never erase HB. */
+    strncpy(g_heartbeat_ack_value, value,
+            sizeof(g_heartbeat_ack_value) - 1U);
+    g_heartbeat_ack_value[sizeof(g_heartbeat_ack_value) - 1U] = '\0';
+    g_tx_flags |= TX_HEARTBEAT_ACK;
+}
+
 static bool ErrorIsCommunicationTimeout(const char *code)
 {
     return strcmp(code, "HEARTBEAT_TIMEOUT") == 0 ||
@@ -417,6 +433,21 @@ static bool ErrorIsRecoverableRejection(const char *code)
 {
     return strcmp(code, "LIFT_WHILE_MOVING") == 0 ||
            strcmp(code, "SERVO_NOT_ATTACHED") == 0 ||
+           /* Attach is rejected before PWM/current/target are changed. A bad
+            * profile is therefore a recoverable configuration error, not
+            * evidence of uncontrolled servo movement or hardware damage. */
+           strcmp(code, "BAD_SERVO_ATTACH") == 0 ||
+           strcmp(code, "BAD_HELLO") == 0 ||
+           strcmp(code, "BAD_HEARTBEAT_TOKEN") == 0 ||
+           strcmp(code, "BAD_VELOCITY") == 0 ||
+           strcmp(code, "BAD_ZERO_PROBE") == 0 ||
+           strcmp(code, "BAD_V_FRAME") == 0 ||
+           strcmp(code, "BAD_MOTOR_TEST") == 0 ||
+           strcmp(code, "BAD_SERVO_COMMAND") == 0 ||
+           strcmp(code, "RX_QUEUE_OVERFLOW") == 0 ||
+           strcmp(code, "TX_FRAME_INVALID") == 0 ||
+           strcmp(code, "UNKNOWN_COMMAND") == 0 ||
+           strcmp(code, "SERVO_TIMEOUT") == 0 ||
            strcmp(code, "HELLO_REQUIRED") == 0 ||
            strcmp(code, "HEARTBEAT_REQUIRED") == 0 ||
            strcmp(code, "COMMAND_REQUIRED") == 0 ||
@@ -441,10 +472,18 @@ static bool SessionIdIsValid(const char *session_id)
 
 static void QueueError(const char *code)
 {
-    /* Communication timeouts belong to a Linux session. Other malformed
-     * protocol, motor, sensor and servo safety errors survive HELLO. */
-    if (!ErrorIsCommunicationTimeout(code) &&
-        !ErrorIsRecoverableRejection(code) &&
+    /* Session/protocol/configuration rejections stop immediately but do not
+     * become reset-required. Only explicitly physical/internal safety faults
+     * survive HELLO in safety_fault_latched. */
+    bool recoverable = ErrorIsCommunicationTimeout(code) ||
+                       ErrorIsRecoverableRejection(code);
+    if (recoverable) {
+        /* A recoverable rejection is still a safety stop. Discard target/PID
+         * state immediately; a later valid session/command must start from
+         * zero instead of resuming the rejected command's predecessor. */
+        Robot_StopMotorsImmediate();
+    }
+    if (!recoverable &&
         strcmp(code, "ESTOP_LATCHED") != 0) {
         if (!g_robot.safety_fault_latched) {
             strncpy(g_robot.safety_fault_code, code,
@@ -499,6 +538,16 @@ static void UART_SendPending(void)
         if (UART_TransmitFrame(buf)) {
             g_tx_flags &= (uint8_t)~TX_ERR;
         }
+    } else if (g_tx_flags & TX_HEARTBEAT_ACK) {
+        snprintf(buf, sizeof(buf), "ACK,%s\n", g_heartbeat_ack_value);
+        if (UART_TransmitFrame(buf)) {
+            g_tx_flags &= (uint8_t)~TX_HEARTBEAT_ACK;
+        }
+    } else if (g_tx_flags & TX_ACK) {
+        snprintf(buf, sizeof(buf), "ACK,%s\n", g_ack_value);
+        if (UART_TransmitFrame(buf)) {
+            g_tx_flags &= (uint8_t)~TX_ACK;
+        }
     } else if (g_tx_flags & TX_GRIP_DONE) {
         if (UART_TransmitFrame("LIFT,GRIP_DONE\n")) {
             g_tx_flags &= (uint8_t)~TX_GRIP_DONE;
@@ -506,11 +555,6 @@ static void UART_SendPending(void)
     } else if (g_tx_flags & TX_RELEASE_DONE) {
         if (UART_TransmitFrame("LIFT,RELEASE_DONE\n")) {
             g_tx_flags &= (uint8_t)~TX_RELEASE_DONE;
-        }
-    } else if (g_tx_flags & TX_ACK) {
-        snprintf(buf, sizeof(buf), "ACK,%s\n", g_ack_value);
-        if (UART_TransmitFrame(buf)) {
-            g_tx_flags &= (uint8_t)~TX_ACK;
         }
     }
 }
@@ -608,6 +652,7 @@ void UART_ParseCommand(char *cmd)
     if (strcmp(cmd, "ESTOP") == 0) {
         g_robot.estop_latched = 1;
         Robot_StopMotorsImmediate();
+        Ultrasonic_SetEnabled(false);
         /* 하중을 갑자기 놓지 않고 현재 각도에서 servo motion을 동결한다. */
         Robot_HoldServosImmediate();
         QueueAck("ESTOP");
@@ -664,6 +709,7 @@ void UART_ParseCommand(char *cmd)
         g_robot.last_heartbeat_time = HAL_GetTick();
         g_robot.last_cmd_time = HAL_GetTick();
         g_robot.servo_attached = 0U;
+        Ultrasonic_SetEnabled(false);
         g_robot.protocol_session_active = 1U;
         strncpy(g_robot.session_id, session_id,
                 sizeof(g_robot.session_id) - 1U);
@@ -705,7 +751,32 @@ void UART_ParseCommand(char *cmd)
         }
         g_robot.last_heartbeat_time = HAL_GetTick();
         g_robot.heartbeat_seen = 1U;
-        QueueAck(token);
+        QueueHeartbeatAck(token);
+    } else if (strcmp(cmd, "U,OFF") == 0) {
+        /* OFF is always accepted after HELLO, including a motion/ESTOP fault.
+         * It cannot weaken safety and prevents needless acoustic/UART load. */
+        if (!g_robot.protocol_session_active) {
+            QueueError("HELLO_REQUIRED");
+            return;
+        }
+        Ultrasonic_SetEnabled(false);
+        QueueAck("ULTRASONIC:OFF");
+    } else if (strcmp(cmd, "U,ON") == 0) {
+        if (g_robot.estop_latched) {
+            QueueError("ESTOP_LATCHED");
+            return;
+        }
+        if (!g_robot.protocol_session_active) {
+            QueueError("HELLO_REQUIRED");
+            return;
+        }
+        if (!g_robot.heartbeat_seen || g_robot.heartbeat_timed_out) {
+            QueueError(g_robot.heartbeat_timed_out
+                ? "HEARTBEAT_TIMEOUT" : "HEARTBEAT_REQUIRED");
+            return;
+        }
+        Ultrasonic_SetEnabled(true);
+        QueueAck("ULTRASONIC:ON");
     } else if (cmd[0] == 'V') {
         // 속도 명령
         float vx, vy, omega;
@@ -1104,7 +1175,7 @@ static uint16_t Ultrasonic_Micros(void)
 
 static void QueueUltrasonic(uint8_t side, int32_t distance_mm)
 {
-    if (side >= ULTRASONIC_NUM) return;
+    if (side >= ULTRASONIC_NUM || !g_ultrasonic.enabled) return;
     g_ultrasonic_tx_mm[side] = distance_mm;
     g_ultrasonic_tx_pending[side] = 1U;
 }
@@ -1124,6 +1195,24 @@ static void UART_SendUltrasonicPending(void)
                      side_code[side], (long)distance_mm);
         }
         UART_SendLine(buf);
+    }
+}
+
+static void Ultrasonic_SetEnabled(bool enabled)
+{
+    g_ultrasonic.enabled = enabled ? 1U : 0U;
+    g_ultrasonic.waiting_echo = 0U;
+    g_ultrasonic.echo_high = 0U;
+    g_ultrasonic.measurement_complete = 0U;
+    g_ultrasonic.next_side = ULTRA_LEFT;
+    for (uint8_t side = 0U; side < ULTRASONIC_NUM; side++) {
+        g_ultrasonic_tx_pending[side] = 0U;
+        HAL_GPIO_WritePin(kUltrasonicTrigPort[side],
+                          kUltrasonicTrigPin[side], GPIO_PIN_RESET);
+    }
+    if (enabled) {
+        g_ultrasonic.last_trigger_ms =
+            HAL_GetTick() - ULTRASONIC_INTERVAL_MS;
     }
 }
 
@@ -1197,6 +1286,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 
 static void Ultrasonic_Task(void)
 {
+    if (!g_ultrasonic.enabled) return;
     uint32_t now = HAL_GetTick();
     if (g_ultrasonic.waiting_echo &&
         now - g_ultrasonic.measurement_start_ms >= ULTRASONIC_TIMEOUT_MS) {

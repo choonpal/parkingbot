@@ -117,8 +117,7 @@ def test_full_system_defaults_to_safe_smoke_mode():
 def test_humble_scripts_are_executable():
     for relative in (
             'scripts/humble_build_check.sh',
-            'scripts/humble_topic_check.sh',
-            'scripts/run_feature_tests.sh'):
+            'scripts/humble_topic_check.sh'):
         path = ROOT / relative
         assert path.is_file()
         assert path.stat().st_mode & 0o111

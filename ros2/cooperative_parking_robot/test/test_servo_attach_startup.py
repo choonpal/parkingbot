@@ -2,6 +2,7 @@
 
 from collections import deque
 from pathlib import Path
+import threading
 
 import pytest
 import rclpy
@@ -11,6 +12,9 @@ from cooperative_parking_robot import stm32_bridge_node as bridge_module
 from cooperative_parking_robot.hardware_profile import servo_attach_pulses_for
 from cooperative_parking_robot.stm32_bridge_node import Stm32BridgeNode
 from cooperative_parking_robot.uart_protocol import UartProtocol
+from cooperative_parking_robot.ultrasonic_phase_health import (
+    UltrasonicPhaseHealth,
+)
 
 
 class FakeLogger:
@@ -28,6 +32,9 @@ class FakeLogger:
 
     def error(self, message, **kwargs):
         self._record('error', message, **kwargs)
+
+    def debug(self, message, **kwargs):
+        self._record('debug', message, **kwargs)
 
 
 class FakeSerial:
@@ -67,6 +74,28 @@ class FakeArbiter:
         return 0.0, 0.0, 0.0
 
 
+class ImmediateScheduler:
+    def __init__(self, node):
+        self.node = node
+
+    def enqueue(self, payload, **kwargs):
+        started = bridge_module.time.monotonic()
+        written = self.node.ser.write(payload)
+        error = None
+        if written != len(payload):
+            error = OSError(f'partial UART write {written}/{len(payload)}')
+        item = type('Item', (), {'kind': kwargs['kind'],
+                                 'metadata': kwargs.get('metadata')})()
+        self.node._uart_write_result(item, started, 0.0, error)
+        return True
+
+    def discard_non_emergency(self):
+        pass
+
+    def stop(self, **_kwargs):
+        pass
+
+
 def bridge_for_unit_test(profile='robot-2'):
     node = object.__new__(Stm32BridgeNode)
     node.role = 'front' if profile == 'robot-2' else 'rear'
@@ -90,6 +119,24 @@ def bridge_for_unit_test(profile='robot-2'):
     node.outstanding_heartbeats = {}
     node.last_heartbeat_ack_time = 0.0
     node.heartbeat_ack_timeout = 0.30
+    node.heartbeat_period = 0.10
+    node.heartbeat_tx_late_warn = 0.04
+    node.heartbeat_rtt_warn = 0.10
+    node.heartbeat_recovery_ack_count = 3
+    node.next_heartbeat_due = 10.1
+    node.last_heartbeat_tx_time = 0.0
+    node.communication_recovering = False
+    node.communication_recovered = False
+    node.recovery_ack_count = 0
+    node.heartbeat_lock = threading.Lock()
+    node.heartbeat_stats = {
+        'tx_count': 0, 'ack_count': 0, 'lost_count': 0,
+        'stale_ack_count': 0, 'duplicate_ack_count': 0,
+        'timeout_count': 0, 'uart_write_failure_count': 0,
+        'max_tx_gap_ms': 0.0, 'max_rtt_ms': 0.0,
+        'rtt_average_ms': 0.0, 'scheduler_max_lateness_ms': 0.0,
+        'uart_write_max_ms': 0.0,
+    }
     node.last_zero_request_time = None
     node.zero_command_sent = False
     node.zero_command_acknowledged = False
@@ -102,16 +149,26 @@ def bridge_for_unit_test(profile='robot-2'):
     node.last_ultrasonic_valid = {'left': 0.0, 'right': 0.0}
     node.ultrasonic_frame_timeout = 0.5
     node.require_ultrasonic_for_ready = True
+    node.ultrasonic_health = UltrasonicPhaseHealth(
+        required_valid_samples=3, invalid_samples_to_drop=3,
+        max_sample_age_s=0.35, activation_timeout_s=1.0)
+    node.ultrasonic_enable_target = False
+    node.ultrasonic_command_acknowledged = True
+    node.last_ultrasonic_command_time = None
+    node.ultrasonic_command_retry_interval = 0.25
+    node.ultrasonic_activation_timeout_reported = False
     node.ultrasonic_stale_reported = False
     node.hardware_ready = False
     node.command_arbiter = FakeArbiter()
     node.command_sign = (1.0, 1.0, 1.0)
     node.pub_ready = FakePublisher()
     node.pub_manual_active = FakePublisher()
+    node.pub_ultrasonic_ready = FakePublisher()
     node.statuses = []
     node.publish_status = node.statuses.append
     node.logger = FakeLogger()
     node.get_logger = lambda: node.logger
+    node.tx_scheduler = ImmediateScheduler(node)
     return node
 
 
@@ -250,6 +307,69 @@ def test_command_timeout_race_never_reasserts_ready(monkeypatch):
     node._handle_serial_line('ACK,SERVO_ATTACH')
     node.last_ultrasonic_valid = {'left': now[0], 'right': now[0]}
     assert not all(node.hardware_ready_conditions(now[0]).values())
+
+
+def test_delayed_and_previous_session_heartbeat_ack_are_stale(monkeypatch):
+    node = bridge_for_unit_test()
+    now = [100.0]
+    node.hello_started_at = now[0]
+    monkeypatch.setattr(bridge_module.time, 'monotonic', lambda: now[0])
+    node.send_hello()
+    node._handle_serial_line(
+        f'ACK,{node.protocol.hello_ack_value(node.session_id)}')
+    token = node.ser.writes[-1].decode().strip().removeprefix('@HB,')
+    now[0] += node.heartbeat_ack_timeout + 0.001
+    node._handle_serial_line(f'ACK,{token}')
+    assert node.last_heartbeat_ack_time == 0.0
+    assert node.heartbeat_stats['stale_ack_count'] == 1
+
+    node._handle_serial_line('ACK,0000000000000000:99')
+    assert node.heartbeat_stats['stale_ack_count'] == 2
+
+
+def test_timeout_recovers_communication_but_never_rearms_motion(monkeypatch):
+    node = bridge_for_unit_test()
+    now = [100.0]
+    node.hello_started_at = now[0]
+    monkeypatch.setattr(bridge_module.time, 'monotonic', lambda: now[0])
+    monkeypatch.setattr(bridge_module.secrets, 'token_hex',
+                        lambda _length: '1111111111111111')
+    complete_startup(node, now[0])
+    old_session = node.session_id
+
+    node._handle_serial_line('ERR,HEARTBEAT_TIMEOUT')
+    assert node.active_fault == 'ERR,HEARTBEAT_TIMEOUT'
+    assert node.communication_recovering is True
+    assert node.session_id != old_session
+    assert node.ser.writes[-1].startswith(b'@HELLO,2,1111111111111111')
+
+    node._handle_serial_line(
+        f'ACK,{node.protocol.hello_ack_value(node.session_id)}')
+    for _ in range(node.heartbeat_recovery_ack_count):
+        token = node.ser.writes[-1].decode().strip().removeprefix('@HB,')
+        node._handle_serial_line(f'ACK,{token}')
+        if node.communication_recovering:
+            now[0] += node.heartbeat_period
+            node.send_heartbeat()
+
+    assert node.communication_recovered is True
+    assert node.communication_recovering is False
+    assert node.active_fault is None
+    assert node.zero_command_acknowledged is False
+    assert node.servo_attached is False
+    # Recovery continues through a session-bound zero and servo attach. The
+    # arbiter was force-cleared, so no pre-fault velocity can be replayed.
+    node.send_zero_velocity_probe()
+    node._handle_serial_line(
+        f'ACK,{node.protocol.zero_velocity_ack_value(node.session_id)}')
+    node._handle_serial_line('ACK,SERVO_ATTACH')
+    assert node.zero_command_acknowledged is True
+    assert node.servo_attached is True
+    assert all(node.hardware_ready_conditions(now[0]).values())
+    assert len(node.command_arbiter.force_zero_calls) >= 2
+    node.send_velocity_loop()
+    assert node.ser.writes[-1].startswith(b'@V,0.000,0.000,0.000')
+    assert 'INFO,COMMUNICATION_RECOVERED:MOTION_REARM_REQUIRED' in node.statuses
 
 
 def test_estop_latch_stops_handshake_and_is_not_cleared_by_hello(monkeypatch):

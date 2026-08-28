@@ -42,7 +42,8 @@ setup(
             ('rigid_body_sync_legacy = '
              'cooperative_parking_robot.rigid_body_sync_node:main'),
             'state_machine = cooperative_parking_robot.robot_state_machine_node:main',
-            'stm32_bridge = cooperative_parking_robot.stm32_bridge_node:main',
+            ('stm32_bridge = '
+             'cooperative_parking_robot.mvp_stm32_bridge_node:main'),
             ('individual_move = '
              'cooperative_parking_robot.mvp_runtime_nodes:'
              'individual_move_main'),
@@ -55,9 +56,6 @@ setup(
             ('drive_pulse = '
              'cooperative_parking_robot.drive_pulse_node:main'),
             'cooperative_drive_test = cooperative_parking_robot.cooperative_drive_test_node:main',
-            ('rigid_pair_teleop = '
-             'cooperative_parking_robot.rigid_pair_teleop_node:main'),
-            # Compatibility name; new launch files use rigid_pair_teleop.
             'keyboard_follow = cooperative_parking_robot.keyboard_follow_node:main',
             'calibrate_camera = cooperative_parking_robot.calibrate_camera_node:main',
             'camera_preview = cooperative_parking_robot.camera_preview_node:main',

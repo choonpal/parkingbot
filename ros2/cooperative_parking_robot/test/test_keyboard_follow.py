@@ -149,7 +149,7 @@ def test_rear_launch_exposes_separately_conditioned_controller_modes():
         / 'launch/cooperative_drive_test_rear.launch.py'
     ).read_text(encoding='utf-8')
     assert "'enable_drive_test_dashboard', default_value='true'" in launch_text
-    assert "'enable_rigid_pair_teleop', default_value='false'" in launch_text
-    assert "executable='rigid_pair_teleop'" in launch_text
-    assert "LaunchConfiguration('enable_rigid_pair_teleop')" in launch_text
+    assert "'enable_keyboard_follow', default_value='false'" in launch_text
+    assert "executable='keyboard_follow'" in launch_text
+    assert "LaunchConfiguration('enable_keyboard_follow')" in launch_text
     assert "LaunchConfiguration('enable_drive_test_dashboard')" in launch_text

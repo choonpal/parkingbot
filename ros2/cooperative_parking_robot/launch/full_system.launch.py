@@ -159,7 +159,7 @@ def generate_launch_description():
         DeclareLaunchArgument('rear_marker_id', default_value='1'),
         DeclareLaunchArgument('min_marker_area_px', default_value='100.0'),
         DeclareLaunchArgument('min_marker_area_ratio', default_value='0.0003'),
-        DeclareLaunchArgument('marker_size_m', default_value='0.175'),
+        DeclareLaunchArgument('marker_size_m', default_value='0.24'),
         DeclareLaunchArgument('debug_web_port', default_value='5000'),
         DeclareLaunchArgument('camera_ground_x_m', default_value='0.0'),
         DeclareLaunchArgument('camera_ground_y_m', default_value='0.0'),
@@ -175,6 +175,10 @@ def generate_launch_description():
             'rear_aruco_gray_gain', default_value='1.0'),
         DeclareLaunchArgument(
             'simultaneous_entry', default_value='false'),
+        DeclareLaunchArgument(
+            'stop_after_align', default_value='false',
+            description=(
+                'Hold both robots after axle alignment; never commit LIFT')),
         DeclareLaunchArgument(
             'planning_validation_mode', default_value='warn_only',
             description=(
@@ -426,7 +430,7 @@ def generate_launch_description():
                 'robot_width_m': 0.420,
                 'minimum_inter_robot_gap_m': 0.22,
                 'entry_standoff_m': 0.85,
-                'entry_side_offset_m': 0.40,
+                'entry_side_offset_m': 0.50,
                 'exit_distance_m': 0.50,
                 'substate_timeout_s': 60.0,
                 'cctv_marker_timeout_s': _float(
@@ -467,7 +471,7 @@ def generate_launch_description():
                 'robot_width_m': 0.420,
                 'minimum_inter_robot_gap_m': 0.22,
                 'entry_standoff_m': 0.85,
-                'entry_side_offset_m': 0.40,
+                'entry_side_offset_m': 0.50,
                 'exit_distance_m': 0.50,
                 'substate_timeout_s': 60.0,
                 'cctv_marker_timeout_s': _float(
@@ -509,6 +513,7 @@ def generate_launch_description():
                 'align_timeout_s': 120.0,
                 'drive_timeout_s': 120.0,
                 'require_hardware_ready': _bool('require_hardware_ready'),
+                'stop_after_align': _bool('stop_after_align'),
             }],
             output='screen'),
         Node(
@@ -572,6 +577,7 @@ def generate_launch_description():
                 'align_timeout_s': 120.0,
                 'drive_timeout_s': 120.0,
                 'require_hardware_ready': _bool('require_hardware_ready'),
+                'stop_after_align': _bool('stop_after_align'),
             }],
             output='screen'),
         Node(

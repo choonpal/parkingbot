@@ -1352,6 +1352,9 @@ class CameraPreviewNode(Node):
         self.declare_parameter('enable_aruco', True)
         self.declare_parameter('aruco_dict', 'DICT_4X4_50')
         self.declare_parameter('marker_size_m', 0.24)
+        # Keep the generic/CCTV default unless a close mounting-board edge
+        # requires the lower Rear ID0 setting supplied by its launch file.
+        self.declare_parameter('aruco_min_marker_distance_rate', 0.05)
         # 검출은 매 프레임 할 필요가 없다. CPU를 아낀다.
         self.declare_parameter('aruco_every_n', 3)
         # aruco_tracker_node가 보정된 카메라 행렬로 계산한 실제 상대 pose.
@@ -1501,7 +1504,9 @@ class CameraPreviewNode(Node):
         self.detector = None
         if self.enable_aruco:
             self.detector = ArucoDetectorCompat(
-                cv2, str(self.get_parameter('aruco_dict').value))
+                cv2, str(self.get_parameter('aruco_dict').value),
+                min_marker_distance_rate=float(self.get_parameter(
+                    'aruco_min_marker_distance_rate').value))
         self.web_host = str(self.get_parameter('web_host').value)
         self.web_port = int(self.get_parameter('web_port').value)
         self.enable_yolo = bool(self.get_parameter('enable_yolo').value)

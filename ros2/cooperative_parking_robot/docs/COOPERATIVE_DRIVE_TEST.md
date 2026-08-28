@@ -36,6 +36,8 @@ ros2 launch cooperative_parking_robot cooperative_drive_test_front.launch.py \
 ```
 
 robot-1 Rear에서는 흰색 OV2710의 안정 `by-path`를 넣어 실행한다.
+기본 운용값은 `1280x720 @ 12 fps`이며, ID0의 검은 정사각형 한 변은
+`0.10 m`이다.
 
 ```bash
 export ROS_DOMAIN_ID=142
@@ -43,6 +45,7 @@ ros2 launch cooperative_parking_robot cooperative_drive_test_rear.launch.py \
   serial_port:="REAR_STABLE_SERIAL_BY_ID" \
   camera_device:="/dev/v4l/by-path/REAR_WHITE_OV2710-video-index0" \
   camera_calib:="$HOME/ov2710_calib_23mm_white.npz" \
+  width:=1280 height:=720 fps:=12.0 marker_size_m:=0.10 \
   wheel_radius:="REAR_MEASURED_WHEEL_RADIUS" \
   encoder_ppr:="REAR_ENCODER_PPR" \
   lx:="REAR_LX" ly:="REAR_LY"

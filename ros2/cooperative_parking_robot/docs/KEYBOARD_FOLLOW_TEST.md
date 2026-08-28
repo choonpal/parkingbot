@@ -114,6 +114,49 @@ test -f "$HOME/ov2710_calib_23mm_white.npz" && echo "camera calibration OK"
 `/dev/ttyACM0`이나 `/dev/video0`처럼 순서가 바뀔 수 있는 이름보다 위의 안정 경로를
 사용하는 것을 권장합니다.
 
+### 3.3 2026-08-28 현장 네트워크·장치 실측
+
+아래 값은 운영 PC와 두 로봇에 직접 접속해 확인한 스냅샷입니다. DHCP 주소는 바뀔
+수 있으므로 실행 당일에도 `*.local` 이름과 확인 명령을 우선 사용합니다.
+
+| 역할 | hostname / SSH | 확인된 IP | Wi-Fi·경로 |
+| --- | --- | --- | --- |
+| 운영 PC | `robot-desktop` | `10.48.99.21/24` | SSID `minseo` |
+| Rear | `robot@robot-1.local` | `10.48.99.229/24` | `wlan0`, workspace `/home/robot/cooperative_parking_robot_ws` |
+| Front | `robot@robot-2.local` | `10.48.99.228/24` | `wlan0`, SSID `minseo`, 같은 workspace 경로 |
+
+세 장치 모두 `10.48.99.0/24`, 기본 gateway `10.48.99.174`를 사용했고 운영 PC↔각
+로봇 및 robot-1↔robot-2 ping은 손실 없이 성공했습니다. robot-1 이미지에는 SSID를
+직접 조회할 `iw`가 없었지만 동일 wlan subnet/gateway, mDNS, 양방향 통신은
+확인했습니다.
+
+현장 설정 파일 기준 ROS domain과 실측 장치는 다음과 같습니다.
+
+```text
+ROS_DOMAIN_ID=42
+Front serial=/dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_0667FF485270535067112920-if02
+Rear serial=/dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066AFF485270535067112511-if02
+Rear camera=/dev/v4l/by-path/platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.1:1.0-video-index0
+Rear calibration=/home/robot/ov2710_calib_23mm_white.npz
+wheel_radius=0.05 m, encoder_ppr=5182, lx=0.2225 m, ly=0.21 m
+```
+
+> **현재 배포 상태:** 확인 당시 두 로봇의 overlay에는 구형 `keyboard_follow`만 있고
+> 새 `rigid_pair_teleop` 및 최신 main의 MVP STM32 wrapper가 없었습니다. 아래 launch를
+> 실행하기 전에 반드시 최신 검증 commit을 두 workspace에 배포·빌드하고 다음 확인을
+> 통과해야 합니다.
+
+```bash
+source /opt/ros/humble/setup.bash
+source /home/robot/cooperative_parking_robot_ws/install/setup.bash
+
+ros2 pkg executables cooperative_parking_robot | \
+  grep -E 'rigid_pair_teleop|camera_preview|stm32_bridge'
+ros2 launch cooperative_parking_robot \
+  cooperative_drive_test_rear.launch.py --show-args | \
+  grep enable_rigid_pair_teleop
+```
+
 ## 4. 코드 빌드와 자동 검증
 
 코드를 새로 받은 뒤에는 먼저 개발 PC에서 빌드와 자동 테스트를 실행합니다.
@@ -121,39 +164,49 @@ test -f "$HOME/ov2710_calib_23mm_white.npz" && echo "camera calibration OK"
 않습니다.
 
 ```bash
-cd ~/parkingbot
+cd /home/guitest/parkingbot_rigid_pair_latest
 source /opt/ros/humble/setup.bash
 
 colcon build --symlink-install \
   --packages-select cooperative_parking_robot
 
-cd ~/parkingbot/ros2/cooperative_parking_robot
+cd /home/guitest/parkingbot_rigid_pair_latest/ros2/cooperative_parking_robot
 scripts/run_feature_tests.sh rigid-pair
 ```
 
 전체 기능을 함께 확인하려면 다음을 사용합니다.
 
 ```bash
-cd ~/parkingbot/ros2/cooperative_parking_robot
+cd /home/guitest/parkingbot_rigid_pair_latest/ros2/cooperative_parking_robot
 scripts/run_feature_tests.sh all
 ```
 
-실차 실행 전에는 다시 workspace overlay를 source합니다.
+현재 기능 브랜치는 위 별도 clean worktree에서 검증합니다. 병합 후 경로가 바뀌면
+실제 checkout 경로를 사용하십시오. 로봇에 소스가 동기화된 뒤에는 **각 로봇에서**
+다음처럼 빌드하고 overlay를 source합니다.
 
 ```bash
+cd /home/robot/cooperative_parking_robot_ws
 source /opt/ros/humble/setup.bash
-source ~/parkingbot/install/setup.bash
+colcon build --symlink-install --packages-select cooperative_parking_robot
+source /home/robot/cooperative_parking_robot_ws/install/setup.bash
 ```
 
 ## 5. 두 호스트의 ROS 환경 준비
 
-Front와 Rear 호스트 **각각의 터미널**에서 같은 domain을 설정합니다. 아래 `142`는
-예시이며, 다른 값을 사용해도 두 호스트에서 같아야 합니다.
+운영 PC에서 두 SSH 세션을 별도로 엽니다.
+
+```bash
+ssh robot@robot-2.local  # Front
+ssh robot@robot-1.local  # Rear
+```
+
+Front와 Rear 호스트 **각각의 터미널**에서 현장 설정값 `42`를 사용합니다.
 
 ```bash
 source /opt/ros/humble/setup.bash
-source ~/parkingbot/install/setup.bash
-export ROS_DOMAIN_ID=142
+source /home/robot/cooperative_parking_robot_ws/install/setup.bash
+export ROS_DOMAIN_ID=42
 
 chronyc tracking
 chronyc sources -v
@@ -175,11 +228,13 @@ Front 호스트에서 다음을 실행합니다.
 
 ```bash
 source /opt/ros/humble/setup.bash
-source ~/parkingbot/install/setup.bash
-export ROS_DOMAIN_ID=142
+source /home/robot/cooperative_parking_robot_ws/install/setup.bash
+export ROS_DOMAIN_ID=42
 
 ros2 launch cooperative_parking_robot cooperative_drive_test_front.launch.py \
-  serial_port:=/dev/serial/by-id/FRONT_STABLE_SERIAL
+  serial_port:=/dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_0667FF485270535067112920-if02 \
+  wheel_radius:=0.05 encoder_ppr:=5182.0 \
+  lx:=0.2225 ly:=0.21
 ```
 
 이 launch는 Front STM32 bridge만 실행합니다. 자동 주행 노드나 별도의 `cmd_vel`
@@ -191,13 +246,15 @@ Rear 호스트에서 실제 장치 경로로 바꿔 실행합니다.
 
 ```bash
 source /opt/ros/humble/setup.bash
-source ~/parkingbot/install/setup.bash
-export ROS_DOMAIN_ID=142
+source /home/robot/cooperative_parking_robot_ws/install/setup.bash
+export ROS_DOMAIN_ID=42
 
 ros2 launch cooperative_parking_robot cooperative_drive_test_rear.launch.py \
-  serial_port:=/dev/serial/by-id/REAR_STABLE_SERIAL \
-  camera_device:=/dev/v4l/by-path/REAR_WHITE_CAMERA-video-index0 \
-  camera_calib:="$HOME/ov2710_calib_23mm_white.npz" \
+  serial_port:=/dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066AFF485270535067112511-if02 \
+  camera_device:=/dev/v4l/by-path/platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.1:1.0-video-index0 \
+  camera_calib:=/home/robot/ov2710_calib_23mm_white.npz \
+  wheel_radius:=0.05 encoder_ppr:=5182.0 \
+  lx:=0.2225 ly:=0.21 \
   enable_drive_test_dashboard:=false \
   enable_rigid_pair_teleop:=true
 ```

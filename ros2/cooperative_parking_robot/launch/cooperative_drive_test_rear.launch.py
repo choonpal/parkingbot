@@ -71,6 +71,11 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'ultrasonic_frame_timeout_s', default_value='0.50'),
         DeclareLaunchArgument('preview_port', default_value='5005'),
+        DeclareLaunchArgument(
+            'preview_enable_aruco', default_value='false',
+            description=(
+                'The control tracker already detects every frame; enable only '
+                'when a duplicate diagnostic overlay is worth the CPU cost')),
         DeclareLaunchArgument('dashboard_port', default_value='5006'),
         DeclareLaunchArgument('test_speed_mps', default_value='0.0628'),
         DeclareLaunchArgument('test_distance_m', default_value='0.10'),
@@ -167,7 +172,7 @@ def generate_launch_description():
                 'calibration_width_px': _int('width'),
                 'calibration_height_px': _int('height'),
                 'stale_after_s': 1.0,
-                'enable_aruco': True,
+                'enable_aruco': _bool('preview_enable_aruco'),
                 'aruco_dict': 'DICT_4X4_50',
                 'marker_size_m': _float('marker_size_m'),
                 'aruco_min_marker_distance_rate': _float(

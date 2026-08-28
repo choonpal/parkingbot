@@ -351,10 +351,22 @@ class RigidPairTeleopNode(Node):
         self.declare_parameter('odom_max_step_m', 0.10)
         self.declare_parameter('relative_stable_forward_span_m', 0.010)
         self.declare_parameter('relative_stable_lateral_span_m', 0.010)
-        self.declare_parameter('relative_stable_yaw_span_deg', 2.0)
+        # The 720p OV2710/10 cm ID0 bench measurement has about 2.1 degrees
+        # of stationary PnP yaw span. Keep the three-sample stability gate
+        # above that measured noise, while the separate placement tolerance
+        # remains the stricter absolute +/-2 degrees.
+        self.declare_parameter('relative_stable_yaw_span_deg', 3.0)
+        # Three stable samples do not all have to fit inside the single-pose
+        # freshness timeout. The measured 720p tracker is roughly 9 Hz and an
+        # occasional pose interval reaches 0.264 s. Last-pose freshness still
+        # fails closed at marker_timeout_s=0.35 independently.
+        self.declare_parameter('relative_stable_window_s', 0.75)
         self.declare_parameter('relative_outlier_forward_step_m', 0.020)
         self.declare_parameter('relative_outlier_lateral_step_m', 0.020)
-        self.declare_parameter('relative_outlier_yaw_step_deg', 3.0)
+        # At 12 Hz the bounded 0.12 rad/s command can physically change only
+        # about 0.6 degrees per frame. Five degrees still rejects an impossible
+        # planar-PnP branch jump without treating measured vibration as loss.
+        self.declare_parameter('relative_outlier_yaw_step_deg', 5.0)
         self.declare_parameter('require_fused_odom', False)
         self.declare_parameter('fused_odom_timeout_s', 0.50)
         self.declare_parameter('require_cctv_marker', False)
@@ -405,6 +417,8 @@ class RigidPairTeleopNode(Node):
             gp('relative_stable_lateral_span_m').value)
         self.relative_stable_yaw_span = math.radians(float(
             gp('relative_stable_yaw_span_deg').value))
+        self.relative_stable_window = float(
+            gp('relative_stable_window_s').value)
         self.relative_outlier_forward_step = float(
             gp('relative_outlier_forward_step_m').value)
         self.relative_outlier_lateral_step = float(
@@ -449,6 +463,8 @@ class RigidPairTeleopNode(Node):
                 self.relative_stable_forward_span <= 0.0 or
                 self.relative_stable_lateral_span <= 0.0 or
                 self.relative_stable_yaw_span <= 0.0 or
+                not math.isfinite(self.relative_stable_window) or
+                self.relative_stable_window < self.marker_timeout or
                 self.relative_outlier_forward_step <= 0.0 or
                 self.relative_outlier_lateral_step <= 0.0 or
                 self.relative_outlier_yaw_step <= 0.0):
@@ -709,7 +725,7 @@ class RigidPairTeleopNode(Node):
         return (
             len(self.relative_samples) >= 3 and
             len(self.relative_sample_times) >= 3 and
-            now - self.relative_sample_times[0] <= self.marker_timeout and
+            now - self.relative_sample_times[0] <= self.relative_stable_window and
             relative_pose_is_stable(
                 self.relative_samples,
                 forward_span_m=self.relative_stable_forward_span,

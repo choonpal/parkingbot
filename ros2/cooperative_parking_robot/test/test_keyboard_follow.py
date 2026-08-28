@@ -11,6 +11,7 @@ from cooperative_parking_robot.keyboard_follow_core import (
     median_relative_pose,
 )
 from cooperative_parking_robot.rigid_pair_teleop_core import (
+    relative_pose_is_stable,
     relative_pose_step_is_plausible,
 )
 
@@ -62,6 +63,31 @@ def test_pose_step_plausibility_handles_yaw_wraparound():
     assert relative_pose_step_is_plausible(
         (0.30, 0.0, math.radians(179.0)),
         (0.30, 0.0, math.radians(-179.0)))
+
+
+def test_measured_720p_yaw_noise_is_stable_but_large_jump_is_rejected():
+    samples = [
+        (0.2135, 0.0217, math.radians(-2.36)),
+        (0.2134, 0.0218, math.radians(-1.58)),
+        (0.2133, 0.0217, math.radians(-0.28)),
+    ]
+    assert relative_pose_is_stable(
+        samples, yaw_span_rad=math.radians(3.0))
+    assert relative_pose_step_is_plausible(
+        samples[-1], (0.2134, 0.0217, math.radians(4.5)),
+        yaw_step_rad=math.radians(5.0))
+    assert not relative_pose_step_is_plausible(
+        samples[-1], (0.2134, 0.0217, math.radians(8.0)),
+        yaw_step_rad=math.radians(5.0))
+
+    source = (
+        Path(__file__).parents[1]
+        / 'cooperative_parking_robot/keyboard_follow_node.py'
+    ).read_text(encoding='utf-8')
+    assert "'relative_stable_yaw_span_deg', 3.0" in source
+    assert "'relative_stable_window_s', 0.75" in source
+    assert 'self.relative_stable_window < self.marker_timeout' in source
+    assert "'relative_outlier_yaw_step_deg', 5.0" in source
 
 
 def test_keyboard_web_uses_fixed_repeat_and_keyup_stop():

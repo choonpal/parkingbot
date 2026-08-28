@@ -4,7 +4,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-typedef struct { void *Instance; } UART_HandleTypeDef;
+typedef struct {
+    void *Instance;
+    uint32_t RxState;
+} UART_HandleTypeDef;
 typedef struct { int unused; } TIM_HandleTypeDef;
 typedef struct { int unused; } GPIO_TypeDef;
 typedef enum { GPIO_PIN_RESET = 0, GPIO_PIN_SET = 1 } GPIO_PinState;
@@ -14,6 +17,9 @@ typedef enum {
     HAL_BUSY = 2,
     HAL_TIMEOUT = 3,
 } HAL_StatusTypeDef;
+
+#define HAL_UART_STATE_READY   0x20U
+#define HAL_UART_STATE_BUSY_RX 0x22U
 
 #define USART2 ((void *)2)
 #define GPIOB ((GPIO_TypeDef *)0)

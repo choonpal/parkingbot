@@ -36,6 +36,8 @@ class FakeSerial:
     def __init__(self):
         self.writes = []
         self.closed = False
+        self.incoming = bytearray()
+        self.reset_input_calls = 0
 
     def write(self, data):
         self.writes.append(data)
@@ -44,6 +46,19 @@ class FakeSerial:
     def close(self):
         self.closed = True
         self.is_open = False
+
+    @property
+    def in_waiting(self):
+        return len(self.incoming)
+
+    def read(self, count):
+        payload = bytes(self.incoming[:count])
+        del self.incoming[:count]
+        return payload
+
+    def reset_input_buffer(self):
+        self.reset_input_calls += 1
+        self.incoming.clear()
 
 
 class FakePublisher:
@@ -195,6 +210,47 @@ def test_strict_handshake_order_and_wrong_hello_token(monkeypatch):
     assert node.servo_attach_requested is False
 
 
+def test_hello_waits_until_serial_startup_settle_has_elapsed(monkeypatch):
+    node = bridge_for_unit_test()
+    now = [10.0]
+    node.serial_ready_at = 10.5
+    node.serial_input_drained = False
+    node.rx_buffer = bytearray()
+    node.max_rx_buffer = 4096
+    monkeypatch.setattr(bridge_module.time, 'monotonic', lambda: now[0])
+
+    node.send_hello()
+    assert node.ser.writes == []
+    now[0] = 10.5
+    node.send_hello()
+    assert node.ser.writes == []
+    node.read_serial()
+    assert node.serial_input_drained is True
+    node.send_hello()
+    assert node.ser.writes == [b'@HELLO,2,abcdef0123456789\n']
+
+
+def test_serial_boot_noise_is_drained_before_frames_are_parsed(monkeypatch):
+    node = bridge_for_unit_test()
+    now = [10.0]
+    node.serial_ready_at = 10.5
+    node.serial_input_drained = False
+    node.rx_buffer = bytearray()
+    node.max_rx_buffer = 4096
+    node.ser.incoming.extend(b'HELLO,2,partial\nERR,UNKNOWN_COMMAND\n')
+    monkeypatch.setattr(bridge_module.time, 'monotonic', lambda: now[0])
+
+    node.read_serial()
+    assert node.ser.in_waiting == 0
+    assert node.active_fault is None
+    now[0] = 10.5
+    node.ser.incoming.extend(b'E,0,0,0,0\n')
+    node.read_serial()
+    assert node.ser.in_waiting == 0
+    assert node.serial_input_drained is True
+    assert node.active_fault is None
+
+
 def test_hardware_ready_requires_every_specific_gate(monkeypatch):
     node = bridge_for_unit_test()
     now = [100.0]
@@ -236,6 +292,38 @@ def test_previous_session_timeout_is_information_current_timeout_is_fatal(
     node._handle_serial_line('ACK,SERVO_ATTACH')
     node.publish_hardware_state()
     assert node.pub_ready.messages[-1].data is False
+
+
+@pytest.mark.parametrize(
+    'code', ('UNKNOWN_COMMAND', 'RX_QUEUE_OVERFLOW', 'UART_RX_ERROR'))
+def test_prehello_uart_rejection_is_quarantined_until_valid_hello(
+        monkeypatch, code):
+    node = bridge_for_unit_test()
+    now = [100.0]
+    node.hello_started_at = now[0]
+    monkeypatch.setattr(bridge_module.time, 'monotonic', lambda: now[0])
+
+    node._handle_serial_line(f'ERR,{code}')
+    assert node.active_fault is None
+    assert node.previous_session_faults == [code]
+    complete_startup(node, now[0])
+    assert f'INFO,PREVIOUS_SESSION_FAULT:{code}' in node.statuses
+    assert all(node.hardware_ready_conditions(now[0]).values())
+
+
+@pytest.mark.parametrize(
+    'code', ('UNKNOWN_COMMAND', 'RX_QUEUE_OVERFLOW', 'UART_RX_ERROR'))
+def test_uart_rejection_after_hello_remains_fail_closed(monkeypatch, code):
+    node = bridge_for_unit_test()
+    now = [100.0]
+    node.hello_started_at = now[0]
+    monkeypatch.setattr(bridge_module.time, 'monotonic', lambda: now[0])
+    complete_startup(node, now[0])
+
+    node._handle_serial_line(f'ERR,{code}')
+    assert node.active_fault == f'ERR,{code}'
+    assert node.servo_attached is False
+    assert node.command_arbiter.force_zero_calls == [now[0]]
 
 
 def test_command_timeout_race_never_reasserts_ready(monkeypatch):
@@ -288,6 +376,19 @@ def test_partial_uart_write_is_transport_fault(monkeypatch):
     node.send_hello()
     assert node.transport_fault == 'ERR,UART_PARTIAL_WRITE'
     assert node.ser is None
+
+
+def test_shutdown_zero_survives_repeated_sigint_during_logging():
+    node = bridge_for_unit_test()
+
+    class InterruptedLogger(FakeLogger):
+        def info(self, message, **kwargs):
+            raise KeyboardInterrupt
+
+    node.logger = InterruptedLogger()
+    node.get_logger = lambda: node.logger
+    node.shutdown_stop()
+    assert node.ser.writes == [b'@V,0.000,0.000,0.000\n']
 
 
 def test_serial_port_is_opened_exclusively():

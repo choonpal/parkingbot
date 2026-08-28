@@ -8,6 +8,7 @@ TIMEOUT frame is positive evidence that the MCU and measurement cycle are still
 running, so it must not drop ``hardware_ready`` by itself.
 """
 
+import signal
 import time
 
 import rclpy
@@ -91,6 +92,7 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
         node.shutdown_stop()
         node.destroy_node()
         if rclpy.ok():

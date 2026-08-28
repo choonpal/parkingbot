@@ -295,6 +295,8 @@ class FleetManagerNode(Node):
         )
 
         # 상태
+        self.target_ready = False
+        self.target_ready_since_ns = 0
         self.target_pose = None
         self.target_candidate_receipt_time = None
         self.empty_slots = []
@@ -355,6 +357,8 @@ class FleetManagerNode(Node):
         # 구독
         self.create_subscription(PoseStamped, '/parking/target_pose',
                                  self.target_cb, 10)
+        self.create_subscription(Bool, '/parking/target_ready',
+                                 self.target_ready_cb, 10)
         self.create_subscription(PoseArray, '/parking/empty_slots',
                                  self.slots_cb, 10)
         self.create_subscription(OccupancyGrid, '/parking/map',
@@ -420,9 +424,44 @@ class FleetManagerNode(Node):
         if msg.header.frame_id not in ('', 'map'):
             self.get_logger().warn('target_pose frame must be map')
             return
+        if not self.target_ready:
+            return
+        if stamp_to_ns(msg.header.stamp) < self.target_ready_since_ns:
+            return
         self.target_pose = msg
         if self.state == 'WAIT_TARGET':
             self.target_candidate_receipt_time = time.monotonic()
+
+    def _invalidate_pending_park(self, reason):
+        changed = (
+            self.target_pose is not None or
+            self.target_candidate_receipt_time is not None or
+            self.ui_park_approved)
+        self.target_pose = None
+        self.target_candidate_receipt_time = None
+        if self.ui_park_approved:
+            self.ui_park_approved = False
+            self.requested_destination_slot_id = ''
+            self.active_vehicle_number = ''
+            self.active_parking_credential = None
+            if (self.request_status is not None and
+                    self.request_status.get('status') == 'ACCEPTED'):
+                self.request_status = dict(self.request_status)
+                self.request_status['status'] = 'REJECTED'
+                self.request_status['reason'] = str(reason)
+        if changed:
+            self.publish_state()
+        return changed
+
+    def target_ready_cb(self, msg):
+        previous = self.target_ready
+        self.target_ready = bool(msg.data)
+        if self.target_ready and not previous:
+            self.target_ready_since_ns = self.get_clock().now().nanoseconds
+        if not self.target_ready and self.state == 'WAIT_TARGET':
+            if self._invalidate_pending_park('TARGET_NOT_READY'):
+                self.get_logger().warn(
+                    'target_ready=false — pending park candidate cancelled')
 
     def slots_cb(self, msg):
         """빈 Pose를 등록 슬롯과 다시 연결해 크기와 진입 Yaw를 보존한다."""
@@ -538,6 +577,10 @@ class FleetManagerNode(Node):
         if not self._robots_accepting_mission():
             self._set_request_status(
                 payload, 'REJECTED', 'ROBOT_NOT_IDLE')
+            return
+        if not self.target_ready:
+            self._set_request_status(
+                payload, 'REJECTED', 'TARGET_NOT_READY')
             return
         if (self.require_valid_vehicle_spec and
                 not self._vehicle_spec_ready()):
@@ -1268,6 +1311,9 @@ class FleetManagerNode(Node):
     # ===== 관제 로직 =====
     def manage_loop(self):
         if self.state == 'WAIT_TARGET':
+            if not self.target_ready:
+                self._invalidate_pending_park('TARGET_NOT_READY')
+                return
             if (self.target_pose is not None and
                     self.target_candidate_receipt_time is not None and
                     time.monotonic() - self.target_candidate_receipt_time >

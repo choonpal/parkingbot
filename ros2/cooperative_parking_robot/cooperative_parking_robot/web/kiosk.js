@@ -136,7 +136,7 @@
 
     if (Array.isArray(layout.waiting_polygon) && layout.waiting_polygon.length) {
       const center = centroid(layout.waiting_polygon);
-      if (vehicleState !== 'ABSENT') {
+      if (vehicleState === 'DETECTING' || vehicleState === 'READY') {
         sitePlan.appendChild(svgElement('rect', {
           x: center[0] - 5, y: center[1] - 7, width: 10, height: 5,
           rx: 1.2, class: `site-vehicle ${vehicleClass}`
@@ -145,7 +145,8 @@
       const vehicleCopy = {
         ABSENT: '차량 없음',
         DETECTING: '차량 감지 중',
-        READY: '정차 확인'
+        READY: '정차 확인',
+        PERCEPTION_UNAVAILABLE: '인식 확인 중'
       }[vehicleState] || '상태 확인 중';
       addSiteText('입차 구역', center[0], center[1] + 0.5, 'site-label site-zone-label');
       addSiteText(vehicleCopy, center[0], center[1] + 5, `site-sub site-zone-sub ${vehicleClass}`);
@@ -183,7 +184,7 @@
     const stateIndex = {WAIT_TARGET: 0, WAIT_LIFT: 1, PLAN_PATH: 2, NAVIGATING: 2}[state] ?? 0;
     const labels = {WAIT_LIFT: '로봇 접근 준비', PLAN_PATH: '주차 위치 배정', NAVIGATING: '차량 이동 중'};
     $('progressTitle').textContent = state === 'WAIT_TARGET'
-      ? ({READY: '정차 확인 완료', DETECTING: '차량 확인 중', ABSENT: '차량 입차 대기'}[targetState] || '차량 상태 확인 중')
+      ? ({READY: '정차 확인 완료', DETECTING: '차량 확인 중', ABSENT: '차량 입차 대기', PERCEPTION_UNAVAILABLE: '카메라 인식 일시 중단'}[targetState] || '차량 상태 확인 중')
       : (labels[state] || '시스템 준비 중');
     Array.from($('progressSteps').children).forEach((item, index) => {
       item.classList.toggle('active', index === stateIndex);

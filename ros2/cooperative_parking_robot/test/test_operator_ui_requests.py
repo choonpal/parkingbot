@@ -333,6 +333,67 @@ def test_operator_ui_distinguishes_detecting_vehicle_from_ready_gate():
     assert status['banner'] == '차량 감지 중 — 정차 확인까지 잠시 기다려 주세요'
 
 
+def test_operator_ui_distinguishes_perception_unavailable_from_absent():
+    node = fleet_status_harness({
+        'state': 'WAIT_TARGET',
+        'mission_id': '',
+        'empty_count': 1,
+        'parking_slots': [],
+    })
+    now = time.monotonic()
+    node._status['target_ready'] = (False, now)
+    node._status['target_status'] = (json.dumps({
+        'version': 1,
+        'state': 'PERCEPTION_UNAVAILABLE',
+        'observed_recently': False,
+        'ready': False,
+        'reason': 'PERCEPTION_UNAVAILABLE',
+    }), now)
+
+    status = node.build_status()
+
+    assert status['target_state'] == 'PERCEPTION_UNAVAILABLE'
+    assert not status['site_layout']['vehicle_present']
+    assert not status['target_ready']
+    assert not status['park_enabled']
+    assert status['banner'] == '카메라 인식 일시 중단 — 인식 확인 중'
+
+
+def test_perception_unavailable_overrides_old_target_ready_true():
+    node = fleet_status_harness({
+        'state': 'WAIT_TARGET', 'mission_id': '', 'empty_count': 1,
+        'parking_slots': [],
+    })
+    now = time.monotonic()
+    node._status['target_ready'] = (True, now)
+    node._status['target_status'] = (json.dumps({
+        'state': 'PERCEPTION_UNAVAILABLE',
+        'reason': 'PERCEPTION_UNAVAILABLE',
+    }), now)
+
+    status = node.build_status()
+
+    assert status['target_state'] == 'PERCEPTION_UNAVAILABLE'
+    assert not status['target_ready']
+    assert not status['park_enabled']
+    assert status['banner'] == '카메라 인식 일시 중단 — 인식 확인 중'
+
+
+def test_stale_target_status_is_not_collapsed_to_vehicle_absent():
+    node = fleet_status_harness({
+        'state': 'WAIT_TARGET', 'mission_id': '', 'empty_count': 1,
+        'parking_slots': [],
+    })
+    now = time.monotonic()
+    node._status['target_ready'] = (False, now)
+    node._status['target_status'] = ('malformed', now - 10.0)
+
+    status = node.build_status()
+
+    assert status['target_state'] == 'PERCEPTION_UNAVAILABLE'
+    assert not status['park_enabled']
+
+
 def test_operator_ui_requires_fresh_valid_vehicle_dimensions():
     node = fleet_status_harness({
         'state': 'WAIT_TARGET', 'mission_id': '', 'empty_count': 1,

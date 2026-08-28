@@ -53,9 +53,11 @@ from cooperative_parking_robot.bev_fusion_core import (
     coverage_grid_values,
     decode_detection_envelope,
     merge_detections,
+    perception_is_available,
     point_in_polygon,
     slot_observability,
     summarize_merge,
+    target_presence_state,
 )
 from cooperative_parking_robot.parking_geometry import (
     parse_registered_slots,
@@ -355,6 +357,9 @@ class CctvMergeNode(Node):
         self.latest_vehicle_class = 'default'
         self.latest_classified_wheelbase = self.fixed_wheelbase
         self._last_target_ready = None
+        self._last_target_state = None
+        self._camera_alive = {camera_id: None for camera_id in self.camera_ids}
+        self._perception_available = None
         self._target_last_observed_wall = 0.0
         self.fleet_state = 'UNKNOWN'
         self.vehicle_lifted = False
@@ -498,6 +503,10 @@ class CctvMergeNode(Node):
             if alive:
                 alive_envelopes[camera_id] = envelope
 
+        perception_available = perception_is_available(
+            camera_states, self.require_all_cameras)
+        self._log_perception_health(camera_states, perception_available)
+
         if not alive_envelopes:
             self.get_logger().error(
                 '살아있는 CCTV sensor 노드가 없습니다 — 맵/빈자리 발행 중단',
@@ -610,6 +619,30 @@ class CctvMergeNode(Node):
     # ------------------------------------------------------------------
     # 발행 helper
     # ------------------------------------------------------------------
+    def _log_perception_health(self, camera_states, available):
+        for camera_id, state in camera_states.items():
+            alive = bool(state['alive'])
+            previous = self._camera_alive[camera_id]
+            if (previous is None and not alive) or (
+                    previous is not None and alive != previous):
+                if alive:
+                    self.get_logger().info(
+                        f'PERCEPTION_RECOVERED camera={camera_id}')
+                else:
+                    self.get_logger().warn(
+                        'PERCEPTION_UNAVAILABLE '
+                        f'camera={camera_id} age_s={state["age_s"]:.2f} '
+                        f'timeout_s={self.camera_timeout_s:.2f}')
+            self._camera_alive[camera_id] = alive
+        if ((self._perception_available is None and not available) or
+                (self._perception_available is not None and
+                 available != self._perception_available)):
+            self.get_logger().info(
+                'PERCEPTION_AVAILABLE — detection 병합 재개'
+                if available else
+                'PERCEPTION_UNAVAILABLE — 안전 fail-close 진입')
+        self._perception_available = available
+
     def _publish_fail_closed(self, camera_states):
         self.target_tracker.reset()
         self.dimension_tracker.reset()
@@ -622,6 +655,7 @@ class CctvMergeNode(Node):
         self._target_last_observed_wall = 0.0
         self._publish_target_status(
             time.monotonic(), current_visible=False, ready=False,
+            perception_available=False,
             reason='PERCEPTION_UNAVAILABLE')
         self._publish_empty_slots(force_empty=True)
         self._publish_map([], None, {})
@@ -640,7 +674,8 @@ class CctvMergeNode(Node):
         self.pub_target.publish(msg)
 
     def _publish_target_status(
-            self, now, current_visible, ready, reason=''):
+            self, now, current_visible, ready, perception_available=True,
+            reason=''):
         """Publish customer-facing presence separately from the safety gate."""
         if self._target_last_observed_wall > 0.0:
             last_seen_age_s = max(
@@ -650,11 +685,14 @@ class CctvMergeNode(Node):
         else:
             last_seen_age_s = None
             observed_recently = False
-        state = (
-            'READY' if ready else
-            'DETECTING' if observed_recently else
-            'ABSENT'
-        )
+        state = target_presence_state(
+            ready, observed_recently,
+            perception_available=perception_available)
+        if state != self._last_target_state:
+            if state == 'ABSENT' and not reason:
+                self.get_logger().info(
+                    'TARGET_ABSENT — perception 정상, 대기영역 차량 미검출')
+            self._last_target_state = state
         stable_for_s = 0.0
         if self.target_tracker.stable_since is not None:
             stable_for_s = max(

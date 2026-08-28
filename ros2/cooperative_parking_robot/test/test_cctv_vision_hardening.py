@@ -126,7 +126,16 @@ def test_production_entrypoints_are_source_aware():
         'yolo_bev_map_production_node:main',
         'cctv_robot_marker_production_node:main',
         'pose_fusion_production_node:main',
-        'rigid_body_sync_vision_node:main',
+        # rigid_body_sync keeps the MVP command-ownership wrapper; that
+        # wrapper inherits the source-aware vision implementation below.
+        'mvp_runtime_nodes:',
     )
     for value in expected:
         assert value in setup
+    assert 'rigid_body_sync_main' in setup
+    runtime = (
+        ROOT / 'cooperative_parking_robot/mvp_runtime_nodes.py'
+    ).read_text()
+    assert 'from cooperative_parking_robot.rigid_body_sync_vision_node import (' \
+        in runtime
+    assert 'class MvpRigidBodySyncNode(BaseRigidBodySyncNode):' in runtime

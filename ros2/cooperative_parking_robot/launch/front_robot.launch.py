@@ -103,7 +103,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "require_hardware_ready", default_value="true"),
         DeclareLaunchArgument(
-            "require_ultrasonic_for_ready", default_value="true"),
+            "require_ultrasonic_for_ready", default_value="false"),
         DeclareLaunchArgument(
             "ultrasonic_frame_timeout_s", default_value="0.50"),
         DeclareLaunchArgument(
@@ -136,7 +136,7 @@ def generate_launch_description():
             "entry_standoff_m", default_value="0.85",
             description="Center-to-entry-standoff distance [m]"),
         DeclareLaunchArgument(
-            "entry_side_offset_m", default_value="0.40",
+            "entry_side_offset_m", default_value="0.50",
             description="Center-to-side-staging lane distance [m]"),
         DeclareLaunchArgument(
             "entry_side", default_value="-1",
@@ -146,6 +146,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "simultaneous_entry", default_value="false",
             description="Use the validated Front-first staging by default"),
+        DeclareLaunchArgument(
+            "stop_after_align", default_value="false",
+            description="Hold after axle alignment and never commit LIFT"),
         DeclareLaunchArgument(
             "same_direction_exit", default_value="false",
             description="False keeps the validated split-nearest-end exit"),
@@ -248,6 +251,7 @@ def generate_launch_description():
                 "drive_timeout_s": 120.0,
                 "return_timeout_s": _float("return_timeout_s"),
                 "require_hardware_ready": require_hardware_ready,
+                "stop_after_align": _bool("stop_after_align"),
             }],
             output="screen"),
 

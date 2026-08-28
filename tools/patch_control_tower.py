@@ -1,0 +1,340 @@
+#!/usr/bin/env python3
+"""camera_preview_node.py 를 CCTV 관제탑 화면으로 바꾼다.
+
+기존 프리뷰는 카메라 영상과 BEV 위주였고, 빈자리/파이프라인/로봇 상태는
+헤더의 작은 badge 로만 보였다. 이 패치는 화면 맨 위에 관제탑 구역을 넣어
+"지금 CCTV 가 무엇을 보고 있고 무엇이 막혀 있는지"를 한눈에 보여준다.
+
+추가되는 것
+-----------
+1. 상태 타일 4개 — 인식 / 빈자리 / 로봇 / 미션
+2. 주차면 현황판 — 슬롯별 빈자리·점유·미관측 카드
+3. CCTV 파이프라인 체인 — 카메라 → 보정 → YOLO → 슬롯판정 → 안내
+4. 로봇·미션 패널 — 마커 위치, 상대거리, 목적지, 남은 거리
+
+ROS 인터페이스와 판정 로직은 건드리지 않는다. 이미 ``/api/info`` 가
+내보내던 값만 다시 배치한다. 그래서 이 파일 하나만 바꾸면 된다.
+
+사용법:
+    python3 patch_control_tower.py <camera_preview_node.py 경로>
+"""
+
+from __future__ import annotations
+
+import io
+from pathlib import Path
+import sys
+
+
+# ---------------------------------------------------------------- CSS
+
+CSS_ANCHOR = "  .ok{color:var(--green)}\n</style>"
+
+CSS_NEW = """  .ok{color:var(--green)}
+
+  /* ---- 관제탑 ---- */
+  #tower{padding:14px 14px 0}
+  .tw-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+    gap:12px;margin-bottom:12px}
+  .tw-tile{background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;padding:12px 14px;border-left:5px solid #46586f}
+  .tw-tile.good{border-left-color:var(--green)}
+  .tw-tile.warn{border-left-color:var(--orange)}
+  .tw-tile.bad{border-left-color:var(--red)}
+  .tw-tile .k{font-size:12px;color:#8fa3ba;letter-spacing:.03em}
+  .tw-tile .v{font-size:26px;font-weight:650;margin:3px 0 1px;
+    line-height:1.15}
+  .tw-tile .s{font-size:12px;color:#aebcd0;min-height:16px}
+  .tw-panels{display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:12px}
+  .tw-card{background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;padding:12px 14px}
+  .tw-card h3{margin:0 0 10px;font-size:13px;font-weight:600;
+    display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+  .tw-sub{font-size:12px;color:#8fa3ba;font-weight:400}
+  .tw-slots{display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px}
+  .slot{border-radius:8px;padding:9px 6px;text-align:center;
+    border:1px solid #2c394c;background:#0d141e}
+  .slot .id{font-size:15px;font-weight:650}
+  .slot .st{font-size:11px;margin-top:2px}
+  .slot.free{background:#12301f;border-color:#2b6b45}
+  .slot.free .st{color:#8ef0b5}
+  .slot.busy{background:#33161c;border-color:#7a3540}
+  .slot.busy .st{color:#ffb3b3}
+  .slot.unk{background:#1b222c;border-color:#3b4a5e}
+  .slot.unk .st{color:#9fb0c4}
+  .tw-legend{display:flex;gap:14px;margin-top:10px;font-size:12px;
+    color:#9fb0c4;flex-wrap:wrap}
+  .tw-legend i{display:inline-block;width:10px;height:10px;border-radius:3px;
+    margin-right:5px;vertical-align:-1px}
+  .tw-legend i.free{background:#2b6b45}
+  .tw-legend i.busy{background:#7a3540}
+  .tw-legend i.unk{background:#3b4a5e}
+  .tw-chain{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .step{border-radius:7px;padding:6px 9px;font-size:12px;background:#0d141e;
+    border:1px solid #2c394c;white-space:nowrap}
+  .step.good{border-color:#2b6b45;color:#8ef0b5}
+  .step.warn{border-color:#7a5a2a;color:#ffd79a}
+  .step.bad{border-color:#7a3540;color:#ffb3b3}
+  .step .n{display:block;font-size:10px;color:#8fa3ba}
+  .arrow{color:#5a6d84;font-size:13px}
+  .tw-note{margin-top:9px;font-size:12px;color:#aebcd0;min-height:16px}
+  .tw-kv{display:grid;grid-template-columns:auto 1fr;gap:5px 12px;
+    font-size:12.5px;align-items:baseline}
+  .tw-kv .k{color:#8fa3ba}
+  .tw-kv .v{color:#edf3fa}
+</style>"""
+
+
+# ---------------------------------------------------------------- HTML
+
+HTML_ANCHOR = "<main id=\"grid-root\"></main>"
+
+HTML_NEW = """<section id="tower">
+  <div class="tw-row" id="twTiles"></div>
+  <div class="tw-panels">
+    <div class="tw-card">
+      <h3><span>주차면 현황</span><span class="tw-sub" id="twSlotSub">확인 중…</span></h3>
+      <div class="tw-slots" id="twSlots"></div>
+      <div class="tw-legend">
+        <span><i class="free"></i>빈자리</span>
+        <span><i class="busy"></i>점유</span>
+        <span><i class="unk"></i>미관측 — 카메라가 못 본 칸</span>
+      </div>
+    </div>
+    <div class="tw-card">
+      <h3><span>CCTV 파이프라인</span><span class="tw-sub" id="twChainSub">—</span></h3>
+      <div class="tw-chain" id="twChain"></div>
+      <div class="tw-note" id="twChainNote">—</div>
+    </div>
+    <div class="tw-card">
+      <h3><span>로봇 · 미션</span><span class="tw-sub" id="twRobotSub">—</span></h3>
+      <div class="tw-kv" id="twRobots"></div>
+    </div>
+  </div>
+</section>
+<main id="grid-root"></main>"""
+
+
+# ---------------------------------------------------------------- JS
+
+JS_FN_ANCHOR = "async function tick(){"
+
+JS_FN_NEW = r"""function twTile(k, v, s, cls){
+  return '<div class="tw-tile ' + cls + '"><div class="k">' + k + '</div>'
+       + '<div class="v">' + v + '</div><div class="s">' + s + '</div></div>';
+}
+
+function twStep(name, label, cls){
+  return '<div class="step ' + cls + '"><span class="n">' + name + '</span>'
+       + label + '</div>';
+}
+
+// 관제탑은 판정을 새로 하지 않는다. /api/info 가 이미 실어 보낸 값을
+// 사람이 읽는 순서로 다시 배치할 뿐이다.
+function renderTower(info){
+  const cams = info.cameras || [];
+  const alive = cams.filter(c => c.alive);
+  const sl = info.slots || {};
+  const items = (sl.ready && sl.items) ? sl.items : [];
+  const free = items.filter(x => x.observed && !x.occupied);
+  const busy = items.filter(x => x.observed && x.occupied);
+  const unk  = items.filter(x => !x.observed);
+  const y = info.yolo || {};
+  const g = info.guidance || {};
+  const rp = info.relative_pose || {};
+  const roles = Object.keys(g.robots || {});
+
+  // ---- 상태 타일 ----
+  let tiles = '';
+  tiles += twTile('카메라 인식',
+    alive.length + ' / ' + cams.length,
+    alive.length ? alive.map(c => esc(c.label) + ' ' + c.fps.toFixed(0) + 'fps')
+                       .join(' · ')
+                 : '수신 없음',
+    !cams.length ? 'bad' : (alive.length === cams.length ? 'good'
+                            : (alive.length ? 'warn' : 'bad')));
+
+  // YOLO 가 죽은 뒤에도 직전 검출이 payload 에 남을 수 있다. 그 숫자를
+  // 그대로 띄우면 "잡히고 있다"는 오해를 준다.
+  const detN = cams.reduce((s,c) => s + (c.detections || []).length, 0);
+  tiles += twTile('차량 검출',
+    y.ready ? detN + '대' : '—',
+    y.ready ? ('담당 ' + (y.active || '전체')
+               + (y.scanning ? ' (스캔 중)' : ''))
+            : ('YOLO ' + (y.error || '비활성')),
+    y.ready ? (detN ? 'good' : '') : 'bad');
+
+  tiles += twTile('빈자리',
+    sl.ready ? (free.length + ' / ' + items.length) : '—',
+    !sl.ready ? 'layout 또는 homography 없음'
+      : (free.length ? free.map(x => esc(x.id)).join(', ') : '없음')
+        + (unk.length ? ' · 미관측 ' + unk.length : ''),
+    !sl.ready ? 'bad' : (unk.length ? 'warn' : (free.length ? 'good' : '')));
+
+  const missionKo = {park:'입차', retrieve:'출차'}[g.mission] || null;
+  tiles += twTile('미션',
+    missionKo || '대기',
+    g.distance_m !== null && g.distance_m !== undefined
+      ? (esc(g.goal) + '까지 ' + (g.distance_m * 100).toFixed(0) + ' cm')
+      : (g.reason || '—'),
+    missionKo ? (g.distance_m === null ? 'warn' : 'good') : '');
+  document.getElementById('twTiles').innerHTML = tiles;
+
+  // ---- 주차면 현황판 ----
+  const box = document.getElementById('twSlots');
+  if(!sl.ready){
+    box.innerHTML = '<div class="tw-note">슬롯 정보 없음 — '
+      + 'parking_layout.yaml 과 homography 를 확인하세요.</div>';
+    document.getElementById('twSlotSub').textContent = '준비 안 됨';
+  } else {
+    box.innerHTML = items.map(x => {
+      const cls = !x.observed ? 'unk' : (x.occupied ? 'busy' : 'free');
+      const st  = !x.observed ? '미관측' : (x.occupied ? '점유' : '빈자리');
+      return '<div class="slot ' + cls + '"><div class="id">' + esc(x.id)
+           + '</div><div class="st">' + st + '</div></div>';
+    }).join('');
+    document.getElementById('twSlotSub').textContent =
+      '빈 ' + free.length + ' · 점유 ' + busy.length
+      + (unk.length ? ' · 미관측 ' + unk.length : '')
+      + ' · 겹침판정 ' + (sl.overlap_threshold * 100).toFixed(0) + '%';
+  }
+
+  // ---- 파이프라인 체인 ----
+  // 앞 단계가 막히면 뒤 단계 초록은 의미가 없다. 막힌 첫 지점을 알리려고
+  // 단계를 순서대로 늘어놓는다.
+  const bev = info.bev || {};
+  const steps = [];
+  steps.push(['카메라',
+    alive.length + '/' + cams.length,
+    alive.length === cams.length && cams.length ? 'good'
+      : (alive.length ? 'warn' : 'bad')]);
+  const mismatch = cams.filter(c => c.alive && c.calib_width &&
+    (c.width !== c.calib_width || c.height !== c.calib_height));
+  steps.push(['해상도',
+    mismatch.length ? '불일치 ' + mismatch.length : '일치',
+    mismatch.length ? 'warn' : 'good']);
+  steps.push(['BEV 정합',
+    bev.ready ? (bev.cameras || []).length + '대' : '없음',
+    bev.ready ? 'good' : 'bad']);
+  steps.push(['YOLO',
+    y.ready ? detN + '검출' : '비활성',
+    y.ready ? 'good' : 'bad']);
+  steps.push(['슬롯 판정',
+    sl.ready ? (items.length - unk.length) + '/' + items.length + ' 관측'
+             : '없음',
+    !sl.ready ? 'bad' : (unk.length ? 'warn' : 'good')]);
+  steps.push(['안내',
+    (g.distance_m !== null && g.distance_m !== undefined) ? '산출됨' : '대기',
+    (g.distance_m !== null && g.distance_m !== undefined) ? 'good'
+      : (g.mission ? 'warn' : '')]);
+  document.getElementById('twChain').innerHTML = steps
+    .map(s => twStep(s[0], s[1], s[2]))
+    .join('<span class="arrow">›</span>');
+
+  // 끊긴 것(bad)과 주의(warn)는 말을 다르게 한다. 미관측 한 칸 때문에
+  // "막혀 있다"고 하면 실제 정지 상황과 구분이 안 된다.
+  const stopped = steps.find(s => s[2] === 'bad');
+  const caution = steps.find(s => s[2] === 'warn');
+  document.getElementById('twChainNote').innerHTML = stopped
+    ? '<span class="err">' + esc(stopped[0]) + ' 단계에서 끊겼습니다.</span>'
+      + (g.reason ? ' · ' + esc(g.reason) : '')
+    : (caution
+        ? '<span class="warn">' + esc(caution[0]) + ' 단계 주의</span>'
+          + (g.reason ? ' · ' + esc(g.reason) : '')
+        : '<span class="ok">전 구간 정상</span>');
+  document.getElementById('twChainSub').textContent =
+    (y.switch_mode === 'off' ? '전환 끔'
+     : y.switch_mode === 'region' ? '구역 전환'
+     : y.switch_mode === 'mission' ? '미션 전환' : y.switch_mode || '');
+
+  // ---- 로봇 · 미션 ----
+  let kv = '';
+  const ko = {front:'Front', rear:'Rear'};
+  ['front','rear'].forEach(role => {
+    const p = (g.robots || {})[role];
+    kv += '<div class="k">' + (ko[role] || role) + ' 마커</div><div class="v">'
+       + (p ? p[0].toFixed(2) + ', ' + p[1].toFixed(2) + ' m'
+            : '<span class="err">미검출</span>') + '</div>';
+  });
+  if(rp.configured){
+    kv += '<div class="k">Rear→Front</div><div class="v">'
+       + (rp.fresh && rp.visible !== false
+          ? (rp.forward_m * 100).toFixed(1) + ' cm · 좌우 '
+            + (rp.lateral_m * 100).toFixed(1) + ' cm · '
+            + rp.yaw_deg.toFixed(1) + '°'
+          : (rp.visible === false ? '<span class="err">마커 미검출</span>'
+                                  : '<span class="warn">수신 대기</span>'))
+       + '</div>';
+  }
+  kv += '<div class="k">미션</div><div class="v">'
+     + (missionKo || '대기')
+     + (g.forced ? ' <span class="warn">(수동 지정)</span>' : '')
+     + '</div>';
+  if(g.goal){
+    kv += '<div class="k">목적지</div><div class="v">' + esc(g.goal) + '</div>';
+  }
+  if(g.distance_m !== null && g.distance_m !== undefined){
+    kv += '<div class="k">남은 거리</div><div class="v">'
+       + (g.distance_m * 100).toFixed(0) + ' cm · 방위 '
+       + g.heading_deg.toFixed(0) + '°</div>';
+  }
+  if(g.reason){
+    kv += '<div class="k">사유</div><div class="v warn">'
+       + esc(g.reason) + '</div>';
+  }
+  document.getElementById('twRobots').innerHTML = kv;
+  document.getElementById('twRobotSub').textContent =
+    roles.length + ' / 2 마커';
+}
+
+async function tick(){"""
+
+JS_CALL_ANCHOR = "  if((++BEVTICK % 3) === 0) refreshBev();"
+
+JS_CALL_NEW = """  try { renderTower(info); } catch(e){ /* 관제탑 실패가 영상을 막지 않게 */ }
+
+  if((++BEVTICK % 3) === 0) refreshBev();"""
+
+
+TITLE_ANCHOR = "<h1>천장 카메라 프리뷰</h1>"
+TITLE_NEW = "<h1>CCTV 관제탑</h1>"
+
+
+EDITS = [
+    (CSS_ANCHOR, CSS_NEW),
+    (HTML_ANCHOR, HTML_NEW),
+    (JS_FN_ANCHOR, JS_FN_NEW),
+    (JS_CALL_ANCHOR, JS_CALL_NEW),
+    (TITLE_ANCHOR, TITLE_NEW),
+]
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        print(__doc__)
+        return 2
+    path = Path(sys.argv[1]).expanduser().resolve()
+    if not path.is_file():
+        raise SystemExit(f"file not found: {path}")
+    text = io.open(path, encoding="utf-8").read()
+
+    if "renderTower" in text:
+        print("skip (already applied)")
+        return 0
+
+    for old, new in EDITS:
+        count = text.count(old)
+        if count != 1:
+            raise SystemExit(
+                f"anchor found {count} times, expected 1:\n{old[:90]!r}")
+        text = text.replace(old, new, 1)
+
+    io.open(path, "w", encoding="utf-8").write(text)
+    print(f"patched: {path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -27,6 +27,20 @@ queue로 직접 이동한다. 시작점이 차량 뒤 보호경계 밖이 아니
   `WAIT_FRONT_ALIGNED → SCAN_IN(첫 축 선택) → CENTER_AXLE → ALIGNED`.
 - RETURN: `EXIT_UNDERBODY → EXIT_TO_SIDE → RETURN_HOME → RETURNED`
 
+## 정렬 후 정지 commissioning 모드
+
+차량 하부 진입만 검증할 때 Front와 Rear launch에
+`stop_after_align:=true`를 함께 지정한다. 이 모드에서는 각 로봇이
+`wheel_aligned=true`에 도달한 뒤 `robot_state=ALIGN`,
+`motion_phase=ALIGNED`에서 0속도를 유지하고 `/{role}/aligned_hold=true`를
+발행한다. 상태기는 `LIFT` ready/commit을 발행하지 않으며, 같은 mission의 외부
+`LIFT` commit도 무시하므로 grip·lift·drive 단계로 진행하지 않는다.
+
+운용 성공 조건은 `/front/aligned_hold`와 `/rear/aligned_hold`가 모두 `true`이고,
+양쪽 `cmd_vel`과 실제 바퀴가 정지했으며 `/mission/commit`에 `LIFT`가 없는 것이다.
+이 상태에는 자동 이탈이 없으므로 차량을 들어 올리지 말고, 별도로 검증된 수동
+회수 절차로 두 로봇을 꺼낸다.
+
 현재 phase는 `/{role}/motion_phase`에 발행한다. 이동 노드가 고정한 차량
 좌표계는 `/{role}/active_target_pose`로 초음파 노드에 전달하므로, CCTV의
 후속 jitter가 스캔 좌표계를 바꾸지 않는다.

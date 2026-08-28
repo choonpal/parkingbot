@@ -102,6 +102,7 @@ def park_request_harness(registry=None):
     fleet.front_motion_fault = ''
     fleet.rear_motion_fault = ''
     fleet.ui_park_approved = False
+    fleet.target_ready = True
     fleet.require_valid_vehicle_spec = False
     fleet.ui_approved_time = 0.0
     fleet.ui_request_id = ''
@@ -112,6 +113,101 @@ def park_request_harness(registry=None):
     fleet.publish_state = lambda: None
     fleet.get_logger = lambda: SimpleNamespace(info=lambda *args: None)
     return fleet
+
+
+def wait_target_harness():
+    fleet = FleetManagerNode.__new__(FleetManagerNode)
+    fleet.state = 'WAIT_TARGET'
+    fleet.target_ready = False
+    fleet.target_ready_since_ns = 0
+    fleet.target_pose = object()
+    fleet.target_candidate_receipt_time = time.monotonic()
+    fleet.target_candidate_timeout = 10.0
+    fleet.ui_park_approved = True
+    fleet.ui_approved_time = time.monotonic()
+    fleet.ui_request_timeout = 10.0
+    fleet.ui_request_id = 'park-request'
+    fleet.request_status = {
+        'request_id': 'park-request', 'type': 'park',
+        'status': 'ACCEPTED', 'reason': ''}
+    fleet.requested_destination_slot_id = 'A1'
+    fleet.active_vehicle_number = VEHICLE_NUMBER
+    fleet.active_parking_credential = ParkingCredential.create(PASSWORD)
+    fleet.active_vehicle_spec = dict(SPEC)
+    fleet.require_valid_vehicle_spec = False
+    fleet.require_ui_confirmation = True
+    fleet.mission_id = ''
+    fleet.mission_type = ''
+    fleet.publish_count = 0
+    fleet.publish_state = lambda: setattr(
+        fleet, 'publish_count', fleet.publish_count + 1)
+    fleet._reset_planning_diagnostics = lambda: None
+    fleet.get_clock = lambda: SimpleNamespace(
+        now=lambda: SimpleNamespace(nanoseconds=2_000_000_000))
+    fleet.get_logger = lambda: SimpleNamespace(
+        info=lambda *args: None, warn=lambda *args, **kwargs: None)
+    return fleet
+
+
+def test_wait_target_requires_target_ready_before_starting_park():
+    fleet = wait_target_harness()
+
+    FleetManagerNode.manage_loop(fleet)
+
+    assert fleet.state == 'WAIT_TARGET'
+    assert fleet.mission_id == ''
+    assert fleet.target_pose is None
+    assert not fleet.ui_park_approved
+    assert fleet.request_status['status'] == 'REJECTED'
+    assert fleet.request_status['reason'] == 'TARGET_NOT_READY'
+
+
+def test_target_ready_false_clears_candidate_and_pending_approval_only_in_wait():
+    fleet = wait_target_harness()
+
+    FleetManagerNode.target_ready_cb(fleet, SimpleNamespace(data=False))
+
+    assert fleet.target_pose is None
+    assert fleet.target_candidate_receipt_time is None
+    assert not fleet.ui_park_approved
+    assert fleet.requested_destination_slot_id == ''
+    assert fleet.active_vehicle_number == ''
+    assert fleet.active_parking_credential is None
+
+    active = wait_target_harness()
+    active.state = 'WAIT_LIFT'
+    active.mission_type = 'retrieve'
+    target = active.target_pose
+    FleetManagerNode.target_ready_cb(active, SimpleNamespace(data=False))
+    assert active.state == 'WAIT_LIFT'
+    assert active.target_pose is target
+    assert active.ui_park_approved
+
+
+def test_recovery_requires_new_target_pose_before_park_starts():
+    fleet = wait_target_harness()
+    FleetManagerNode.target_ready_cb(fleet, SimpleNamespace(data=False))
+    FleetManagerNode.target_ready_cb(fleet, SimpleNamespace(data=True))
+    fleet.ui_park_approved = True
+    fleet.target_gate = SimpleNamespace(accept=lambda *_args: (True, ''))
+
+    old_pose = SimpleNamespace(
+        header=SimpleNamespace(
+            stamp=Time(nanoseconds=1_900_000_000).to_msg(), frame_id='map'))
+    FleetManagerNode.target_cb(fleet, old_pose)
+
+    FleetManagerNode.manage_loop(fleet)
+    assert fleet.state == 'WAIT_TARGET'
+    assert fleet.target_pose is None
+
+    pose = SimpleNamespace(
+        header=SimpleNamespace(
+            stamp=Time(nanoseconds=2_100_000_000).to_msg(), frame_id='map'))
+    FleetManagerNode.target_cb(fleet, pose)
+    FleetManagerNode.manage_loop(fleet)
+
+    assert fleet.state == 'WAIT_LIFT'
+    assert fleet.mission_type == 'park'
 
 
 def test_park_request_binds_vehicle_password_and_requested_empty_slot():

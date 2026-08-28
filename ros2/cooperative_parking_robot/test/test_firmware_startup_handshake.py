@@ -203,9 +203,16 @@ static void test_estop_and_noncommunication_fault_survive_hello(void) {
     reset_robot();
     command("HELLO,1,badversion00000");
     expect_last("ERR,BAD_HELLO\n");
+    assert(g_robot.safety_fault_latched == 0U);
+    command("HELLO,2,bbbbbbbbbbbbbbbb");
+    expect_last("ACK,HELLO:2:bbbbbbbbbbbbbbbb\n");
+
+    reset_robot();
+    QueueError("WHEEL_DIR_MISMATCH");
+    UART_SendPending();
     assert(g_robot.safety_fault_latched == 1U);
     command("HELLO,2,bbbbbbbbbbbbbbbb");
-    expect_last("ERR,BAD_HELLO\n");
+    expect_last("ERR,WHEEL_DIR_MISMATCH\n");
 }
 
 static void test_complete_line_transport(void) {
@@ -216,8 +223,13 @@ static void test_complete_line_transport(void) {
     UART_SendPending();
     UART_SendEncoders();
     UART_SendTelemetry();
+    Ultrasonic_SetEnabled(true);
     QueueUltrasonic(ULTRA_LEFT, 123);
     QueueUltrasonic(ULTRA_RIGHT, -1);
+    UART_SendUltrasonicPending();
+    assert(tx_count == 6);
+    Ultrasonic_SetEnabled(false);
+    QueueUltrasonic(ULTRA_LEFT, 321);
     UART_SendUltrasonicPending();
     assert(tx_count == 6);
     for (int index = 0; index < tx_count; index++) {
@@ -329,3 +341,12 @@ def test_firmware_has_one_serialized_uart_writer():
     assert source.count('HAL_UART_Transmit(') == 1
     assert 'UART_ProcessPendingCommands();' in source
     assert 'UART_QueueRxCommand(uart_rx_buf);' in source
+
+
+def test_bad_servo_attach_is_recoverable_before_pwm_attach():
+    source = (FIRMWARE_DIR / 'parking_robot_firmware.c').read_text()
+    assert 'strcmp(code, "BAD_SERVO_ATTACH") == 0' in source
+    attach = source.index('} else if (strncmp(cmd, "S,attach,", 9) == 0)')
+    bad = source.index('QueueError("BAD_SERVO_ATTACH")', attach)
+    pwm = source.index('HAL_TIM_PWM_Start(&htim10', attach)
+    assert bad < pwm

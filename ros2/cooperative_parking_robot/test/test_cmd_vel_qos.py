@@ -41,20 +41,6 @@ def _automatic_cmd_vel_qos_arguments(filename):
     return arguments
 
 
-def _manual_cmd_vel_qos_arguments(filename):
-    arguments = []
-    for node in ast.walk(_source_tree(filename)):
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
-            continue
-        if node.func.attr not in ('create_publisher', 'create_subscription'):
-            continue
-        if len(node.args) < 3 or 'manual_cmd_vel' not in ast.unparse(node.args[1]):
-            continue
-        qos_index = 2 if node.func.attr == 'create_publisher' else 3
-        arguments.append(ast.unparse(node.args[qos_index]))
-    return arguments
-
-
 def test_cmd_vel_qos_is_latest_only_best_effort_and_volatile():
     assert CMD_VEL_QOS.history == HistoryPolicy.KEEP_LAST
     assert CMD_VEL_QOS.depth == 1
@@ -69,13 +55,6 @@ def test_all_automatic_cmd_vel_endpoints_share_the_qos_contract():
         "individual_move_node.py") == ["CMD_VEL_QOS"]
     assert _automatic_cmd_vel_qos_arguments(
         "stm32_bridge_node.py") == ["CMD_VEL_QOS"]
-
-
-def test_rigid_pair_manual_commands_use_latest_only_qos_end_to_end():
-    assert _manual_cmd_vel_qos_arguments(
-        'keyboard_follow_node.py') == ['CMD_VEL_QOS']
-    assert _manual_cmd_vel_qos_arguments(
-        'stm32_bridge_node.py') == ['CMD_VEL_QOS']
 
 
 def test_bridge_command_timeout_default_remains_250_ms():

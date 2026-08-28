@@ -712,13 +712,23 @@ class JetsonVisionWebNode(Node):
                 target_status = json.loads(target_status_raw)
             except (TypeError, ValueError):
                 target_status, target_status_fresh = {}, False
+        status_stream_unavailable = (
+            target_status_raw is not None and not target_status_fresh)
         target_state = str(target_status.get('state', '')).upper()
-        if target_state not in ('ABSENT', 'DETECTING', 'READY'):
+        perception_unavailable = (
+            status_stream_unavailable or
+            target_state == 'PERCEPTION_UNAVAILABLE')
+        if perception_unavailable:
+            target_state = 'PERCEPTION_UNAVAILABLE'
+            target_ready = False
+        elif target_state not in (
+                'ABSENT', 'DETECTING', 'READY',
+                'PERCEPTION_UNAVAILABLE'):
             target_state = 'READY' if target_ready else 'ABSENT'
         # /parking/target_ready remains the authoritative safety gate. A
         # slightly newer status message must never make the UI claim READY
         # while the Bool gate is false.
-        if target_ready:
+        if target_ready and not perception_unavailable:
             target_state = 'READY'
         elif target_state == 'READY':
             target_state = (
@@ -799,7 +809,7 @@ class JetsonVisionWebNode(Node):
         parking_spaces, site_layout = self._site_layout_payload(
             fleet, parking_slots)
         site_layout['vehicle_state'] = target_state
-        site_layout['vehicle_present'] = target_state != 'ABSENT'
+        site_layout['vehicle_present'] = target_state in ('DETECTING', 'READY')
 
         if fault is not None:
             banner = f"오류: {fault['source']} — {fault['reason']}"
@@ -825,6 +835,8 @@ class JetsonVisionWebNode(Node):
             banner = '일부 노드와 통신이 끊겼습니다'
         elif not target_ready:
             banner = (
+                '카메라 인식 일시 중단 — 인식 확인 중'
+                if target_state == 'PERCEPTION_UNAVAILABLE' else
                 '차량 감지 중 — 정차 확인까지 잠시 기다려 주세요'
                 if target_state == 'DETECTING'
                 else '대기공간에 차량을 x축 방향으로 세워 주세요')

@@ -459,7 +459,8 @@ def test_fleet_dds_inputs_produce_correlated_registered_slot_plan(tmp_path):
     slot_poses = []
     try:
         _assert_scoped(
-            fleet, '/parking/target_pose', '/parking/empty_slots',
+            fleet, '/parking/target_pose', '/parking/target_ready',
+            '/parking/empty_slots',
             '/parking/map', '/robot/lifted', '/parking/vehicle_spec',
             '/ui/mission_request', '/mission/complete', '/mission/commit',
             '/sync/error_state', '/front/odom', '/rear/odom',
@@ -467,6 +468,8 @@ def test_fleet_dds_inputs_produce_correlated_registered_slot_plan(tmp_path):
             '/front/motion_fault', '/rear/motion_fault',
             '/virtual_robot/waypoints', '/fleet/state', '/parking/slot_pose')
         pub_target = feeder.create_publisher(PoseStamped, '/parking/target_pose', 10)
+        pub_target_ready = feeder.create_publisher(
+            Bool, '/parking/target_ready', 10)
         pub_slots = feeder.create_publisher(PoseArray, '/parking/empty_slots', 10)
         pub_map = feeder.create_publisher(OccupancyGrid, '/parking/map', 10)
         pub_spec = feeder.create_publisher(
@@ -483,6 +486,7 @@ def test_fleet_dds_inputs_produce_correlated_registered_slot_plan(tmp_path):
             executor.add_node(node)
 
         assert pub_target.topic_name == _test_topic('/parking/target_pose')
+        assert pub_target_ready.topic_name == _test_topic('/parking/target_ready')
         assert pub_slots.topic_name == _test_topic('/parking/empty_slots')
         assert pub_map.topic_name == _test_topic('/parking/map')
         assert pub_spec.topic_name == _test_topic('/parking/vehicle_spec')
@@ -494,6 +498,7 @@ def test_fleet_dds_inputs_produce_correlated_registered_slot_plan(tmp_path):
             executor,
             lambda: (
                 pub_target.get_subscription_count() == 1 and
+                pub_target_ready.get_subscription_count() == 1 and
                 pub_slots.get_subscription_count() == 1 and
                 pub_map.get_subscription_count() == 1 and
                 pub_spec.get_subscription_count() == 1 and
@@ -502,6 +507,12 @@ def test_fleet_dds_inputs_produce_correlated_registered_slot_plan(tmp_path):
                 fleet.pub_waypoints.get_subscription_count() == 1 and
                 fleet.pub_slot_pose.get_subscription_count() == 1),
         ), 'DDS discovery did not complete'
+
+        # Latest main fails closed until perception explicitly announces a
+        # usable target.  Publish readiness first so the subsequently stamped
+        # target cannot predate target_ready_since_ns.
+        pub_target_ready.publish(Bool(data=True))
+        assert _spin_until(executor, lambda: fleet.target_ready)
 
         sequence = 0
         def plan_inputs_delivered():

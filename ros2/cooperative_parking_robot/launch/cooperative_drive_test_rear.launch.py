@@ -51,13 +51,17 @@ def generate_launch_description():
                 Path.home() / 'ov2710_calib_23mm_white.npz')),
         DeclareLaunchArgument(
             'image_topic', default_value='/rear/marker_camera/image'),
-        DeclareLaunchArgument('width', default_value='640'),
-        DeclareLaunchArgument('height', default_value='480'),
+        DeclareLaunchArgument('width', default_value='1280'),
+        DeclareLaunchArgument('height', default_value='720'),
         DeclareLaunchArgument('fps', default_value='12.0'),
-        DeclareLaunchArgument('marker_size_m', default_value='0.05'),
+        DeclareLaunchArgument(
+            'marker_size_m', default_value='0.10',
+            description='Front rear-face ID0 black-square side length'),
         DeclareLaunchArgument('yaw_offset_deg', default_value='0.0'),
         DeclareLaunchArgument('yaw_sign', default_value='1.0'),
         DeclareLaunchArgument('gray_gain', default_value='1.0'),
+        DeclareLaunchArgument(
+            'aruco_min_marker_distance_rate', default_value='0.02'),
         DeclareLaunchArgument('wheel_radius', default_value='0.05'),
         DeclareLaunchArgument('encoder_ppr', default_value='5182.0'),
         DeclareLaunchArgument('lx', default_value='0.10'),
@@ -143,6 +147,8 @@ def generate_launch_description():
                 'yaw_offset_deg': _float('yaw_offset_deg'),
                 'yaw_sign': _float('yaw_sign'),
                 'gray_gain': _float('gray_gain'),
+                'min_marker_distance_rate': _float(
+                    'aruco_min_marker_distance_rate'),
                 'allow_uncalibrated': False,
             }],
             output='screen'),
@@ -164,7 +170,12 @@ def generate_launch_description():
                 'enable_aruco': True,
                 'aruco_dict': 'DICT_4X4_50',
                 'marker_size_m': _float('marker_size_m'),
-                'aruco_every_n': 1,
+                'aruco_min_marker_distance_rate': _float(
+                    'aruco_min_marker_distance_rate'),
+                # The control tracker keeps all 12 Hz frames. The browser
+                # overlay is diagnostic-only, so detect at 6 Hz to avoid a
+                # second full-core 720p ArUco workload on Raspberry Pi 4.
+                'aruco_every_n': 2,
                 'relative_pose_topic': '/sync/relative_pose',
                 'marker_visible_topic': '/sync/marker_visible',
                 'enable_bev': False,

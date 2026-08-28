@@ -31,6 +31,8 @@ robot-2 **Front**와 robot-1 **Rear**를 ArUco로 정렬한 뒤, 두 로봇을 �
 | Rear serial | `/dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066AFF485270535067112511-if02` |
 | Rear camera | `/dev/v4l/by-path/platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.1:1.0-video-index0` |
 | Rear calibration | `/home/robot/ov2710_calib_23mm_white.npz` |
+| Rear camera mode | `1280x720 @ 12 fps` |
+| Front rear-face marker | `DICT_4X4_50 ID0`, black square `0.10 m` |
 
 IP는 DHCP로 바뀌므로 SSH와 웹 접속에는 항상 `*.local` 이름을 사용합니다.
 
@@ -98,6 +100,7 @@ ros2 launch cooperative_parking_robot cooperative_drive_test_rear.launch.py \
   serial_port:=/dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066AFF485270535067112511-if02 \
   camera_device:=/dev/v4l/by-path/platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.1:1.0-video-index0 \
   camera_calib:=/home/robot/ov2710_calib_23mm_white.npz \
+  width:=1280 height:=720 fps:=12.0 marker_size_m:=0.10 \
   wheel_radius:=0.05 encoder_ppr:=5182.0 \
   lx:=0.2225 ly:=0.21 \
   enable_drive_test_dashboard:=false \

@@ -291,24 +291,51 @@ ros2 topic info /rear/cctv_pose --verbose | grep -c "Node name"
 ### 6-1. 웹 프리뷰 — 권장
 
 ```bash
-ros2 run cooperative_parking_robot camera_preview --ros-args \
-  -p model_path:=$(ros2 pkg prefix cooperative_parking_robot)/share/cooperative_parking_robot/models/parking_vehicle_yolo11n_seg.pt \
-  -p model_mode:=vehicle_seg \
-  -p yolo_class_ids:='[0]' \
-  -p yolo_imgsz:=640
+ros2 launch cooperative_parking_robot cctv_detection_preview.launch.py
 ```
 
-브라우저 `http://<젯슨IP>:5005/`
-VSCode 원격이면 **PORTS 탭에서 5005 forward** 후 `http://localhost:5005/`
+같은 Wi-Fi의 다른 컴퓨터에서는 브라우저로
+`http://robot-desktop.local:5008/`에 바로 접속한다. SSH나 포트 포워딩은
+필요 없다. `.local` 이름이 안 열리면 Jetson에서 `hostname -I`를 실행하고,
+첫 번째 Wi-Fi 주소를 사용해 `http://<Wi-Fi-IP>:5008/`로 접속한다.
+
+다른 네트워크에서 VSCode 원격으로 볼 때만 **PORTS** 탭에서 5008을
+forward한 뒤 `http://localhost:5008/`을 연다.
+
+이 명령은 카메라와 YOLO를 새로 띄우지 않는다. 먼저 실행한
+`site_jetson.launch.py`의 `/cctv0/image_rect`, `/cctv2/image_rect`와
+`/cctv0/detections`, `/cctv2/detections`를 읽기만 한다. 따라서 카메라 busy나
+TensorRT 모델 중복 로드가 없다.
+
+상판 ArUco의 검은 외곽 한 변은 현재 24 cm가 기본값이다. 다른 크기를 쓸
+때만 `marker_size_m`를 실제 검은 외곽 길이(m)로 덮어쓴다.
+
+```bash
+ros2 launch cooperative_parking_robot cctv_detection_preview.launch.py \
+  marker_size_m:=0.20
+```
 
 보이는 것:
 
 - 두 카메라 실시간 + 격자 + 중심 십자
 - **ArUco 마커** — 변 편차, mm/px, world 좌표. 5% 미만이면 양호
-- **YOLO 검출** — 회전사각형, 네 변 중점, 중심선 2개, 중심점, world 좌표
+- **Production 차량 검출** — 실제 sensor envelope의 윤곽·중심·world 좌표
+- **검출 상태** — 토픽, sensor ID, 수신 Hz, 데이터 지연, sequence, H 상태,
+  깨진 메시지와 순서가 뒤집힌 메시지 수
+- **차량 상세** — 신뢰도, 길이·폭, yaw, 카메라 광축 거리, WAIT 영역 여부,
+  차종 분류와 분류 휠베이스
 - **이동 거리** — 차량을 움직이면 기준점 대비 직선거리와 누적 경로
 - **BEV** — 카메라별 + 합성(색분리). 겹침이 회색이면 정합, 청록/빨강으로
   갈라지면 어긋난 것. 상관계수도 함께 표시
+
+화면에 차량이 없을 때도 각 카메라의 `Production 수신 중`, 수신 Hz와
+데이터 age가 계속 갱신되면 정상이다. `Production 수신 대기`라면 다음으로
+원본 토픽부터 확인한다.
+
+```bash
+ros2 topic echo /cctv0/detections --once
+ros2 topic echo /cctv2/detections --once
+```
 
 ### 6-2. 터미널 맵 뷰어
 

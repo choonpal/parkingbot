@@ -181,7 +181,7 @@ def test_site_aruco_measurements_are_launch_defaults():
             'cctv_server_dual.launch.py',
             'full_system.launch.py'):
         source = (launch_dir / name).read_text(encoding='utf-8')
-        assert "'marker_size_m', default_value='0.175'" in source
+        assert "'marker_size_m', default_value='0.24'" in source
         assert "'min_marker_area_px', default_value='100.0'" in source
         assert "'min_marker_area_ratio', default_value='0.0003'" in source
 

@@ -61,13 +61,15 @@ def test_current_communication_timeouts_are_hardware_faults():
         assert machine.hardware_fault == code
 
 
-def test_idle_fault_enters_fault_and_publishes_estop_without_auto_recovery():
+def test_idle_communication_fault_enters_fault_without_blocking_uart_recovery():
     source = SOURCE.read_text(encoding='utf-8')
     assert 'idle_fault_recovery_s' not in source
     assert '_idle_fault_recovered' not in source
     assert 'fault_origin_state' not in source
     state_method = _method('state_machine')
+    estop_method = _method('_fault_requires_estop')
     machine = state_method()
+    machine._fault_requires_estop = estop_method._fault_requires_estop
     machine.active_mission_id = ''
     machine.state = 'IDLE'
     machine.hardware_fault = 'ERR,HEARTBEAT_TIMEOUT'
@@ -75,8 +77,30 @@ def test_idle_fault_enters_fault_and_publishes_estop_without_auto_recovery():
     machine.transition = lambda new: setattr(machine, 'state', new)
     machine.state_machine()
     assert machine.state == 'FAULT'
+    assert machine.pub_estop.messages == []
+
+
+def test_catastrophic_hardware_fault_still_latches_estop():
+    state_method = _method('state_machine')
+    estop_method = _method('_fault_requires_estop')
+    machine = state_method()
+    machine._fault_requires_estop = estop_method._fault_requires_estop
+    machine.active_mission_id = ''
+    machine.state = 'IDLE'
+    machine.hardware_fault = 'ERR,WHEEL_DIR_MISMATCH'
+    machine.pub_estop = Publisher()
+    machine.transition = lambda new: setattr(machine, 'state', new)
+    machine.state_machine()
+    assert machine.state == 'FAULT'
     assert len(machine.pub_estop.messages) >= 2
     assert all(message.data for message in machine.pub_estop.messages)
+
+
+def test_motion_and_mission_timeout_faults_do_not_latch_estop():
+    estop_method = _method('_fault_requires_estop')
+    for fault in ('MOTION,ULTRASONIC_STALE', 'APPROACH_TIMEOUT',
+                  'ERR,CLOCK_SKEW:auto:STALE_STAMP'):
+        assert estop_method._fault_requires_estop(fault) is False
 
 
 def test_lift_while_moving_remains_a_retryable_rejection():

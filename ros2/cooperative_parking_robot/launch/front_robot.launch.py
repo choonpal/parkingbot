@@ -103,7 +103,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "require_hardware_ready", default_value="true"),
         DeclareLaunchArgument(
-            "require_ultrasonic_for_ready", default_value="true"),
+            "require_ultrasonic_for_ready", default_value="false"),
         DeclareLaunchArgument(
             "ultrasonic_frame_timeout_s", default_value="0.50"),
         DeclareLaunchArgument(

@@ -122,6 +122,7 @@ class IndividualMoveNode(Node):
         self.declare_parameter("use_ultrasonic_lateral", True)
         self.declare_parameter("ultrasonic_lateral_timeout_s", 0.30)
         self.declare_parameter("ultrasonic_lateral_yaw_gate_deg", 10.0)
+        self.declare_parameter("ultrasonic_activation_timeout_s", 1.50)
         # Retreat and retry before a drifting insertion reaches the body.
         self.declare_parameter("lateral_deviation_limit_m", 0.030)
         self.declare_parameter("lateral_deviation_n", 5)
@@ -206,6 +207,8 @@ class IndividualMoveNode(Node):
             gp("ultrasonic_lateral_timeout_s").value)
         self.us_lateral_yaw_gate = math.radians(
             float(gp("ultrasonic_lateral_yaw_gate_deg").value))
+        self.ultrasonic_activation_timeout = float(
+            gp("ultrasonic_activation_timeout_s").value)
         self.deviation_limit = float(gp("lateral_deviation_limit_m").value)
         self.deviation_n = int(gp("lateral_deviation_n").value)
         self.max_scan_retry = int(gp("max_scan_retry").value)
@@ -257,6 +260,9 @@ class IndividualMoveNode(Node):
         self.us_lateral_valid = False
         self.us_lateral_value_time = 0.0
         self.us_lateral_valid_time = 0.0
+        self.ultrasonic_ready = False
+        self.peer_ultrasonic_ready = False
+        self.ultrasonic_requested = False
         self.lateral_source = None
         self.prealign_ok_n = 0
         self.deviation_cnt = 0
@@ -321,6 +327,12 @@ class IndividualMoveNode(Node):
             Bool, f"/{self.role}/wheel_lateral_valid",
             self.us_lateral_valid_cb, SENSOR_LATEST_QOS)
         self.create_subscription(
+            Bool, f"/{self.role}/ultrasonic_ready",
+            self.ultrasonic_ready_cb, STATE_LATEST_QOS)
+        self.create_subscription(
+            Bool, f"/{self.other_role}/ultrasonic_ready",
+            self.peer_ultrasonic_ready_cb, STATE_LATEST_QOS)
+        self.create_subscription(
             PoseStamped, "/sync/relative_pose", self.relative_pose_cb,
             SENSOR_LATEST_QOS)
         self.create_subscription(
@@ -354,6 +366,8 @@ class IndividualMoveNode(Node):
             String, f"/{self.role}/motion_fault", 10)
         self.pub_active_target = self.create_publisher(
             PoseStamped, f"/{self.role}/active_target_pose", 10)
+        self.pub_ultrasonic_enable = self.create_publisher(
+            Bool, f"/{self.role}/ultrasonic_enable", 10)
 
         self.create_timer(0.05, self.move_loop)
         self.create_timer(0.5, self.publish_phase)
@@ -397,6 +411,8 @@ class IndividualMoveNode(Node):
             "centerline_tolerance_m": self.centerline_tolerance,
             "ultrasonic_lateral_timeout_s": self.us_lateral_timeout,
             "ultrasonic_lateral_yaw_gate_deg": self.us_lateral_yaw_gate,
+            "ultrasonic_activation_timeout_s":
+                self.ultrasonic_activation_timeout,
             "lateral_deviation_limit_m": self.deviation_limit,
             "center_tolerance_m": self.center_tolerance,
             "substate_timeout_s": self.substate_timeout,
@@ -470,6 +486,7 @@ class IndividualMoveNode(Node):
             return
         self.robot_state = msg.data
         if msg.data == "APPROACH":
+            self.request_ultrasonic(False, force=True)
             self.approach_sent = False
             self.return_sent = False
             self.wheel_detected = False
@@ -521,6 +538,7 @@ class IndividualMoveNode(Node):
             else:
                 self.start_exit()
         else:
+            self.request_ultrasonic(False, force=True)
             self.set_phase(msg.data)
 
     def odom_cb(self, msg):
@@ -625,6 +643,27 @@ class IndividualMoveNode(Node):
         if math.isfinite(value):
             self.wheel_center_s = value
 
+    def ultrasonic_ready_cb(self, msg):
+        self.ultrasonic_ready = bool(msg.data)
+
+    def peer_ultrasonic_ready_cb(self, msg):
+        self.peer_ultrasonic_ready = bool(msg.data)
+
+    def request_ultrasonic(self, enabled, *, force=False):
+        enabled = bool(enabled)
+        if (not force and
+                enabled == getattr(self, 'ultrasonic_requested', False)):
+            return
+        self.ultrasonic_requested = enabled
+        if not enabled:
+            self.ultrasonic_ready = False
+        publisher = getattr(self, 'pub_ultrasonic_enable', None)
+        if publisher is not None:
+            publisher.publish(Bool(data=enabled))
+            self.get_logger().info(
+                f"[{self.role}] ultrasonic "
+                f"{'enable' if enabled else 'disable'}")
+
     def front_done_cb(self, msg):
         if msg.data:
             self.front_align_done = True
@@ -718,7 +757,8 @@ class IndividualMoveNode(Node):
 
     def underbody_visual_required(self):
         return self.phase in (
-            "READY_TO_SCAN", "PRE_ALIGN", "PREALIGNED",
+            "READY_TO_SCAN", "PRE_ALIGN", "WAIT_ULTRASONIC_READY",
+            "PREALIGNED",
             "SCAN_IN", "RETREAT",
             "CENTER_AXLE", "ALIGNED")
 
@@ -843,6 +883,7 @@ class IndividualMoveNode(Node):
 
     def fault(self, reason):
         self.stop()
+        self.request_ultrasonic(False, force=True)
         if self.fault_sent:
             return
         self.fault_sent = True
@@ -1132,15 +1173,27 @@ class IndividualMoveNode(Node):
                     f"yaw={math.degrees(yaw_error):.2f}deg")
                 self.prealign_ok_n = 0
                 self.deviation_cnt = 0
+                self.request_ultrasonic(True)
+                self.set_phase("WAIT_ULTRASONIC_READY")
+            return
+
+        if self.phase == "WAIT_ULTRASONIC_READY":
+            self.command_vehicle_axis(0.0)
+            if self.ultrasonic_ready:
                 self.set_phase(
                     "PREALIGNED" if self.simultaneous_entry
                     else "SCAN_IN")
+            elif (time.monotonic() - self.phase_enter_time >=
+                  self.ultrasonic_activation_timeout):
+                self.fault("ULTRASONIC_ACTIVATION_TIMEOUT")
             return
 
         if self.phase == "PREALIGNED":
             self.command_vehicle_axis(0.0)
             if (self.peer_robot_state == "ALIGN" and
-                    self.peer_motion_phase in ("PREALIGNED", "SCAN_IN")):
+                    self.peer_motion_phase in ("PREALIGNED", "SCAN_IN") and
+                    self.ultrasonic_ready and
+                    self.peer_ultrasonic_ready):
                 self.set_phase("SCAN_IN")
             return
 
@@ -1161,6 +1214,10 @@ class IndividualMoveNode(Node):
             return
 
         if self.phase == "SCAN_IN":
+            if not self.ultrasonic_ready:
+                self.stop()
+                self.fault("ULTRASONIC_LOST_DURING_SCAN")
+                return
             if self.scan_origin_s is None:
                 self.scan_origin_s = longitudinal
             if abs(lateral) > self.deviation_limit:
@@ -1218,6 +1275,10 @@ class IndividualMoveNode(Node):
             return
 
         if self.phase == "CENTER_AXLE":
+            if not self.ultrasonic_ready:
+                self.stop()
+                self.fault("ULTRASONIC_LOST_DURING_CENTERING")
+                return
             error = self.wheel_center_s - longitudinal
             # Both final axle states require a live ID0 yaw observation.
             # Front does not check distance yet because Rear is still queued;
@@ -1235,6 +1296,7 @@ class IndividualMoveNode(Node):
                     self.command_vehicle_axis(0.0)
                     return
                 self.stop()
+                self.request_ultrasonic(False)
                 self.set_phase("ALIGNED")
                 if not self.alignment_sent:
                     self.pub_aligned.publish(Bool(data=True))

@@ -91,6 +91,17 @@ def test_camera_node_prefers_persistent_device_path_with_id_fallback():
     assert 'cv2.CAP_V4L2' in camera
 
 
+def test_camera_node_can_publish_a_rate_limited_small_preview():
+    camera = (PKG / 'opencv_camera_node.py').read_text()
+    assert "declare_parameter('preview_topic', '')" in camera
+    assert "declare_parameter('preview_width', 640)" in camera
+    assert "declare_parameter('preview_height', 360)" in camera
+    assert "declare_parameter('preview_fps', 4.0)" in camera
+    assert 'preview_frame_due(' in camera
+    assert 'interpolation=cv2.INTER_AREA' in camera
+    assert 'preview_message.header.stamp = message.header.stamp' in camera
+
+
 def test_generic_coco_model_is_not_interpreted_as_parking_classes():
     source = (PKG / 'yolo_bev_map_node.py').read_text()
     assert "declare_parameter('model_mode', 'coco')" in source

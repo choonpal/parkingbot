@@ -143,7 +143,7 @@ def generate_launch_description():
             description="비우면 V4L2, 채우면 GStreamer 파이프라인 사용"),
         DeclareLaunchArgument("rear_camera_width", default_value="1280"),
         DeclareLaunchArgument("rear_camera_height", default_value="720"),
-        DeclareLaunchArgument("rear_camera_fps", default_value="12.0"),
+        DeclareLaunchArgument("rear_camera_fps", default_value="8.0"),
         DeclareLaunchArgument(
             "camera_calib",
             default_value=str(
@@ -253,7 +253,7 @@ def generate_launch_description():
             executable="aruco_tracker",
             name="aruco_tracker_node",
             condition=IfCondition(enable_aruco),
-            parameters=[{
+            parameters=[id0_calibration, {
                 "image_topic": LaunchConfiguration("rear_camera_topic"),
                 "marker_id": 0,
                 "marker_size_m": marker_size,

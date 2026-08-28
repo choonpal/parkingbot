@@ -135,7 +135,7 @@ def generate_launch_description():
         DeclareLaunchArgument('rear_camera_gst', default_value=''),
         DeclareLaunchArgument('rear_camera_width', default_value='1280'),
         DeclareLaunchArgument('rear_camera_height', default_value='720'),
-        DeclareLaunchArgument('rear_camera_fps', default_value='12.0'),
+        DeclareLaunchArgument('rear_camera_fps', default_value='8.0'),
         DeclareLaunchArgument('model_path', default_value=default_vehicle_model),
         DeclareLaunchArgument('model_mode', default_value='vehicle_seg'),
         DeclareLaunchArgument('inference_imgsz', default_value='640'),
@@ -383,7 +383,7 @@ def generate_launch_description():
             executable='aruco_tracker',
             name='aruco_tracker_node',
             condition=IfCondition(enable_rear_aruco),
-            parameters=[{
+            parameters=[id0_calibration, {
                 'image_topic': LaunchConfiguration('rear_camera_topic'),
                 'marker_id': 0,
                 'camera_calib': LaunchConfiguration('rear_camera_calib'),

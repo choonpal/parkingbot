@@ -8,12 +8,18 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_id0_offset_has_one_config_source():
+def test_id0_aligned_pose_has_one_config_source():
     config = yaml.safe_load(
         (ROOT / 'config/id0_calibration.yaml').read_text())
-    offset = config['/**']['ros__parameters']['aruco_distance_offset_m']
-    assert offset == pytest.approx(0.570)
-    assert 0.215 + offset == pytest.approx(0.785)
+    calibration = config['/**']['ros__parameters']
+    assert calibration['aruco_distance_offset_m'] == pytest.approx(
+        0.569069426)
+    assert 0.215930574 + calibration['aruco_distance_offset_m'] == \
+        pytest.approx(0.785)
+    assert 0.012879378 + calibration['aruco_lateral_offset_m'] == \
+        pytest.approx(0.0)
+    assert -3.155371 + calibration['aruco_yaw_offset_deg'] == \
+        pytest.approx(0.0)
 
 
 @pytest.mark.parametrize(
@@ -46,6 +52,18 @@ def test_id0_calibration_is_not_passed_to_camera_node(filename):
         r"name\s*=\s*['\"]rear_marker_camera_node['\"]"
         r"[\s\S]{0,220}parameters=\[id0_calibration,")
     assert not re.search(pattern, source)
+
+
+@pytest.mark.parametrize(
+    'filename',
+    ('rear_robot.launch.py', 'full_system.launch.py'),
+)
+def test_id0_alignment_is_passed_to_aruco_tracker(filename):
+    source = (ROOT / 'launch' / filename).read_text()
+    pattern = (
+        r"executable\s*=\s*['\"]aruco_tracker['\"]"
+        r"[\s\S]{0,180}parameters=\[id0_calibration,")
+    assert re.search(pattern, source)
 
 
 def test_python_nodes_do_not_embed_measured_id0_offset():

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Regression tests for CCTV source handover and delayed correction replay."""
 
+import ast
 import math
 from pathlib import Path
 
@@ -122,11 +123,23 @@ def test_measured_geometry_and_unknown_sloped_vehicle_height():
 
 def test_production_entrypoints_are_source_aware():
     setup = (ROOT / 'setup.py').read_text()
+    string_literals = {
+        node.value for node in ast.walk(ast.parse(setup))
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
     expected = (
         'yolo_bev_map_production_node:main',
         'cctv_robot_marker_production_node:main',
         'pose_fusion_production_node:main',
-        'rigid_body_sync_vision_node:main',
+        'mvp_runtime_nodes:rigid_body_sync_main',
     )
     for value in expected:
-        assert value in setup
+        assert any(value in literal for literal in string_literals)
+
+    # The runtime wrapper owns cmd_vel only during DRIVE, but must retain the
+    # final source-aware vision controller underneath that ownership layer.
+    runtime = (
+        ROOT / 'cooperative_parking_robot/mvp_runtime_nodes.py'
+    ).read_text()
+    assert 'from cooperative_parking_robot.rigid_body_sync_vision_node import' \
+        in runtime

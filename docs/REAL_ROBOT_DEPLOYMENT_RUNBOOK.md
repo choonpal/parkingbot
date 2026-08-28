@@ -239,10 +239,10 @@ bash tools/install_robot_commands.sh
 ```
 
 Installer는 shell startup file을 수정하지 않는다. 최초 한 번
-`~/.config/parkingbot/production_hosts.env`에 검증된 SSH host, 세 장비와 운용
+`~/.config/parkingbot/production_hosts.env`에 Jetson SSH host, 세 장비와 운용
 PC의 절대 colcon workspace 경로, stable device path 및 아래 launch에 필요한
-실측값을 입력한다. 저장소에는 실제 SSH 주소가 없으며 Rear=`robot-1`,
-Front=`robot-2` 역할만 확인되므로 빈 값을 추측해 채우지 않는다.
+실측값을 입력한다. 로봇은 DHCP 주소 대신 Front=`robot@robot-2.local`,
+Rear=`robot@robot-1.local`을 사용한다.
 Rear가 외부 camera driver를 쓰면 현장에서 이미 검증한 정확한 실행 명령을
 `REAR_EXTERNAL_CAMERA_COMMAND`에 넣는다. 명령을 알 수 없으면 start는 차단된다.
 

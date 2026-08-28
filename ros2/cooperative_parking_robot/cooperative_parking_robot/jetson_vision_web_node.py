@@ -245,7 +245,7 @@ class JetsonVisionWebNode(Node):
         self.declare_parameter('aruco_dict', 'DICT_4X4_50')
         self.declare_parameter('front_marker_id', 2)
         self.declare_parameter('rear_marker_id', 1)
-        self.declare_parameter('marker_size_m', 0.175)
+        self.declare_parameter('marker_size_m', 0.24)
         self.declare_parameter('min_marker_area_px', 100.0)
         self.declare_parameter('min_marker_area_ratio', 0.0003)
         self.declare_parameter(

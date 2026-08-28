@@ -10,7 +10,7 @@
 """
 from __future__ import annotations
 
-import argparse, hashlib, json, math, shutil, socket, threading, time
+import argparse, hashlib, json, math, shutil, threading, time
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -33,7 +33,7 @@ HTML = r'''<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <h2>2. 기준점</h2><div class="row"><button id="refBtn" class="active" onclick="setMode('ref')">기준점</button><button id="measureBtn" onclick="setMode('measure')">X,Y 측정</button><button id="overlapBtn" onclick="setMode('overlap')">겹침 검증</button></div>
 <div class="row"><label>Tile i <input id="ti" type="number" value="0" step="1" onchange="updateWorld()"></label><label>Tile j <input id="tj" type="number" value="0" step="1" onchange="updateWorld()"></label></div><div id="world">World=(0.000,0.000)m</div>
 <div class="row"><button class="good" onclick="addRef()">클릭점 + Tile 등록</button><button onclick="undoRef()">마지막 취소</button><button onclick="clearRefs()">현재 CAM 삭제</button></div><div id="refs" class="small">기준점 0개</div>
-<h2>3. Homography</h2><div class="row"><button id="calcBtn" class="good" onclick="calcH()">현재 CAM H 계산</button><button onclick="showPreview()">선택 CAM BEV</button><button class="primary" onclick="showComposite()">CAM0 + CAM2 합성</button><button id="saveCurrentBtn" class="warn" onclick="saveCurrent()">CAM2만 저장</button><button id="saveAllBtn" onclick="saveAll()">H0 + H2 전체 저장</button></div>
+<h2>3. Homography</h2><div class="row"><button id="calcBtn" class="good" onclick="calcH()">현재 CAM H 계산</button><button onclick="showPreview()">선택 CAM BEV</button><button class="primary" onclick="showComposite()">CAM0 + CAM2 전체 합성</button><button onclick="showOverlapDiagnostic()">겹침 진단</button><button id="saveCurrentBtn" class="warn" onclick="saveCurrent()">CAM2만 저장</button><button id="saveAllBtn" onclick="saveAll()">H0 + H2 전체 저장</button></div>
 <h2>4. 겹침 검증</h2><p class="small">H0/H2 생성 후 같은 overlap Tile(i,j)를 CAM0에서 클릭하고 CAM2에서도 같은 꼭짓점을 클릭하세요.</p><div id="overlap" class="small">검증점 없음</div>
 <h2>5. 측정 결과</h2><div style="max-height:210px;overflow:auto"><table><thead><tr><th>CAM</th><th>u</th><th>v</th><th>X</th><th>Y</th></tr></thead><tbody id="rows"></tbody></table></div>
 <h2>상태</h2><div id="status">기존 H와 스냅샷을 불러오는 중입니다.</div></section>
@@ -55,7 +55,7 @@ function renderRows(){document.getElementById('rows').innerHTML=measures.map(m=>
 function renderOverlap(){let ks=Object.keys(overlap);document.getElementById('overlap').innerHTML=ks.length?ks.map(k=>{let o=overlap[k],s=o.result?`Δcam=${(o.result.inter_camera_error_m*100).toFixed(2)}cm / Δ0=${(o.result.cam0_nominal_error_m*100).toFixed(2)} / Δ2=${(o.result.cam2_nominal_error_m*100).toFixed(2)}`:`${o.cam0?'cam0✓':'cam0-'} ${o.cam2?'cam2✓':'cam2-'}`;return`<span class="tag">T(${o.tile[0]},${o.tile[1]}) ${s}</span>`}).join(''):'검증점 없음'}
 async function calcH(){if(locked()){stat('CAM0 H는 잠겨 있습니다.',true);return}try{let r=await post(`/api/homography/${cam}`,{references:refs[cam]});ready[cam]=true;hSource[cam]='현재 세션 계산값';renderHState();stat(`${cam.toUpperCase()} H 완료\n기준점=${r.reference_count} / RANSAC 유효=${r.inlier_count}\nRMS=${(r.rms_m*100).toFixed(2)}cm / MAX=${(r.max_error_m*100).toFixed(2)}cm\n저장 전에 CAM0+CAM2 합성으로 확인하세요.`);await showComposite()}catch(e){stat(e.message,true)}}
 async function setPreview(url){try{let r=await fetch(`${url}${url.includes('?')?'&':'?'}t=${Date.now()}`);if(!r.ok){let b=await r.json().catch(()=>({error:r.statusText}));throw new Error(b.error||r.statusText)}let blob=await r.blob();if(previewUrl)URL.revokeObjectURL(previewUrl);previewUrl=URL.createObjectURL(blob);let p=document.getElementById('preview');p.src=previewUrl;p.style.display='block'}catch(e){stat(e.message,true)}}
-async function showPreview(){if(!ready[cam]){stat('현재 CAM H가 없습니다.',true);return}await setPreview(`/api/preview/${cam}.jpg`)}async function showComposite(){if(!(ready.cam0&&ready.cam2)){stat('CAM0/CAM2 H가 모두 준비되어야 합성할 수 있습니다.',true);return}if(!(snapshots.cam0&&snapshots.cam2)){stat('두 카메라 정지 영상이 필요합니다.',true);return}await setPreview('/api/composite.jpg')}
+async function showPreview(){if(!ready[cam]){stat('현재 CAM H가 없습니다.',true);return}await setPreview(`/api/preview/${cam}.jpg`)}async function showComposite(){if(!(ready.cam0&&ready.cam2)){stat('CAM0/CAM2 H가 모두 준비되어야 합성할 수 있습니다.',true);return}if(!(snapshots.cam0&&snapshots.cam2)){stat('두 카메라 정지 영상이 필요합니다.',true);return}await setPreview('/api/composite.jpg')}async function showOverlapDiagnostic(){if(!(ready.cam0&&ready.cam2)){stat('CAM0/CAM2 H가 모두 준비되어야 겹침을 진단할 수 있습니다.',true);return}await setPreview('/api/composite_diagnostic.jpg')}
 async function saveCurrent(){if(locked()){stat('CAM0 파일은 잠겨 있습니다.',true);return}if(!ready[cam]){stat('새 H를 먼저 계산하세요.',true);return}try{let r=await post(`/api/save_camera/${cam}`,{pitch_m:pitch(),origin_x_m:ox(),origin_y_m:oy(),references:refs[cam]});hSource[cam]='저장된 새 파일';renderHState();stat(`${cam.toUpperCase()}만 저장 완료\nCAM0 보존 검증: ${r.cam0_preserved?'통과':'실패'}\n${r.npy}\n이전 ${cam.toUpperCase()} 백업: ${r.backup_dir||'없음'}\n런타임 적용 전 합성 화면을 마지막으로 확인하세요.`)}catch(e){stat(e.message,true)}}
 async function saveAll(){try{let r=await post('/api/save_all',{pitch_m:pitch(),origin_x_m:ox(),origin_y_m:oy(),references:refs});stat(`전체 저장 완료\n${r.cam0_npy}\n${r.cam2_npy}\n${r.summary_json}`)}catch(e){stat(e.message,true)}}
 function draw(){ctx.clearRect(0,0,c.width,c.height);if(img.naturalWidth)ctx.drawImage(img,0,0,c.width,c.height);ctx.font='16px system-ui';refs[cam].forEach((r,i)=>mark(r.pixel,`R${i+1} T(${r.tile[0]},${r.tile[1]})`,'#48a7ff'));if(pending)mark(pending,'R?','#ffb454');measures.filter(m=>m.cam===cam).forEach(m=>mark(m.pixel,`M(${m.world[0].toFixed(2)},${m.world[1].toFixed(2)})`,'#4fd184'));Object.values(overlap).forEach(o=>{if(o[cam])mark(o[cam],`O T(${o.tile[0]},${o.tile[1]})`,'#ff75d8')})}function mark(p,t,col){ctx.beginPath();ctx.arc(p[0],p[1],7,0,Math.PI*2);ctx.fillStyle=col;ctx.fill();ctx.fillText(t,p[0]+10,p[1]-8)}
@@ -67,8 +67,11 @@ def load_calib(path: Path):
     with np.load(path, allow_pickle=False) as d:
         K=np.asarray(d['mtx'] if 'mtx' in d else d['camera_matrix'],np.float64)
         D=np.asarray(d['dist'] if 'dist' in d else d['dist_coeffs'],np.float64)
+        size = None
+        if 'image_width' in d and 'image_height' in d:
+            size = (int(d['image_width']), int(d['image_height']))
     if K.shape!=(3,3) or D.size<4: raise RuntimeError(f'잘못된 calibration: {path}')
-    return K,D
+    return K,D,size
 
 
 def parse_device(v):
@@ -77,7 +80,10 @@ def parse_device(v):
 
 class Camera:
     def __init__(self,label,device,calib,width=640,height=480,fps=30.0):
-        self.label=label;self.device=parse_device(device);self.K,self.D=load_calib(Path(calib));self.width=width;self.height=height;self.fps=fps;self.latest=None;self.error='';self.lock=threading.RLock();self.running=True;self.cap=None;threading.Thread(target=self.loop,daemon=True).start()
+        self.label=label;self.device=parse_device(device);self.K,self.D,self.calibration_size=load_calib(Path(calib));self.width=width;self.height=height;self.fps=fps;self.latest=None;self.error='';self.lock=threading.RLock();self.running=True;self.cap=None
+        if self.calibration_size is not None and self.calibration_size != (width,height):
+            raise RuntimeError(f'{label} calibration 해상도 {self.calibration_size[0]}x{self.calibration_size[1]} != 실행 해상도 {width}x{height}')
+        threading.Thread(target=self.loop,daemon=True).start()
     def open(self):
         b=cv2.CAP_V4L2 if hasattr(cv2,'CAP_V4L2') else 0;c=cv2.VideoCapture(self.device,b)
         if not c.isOpened(): c.release();c=cv2.VideoCapture(self.device)
@@ -92,7 +98,7 @@ class Camera:
                 if self.cap is None:self.error=f'카메라 열기 실패: {self.device}';time.sleep(1);continue
             ok,f=self.cap.read()
             if not ok:self.error='frame read 실패';self.cap.release();self.cap=None;time.sleep(.2);continue
-            if f.shape[1]!=self.width or f.shape[0]!=self.height:self.error=f'실제 해상도 {f.shape[1]}x{f.shape[0]} != 640x480';time.sleep(.1);continue
+            if f.shape[1]!=self.width or f.shape[0]!=self.height:self.error=f'실제 해상도 {f.shape[1]}x{f.shape[0]} != 요청 {self.width}x{self.height}';time.sleep(.1);continue
             r=cv2.undistort(f,self.K,self.D)
             with self.lock:self.latest=r;self.error=''
     def get(self):
@@ -150,9 +156,10 @@ class Tool:
         self.ppm = a.preview_ppm
         self.th = a.ransac_threshold_m
         self.port = a.port
+        self.host = a.host
         self.cam2_only = bool(a.cam2_only)
-        if (self.w, self.h) != (640, 480):
-            raise RuntimeError('포함 calibration 기준으로 640x480만 허용')
+        if self.w <= 0 or self.h <= 0:
+            raise RuntimeError('카메라 해상도는 양수여야 합니다')
         self.cams = {
             'cam0': Camera(
                 'cam0', a.cam0, a.cam0_calibration,
@@ -178,7 +185,7 @@ class Tool:
                 f'{self.out / "homography_cam0_rectified.npy"}')
         self.app = self.web()
         self.server = make_server(
-            '0.0.0.0', self.port, self.app, threaded=True)
+            self.host, self.port, self.app, threaded=True)
 
     def _load_existing_outputs(self):
         summary_path = self.out / 'dual_homography_summary.json'
@@ -263,14 +270,42 @@ class Tool:
     def _composite(self):
         warped0, mask0 = self._warp('cam0')
         warped2, mask2 = self._warp('cam2')
-        gray0 = cv2.cvtColor(warped0, cv2.COLOR_BGR2GRAY)
-        gray2 = cv2.cvtColor(warped2, cv2.COLOR_BGR2GRAY)
         canvas = np.zeros_like(warped0)
         valid0 = mask0 > 0
         valid2 = mask2 > 0
-        canvas[..., 0][valid0] = gray0[valid0]
-        canvas[..., 1][valid0] = gray0[valid0]
-        canvas[..., 2][valid2] = gray2[valid2]
+        only0 = valid0 & ~valid2
+        only2 = valid2 & ~valid0
+        overlap = valid0 & valid2
+        canvas[only0] = warped0[only0]
+        canvas[only2] = warped2[only2]
+        blended = cv2.addWeighted(warped0, 0.5, warped2, 0.5, 0.0)
+        canvas[overlap] = blended[overlap]
+        self._draw_grid(canvas)
+        union_px = int(np.count_nonzero(valid0 | valid2))
+        overlap_px = int(np.count_nonzero(overlap))
+        cv2.putText(
+            canvas, 'FULL UNION: CAM0 + CAM2  (OVERLAP 50/50)', (10, 22),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.43, (20, 20, 20), 2,
+            cv2.LINE_AA)
+        cv2.putText(
+            canvas, 'FULL UNION: CAM0 + CAM2  (OVERLAP 50/50)', (10, 22),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.43, (245, 245, 245), 1,
+            cv2.LINE_AA)
+        cv2.putText(
+            canvas,
+            f'union={union_px / (self.ppm ** 2):.2f}m2  '
+            f'overlap={overlap_px / (self.ppm ** 2):.2f}m2',
+            (10, 44), cv2.FONT_HERSHEY_SIMPLEX, 0.40,
+            (20, 20, 20), 2, cv2.LINE_AA)
+        cv2.putText(
+            canvas,
+            f'union={union_px / (self.ppm ** 2):.2f}m2  '
+            f'overlap={overlap_px / (self.ppm ** 2):.2f}m2',
+            (10, 44), cv2.FONT_HERSHEY_SIMPLEX, 0.40,
+            (235, 235, 235), 1, cv2.LINE_AA)
+        return canvas
+
+    def _draw_grid(self, canvas):
         for x_m in np.arange(0.0, self.map_w + 1e-9, 0.4):
             x = int(round(x_m * self.ppm))
             cv2.line(canvas, (x, 0), (x, canvas.shape[0] - 1),
@@ -279,6 +314,19 @@ class Tool:
             y = canvas.shape[0] - 1 - int(round(y_m * self.ppm))
             cv2.line(canvas, (0, y), (canvas.shape[1] - 1, y),
                      (80, 80, 80), 1)
+
+    def _composite_diagnostic(self):
+        warped0, mask0 = self._warp('cam0')
+        warped2, mask2 = self._warp('cam2')
+        gray0 = cv2.cvtColor(warped0, cv2.COLOR_BGR2GRAY)
+        gray2 = cv2.cvtColor(warped2, cv2.COLOR_BGR2GRAY)
+        canvas = np.zeros_like(warped0)
+        valid0 = mask0 > 0
+        valid2 = mask2 > 0
+        canvas[..., 0][valid0] = gray0[valid0]
+        canvas[..., 1][valid0] = gray0[valid0]
+        canvas[..., 2][valid2] = gray2[valid2]
+        self._draw_grid(canvas)
         overlap_px = int(np.count_nonzero(valid0 & valid2))
         cv2.putText(
             canvas, 'CAM0=CYAN  CAM2=RED  ALIGNED=GRAY', (10, 22),
@@ -419,6 +467,10 @@ class Tool:
         def composite():
             try:return self.jpg(self._composite())
             except Exception as e:return jsonify(error=str(e)),404
+        @app.get('/api/composite_diagnostic.jpg')
+        def composite_diagnostic():
+            try:return self.jpg(self._composite_diagnostic())
+            except Exception as e:return jsonify(error=str(e)),404
         @app.post('/api/save_camera/<cam>')
         def save_camera(cam):
             try:
@@ -455,17 +507,19 @@ class Tool:
             except Exception as e:return jsonify(error=str(e)),400
         return app
     def run(self):
-        ip='JETSON_IP'
-        try:s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.connect(('8.8.8.8',80));ip=s.getsockname()[0];s.close()
-        except Exception:pass
-        print('='*70);print('Dual CCTV Tile Homography GUI');print(f'Mode: {"CAM2 ONLY (CAM0 LOCKED)" if self.cam2_only else "CAM0 + CAM2"}');print(f'Jetson: http://127.0.0.1:{self.port}');print(f'Other PC: http://{ip}:{self.port}');print(f'Output: {self.out}');print('='*70)
+        print('='*70)
+        print('Dual CCTV Tile Homography GUI')
+        print(f'Mode: {"CAM2 ONLY (CAM0 LOCKED)" if self.cam2_only else "CAM0 + CAM2"}')
+        print(f'Bind: {self.host}:{self.port}')
+        print(f'Local: http://127.0.0.1:{self.port}')
+        print(f'Output: {self.out}');print('='*70)
         try:self.server.serve_forever()
         finally:
             for c in self.cams.values():c.close()
 
 
 def self_test(base):
-    for f in ('cctv0_camera_calibration.npz','cctv2_camera_calibration.npz'):K,D=load_calib(base/f);assert K.shape==(3,3) and D.size>=4
+    for f in ('cctv0_camera_calibration.npz','cctv2_camera_calibration.npz'):K,D,_=load_calib(base/f);assert K.shape==(3,3) and D.size>=4
     world=np.array([[0,0],[1.6,0],[3.2,0],[0,1.6],[1.6,1.6],[3.2,1.6],[0,3.2],[1.6,3.2],[3.2,3.2]],np.float64);Hw=np.array([[120,7,80],[4,90,50],[.01,.02,1]],np.float64);pix=cv2.perspectiveTransform(world.reshape(-1,1,2),Hw).reshape(-1,2);H,_=cv2.findHomography(pix,world,0);rest=cv2.perspectiveTransform(pix.reshape(-1,1,2),H).reshape(-1,2);assert np.linalg.norm(rest-world,axis=1).max()<1e-5
     test_path=base/'output'/'homography_cam0_rectified.npy'
     if test_path.is_file():assert load_homography(test_path).shape==(3,3)
@@ -473,7 +527,7 @@ def self_test(base):
 
 
 def main():
-    b=Path(__file__).resolve().parent;p=argparse.ArgumentParser();p.add_argument('--cam0',default='0');p.add_argument('--cam2',default='2');p.add_argument('--cam0-calibration',default=str(b/'cctv0_camera_calibration.npz'));p.add_argument('--cam2-calibration',default=str(b/'cctv2_camera_calibration.npz'));p.add_argument('--width',type=int,default=640);p.add_argument('--height',type=int,default=480);p.add_argument('--fps',type=float,default=30);p.add_argument('--port',type=int,default=5001);p.add_argument('--output-dir',default=str(b/'output'));p.add_argument('--map-width',type=float,default=4.40);p.add_argument('--map-height',type=float,default=3.83);p.add_argument('--preview-ppm',type=int,default=100);p.add_argument('--ransac-threshold-m',type=float,default=.03);p.add_argument('--cam2-only',action='store_true',help='기존 CAM0 H를 잠그고 CAM2만 재등록/저장');p.add_argument('--self-test',action='store_true');a=p.parse_args();
+    b=Path(__file__).resolve().parent;p=argparse.ArgumentParser();p.add_argument('--cam0',default='0');p.add_argument('--cam2',default='2');p.add_argument('--cam0-calibration',default=str(b/'cctv0_camera_calibration.npz'));p.add_argument('--cam2-calibration',default=str(b/'cctv2_camera_calibration.npz'));p.add_argument('--width',type=int,default=640);p.add_argument('--height',type=int,default=480);p.add_argument('--fps',type=float,default=30);p.add_argument('--host',default='127.0.0.1',help='GUI bind address (기본값은 로컬 전용)');p.add_argument('--port',type=int,default=5001);p.add_argument('--output-dir',default=str(b/'output'));p.add_argument('--map-width',type=float,default=4.40);p.add_argument('--map-height',type=float,default=3.83);p.add_argument('--preview-ppm',type=int,default=100);p.add_argument('--ransac-threshold-m',type=float,default=.03);p.add_argument('--cam2-only',action='store_true',help='기존 CAM0 H를 잠그고 CAM2만 재등록/저장');p.add_argument('--self-test',action='store_true');a=p.parse_args();
     if a.self_test:self_test(b);return
     Tool(a).run()
 if __name__=='__main__':main()

@@ -55,6 +55,9 @@ setup(
             ('drive_pulse = '
              'cooperative_parking_robot.drive_pulse_node:main'),
             'cooperative_drive_test = cooperative_parking_robot.cooperative_drive_test_node:main',
+            ('rigid_pair_teleop = '
+             'cooperative_parking_robot.rigid_pair_teleop_node:main'),
+            # Compatibility name; new launch files use rigid_pair_teleop.
             'keyboard_follow = cooperative_parking_robot.keyboard_follow_node:main',
             'calibrate_camera = cooperative_parking_robot.calibrate_camera_node:main',
             'camera_preview = cooperative_parking_robot.camera_preview_node:main',

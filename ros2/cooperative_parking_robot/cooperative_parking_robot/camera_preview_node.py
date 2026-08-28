@@ -99,6 +99,7 @@ from cooperative_parking_robot.latest_qos import (
     SENSOR_LATEST_QOS,
     STATE_LATEST_QOS,
 )
+from cooperative_parking_robot.freshness import StampGate, stamp_to_ns
 # 런타임(cctv_merge)이 쓰는 것과 **같은** 점유 판정 로직을 그대로 쓴다.
 # 프리뷰가 자체 규칙으로 판정하면 화면과 실제 발행값이 어긋난다.
 from cooperative_parking_robot.bev_fusion_core import (
@@ -303,9 +304,9 @@ async function tick(){
 
   const rp = info.relative_pose, rpb = document.getElementById('relpose');
   if(rpb && rp){
-    if(rp.fresh && rp.visible !== false){
+    if(rp.fresh && rp.visible === true){
       rpb.className = 'badge good';
-      rpb.textContent = '거리 ' + (rp.forward_m*100).toFixed(1) + ' cm'
+      rpb.textContent = 'ID0 raw 카메라→마커 ' + (rp.forward_m*100).toFixed(1) + ' cm'
         + ' · 좌우 ' + (rp.lateral_m*100).toFixed(1) + ' cm'
         + ' · 틀어짐 ' + rp.yaw_deg.toFixed(1) + '°';
     } else if(rp.visible === false){
@@ -1080,6 +1081,8 @@ class CameraPreviewNode(Node):
         # 픽셀 기반 마커 품질 수치와 구분해 웹 상단에 거리/좌우/yaw를 표시한다.
         self.declare_parameter('relative_pose_topic', '/sync/relative_pose')
         self.declare_parameter('marker_visible_topic', '/sync/marker_visible')
+        self.declare_parameter('relative_pose_frame', 'rear_base')
+        self.declare_parameter('relative_pose_future_tolerance_s', 0.10)
         # --- BEV (bird's eye view) ---
         # 카메라별 homography로 바닥을 위에서 본 그림으로 편다. 두 카메라를
         # 겹쳐 보면 H 두 개가 같은 map 좌표계를 가리키는지 눈으로 확인된다.
@@ -1199,6 +1202,13 @@ class CameraPreviewNode(Node):
         self.calib_w = int(self.get_parameter('calibration_width_px').value)
         self.calib_h = int(self.get_parameter('calibration_height_px').value)
         self.stale_after = float(self.get_parameter('stale_after_s').value)
+        if self.stale_after <= 0.0:
+            raise ValueError('stale_after_s must be positive')
+        self.relative_pose_frame = str(
+            self.get_parameter('relative_pose_frame').value)
+        self.relative_pose_gate = StampGate(
+            self.stale_after, float(self.get_parameter(
+                'relative_pose_future_tolerance_s').value))
         self.enable_aruco = bool(self.get_parameter('enable_aruco').value)
         self.marker_size_m = float(self.get_parameter('marker_size_m').value)
         if self.marker_size_m <= 0.0:
@@ -1428,6 +1438,18 @@ class CameraPreviewNode(Node):
 
     # ------------------------------------------------------------------
     def relative_pose_cb(self, msg):
+        if msg.header.frame_id != self.relative_pose_frame:
+            self.get_logger().warn(
+                f'상대 pose frame 무시: {msg.header.frame_id}',
+                throttle_duration_sec=5.0)
+            return
+        accepted, reason = self.relative_pose_gate.accept(
+            stamp_to_ns(msg.header.stamp), self.get_clock().now().nanoseconds)
+        if not accepted:
+            self.get_logger().warn(
+                f'상대 pose stamp 무시: {reason}',
+                throttle_duration_sec=5.0)
+            return
         try:
             metrics = relative_pose_metrics(msg)
         except ValueError as exc:

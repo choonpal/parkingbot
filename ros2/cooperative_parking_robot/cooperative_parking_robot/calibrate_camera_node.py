@@ -67,6 +67,14 @@ class CalibrateCameraNode(Node):
         # 옮길 시간을 강제로 확보한다.
         self.declare_parameter('min_sample_interval_s', 1.0)
         self.declare_parameter('max_rms_error_px', 1.0)
+        # 자동 수집 중 움직이는 보드/같은 자세가 연속으로 들어가는 것을
+        # 막기 위한 선택적 품질 필터. 기본값은 기존 동작과 호환된다.
+        self.declare_parameter('use_sb_detector', False)
+        self.declare_parameter('settle_time_s', 0.0)
+        self.declare_parameter('max_stable_motion_px', 2.0)
+        self.declare_parameter('min_pose_change_px', 0.0)
+        self.declare_parameter('max_pruned_samples', 0)
+        self.declare_parameter('min_retained_samples', 12)
 
         self.image_topic = str(self.get_parameter('image_topic').value)
         self.output_path = os.path.expanduser(
@@ -78,6 +86,17 @@ class CalibrateCameraNode(Node):
         self.min_interval = float(
             self.get_parameter('min_sample_interval_s').value)
         self.max_rms = float(self.get_parameter('max_rms_error_px').value)
+        self.use_sb_detector = bool(
+            self.get_parameter('use_sb_detector').value)
+        self.settle_time = float(self.get_parameter('settle_time_s').value)
+        self.max_stable_motion = float(
+            self.get_parameter('max_stable_motion_px').value)
+        self.min_pose_change = float(
+            self.get_parameter('min_pose_change_px').value)
+        self.max_pruned_samples = int(
+            self.get_parameter('max_pruned_samples').value)
+        self.min_retained_samples = int(
+            self.get_parameter('min_retained_samples').value)
 
         if self.cols < 2 or self.rows < 2:
             raise ValueError('board_cols/board_rows are inner corner counts '
@@ -89,6 +108,17 @@ class CalibrateCameraNode(Node):
             raise ValueError('square_size_m must be positive')
         if self.target_samples < 5:
             raise ValueError('target_samples must be at least 5')
+        if self.settle_time < 0.0:
+            raise ValueError('settle_time_s must be non-negative')
+        if self.max_stable_motion <= 0.0:
+            raise ValueError('max_stable_motion_px must be positive')
+        if self.min_pose_change < 0.0:
+            raise ValueError('min_pose_change_px must be non-negative')
+        if self.max_pruned_samples < 0:
+            raise ValueError('max_pruned_samples must be non-negative')
+        if not 5 <= self.min_retained_samples <= self.target_samples:
+            raise ValueError(
+                'min_retained_samples must be between 5 and target_samples')
 
         # 보드 평면(z=0)에서의 3D 코너 좌표. 모든 샘플에서 동일하다.
         objp = np.zeros((self.rows * self.cols, 3), np.float32)
@@ -100,6 +130,8 @@ class CalibrateCameraNode(Node):
         self.image_size = None
         self._last_capture = 0.0
         self._done = False
+        self._candidate_corners = None
+        self._stable_since = 0.0
 
         self.create_subscription(
             Image, self.image_topic, self.image_cb, qos_profile_sensor_data)
@@ -109,6 +141,36 @@ class CalibrateCameraNode(Node):
             f'{self.target_samples}장 수집 목표')
         self.get_logger().info(
             '보드를 화면 중앙/모서리, 정면/기울임으로 골고루 보여주세요')
+        if self.use_sb_detector:
+            self.get_logger().info('고정밀 SB 코너 검출 사용')
+        if self.settle_time > 0.0:
+            self.get_logger().info(
+                f'보드 정지 {self.settle_time:.1f}s 확인 후 수집, '
+                f'허용 움직임 {self.max_stable_motion:.1f}px')
+
+    def find_corners(self, gray):
+        """설정된 검출기로 체커보드 내부 코너를 찾는다."""
+        if self.use_sb_detector:
+            flags = (cv2.CALIB_CB_NORMALIZE_IMAGE |
+                     cv2.CALIB_CB_EXHAUSTIVE |
+                     cv2.CALIB_CB_ACCURACY)
+            found, corners = cv2.findChessboardCornersSB(
+                gray, (self.cols, self.rows), flags)
+            if found:
+                corners = np.asarray(corners, dtype=np.float32)
+            return found, corners
+
+        flags = (cv2.CALIB_CB_ADAPTIVE_THRESH |
+                 cv2.CALIB_CB_NORMALIZE_IMAGE |
+                 cv2.CALIB_CB_FAST_CHECK)
+        found, corners = cv2.findChessboardCorners(
+            gray, (self.cols, self.rows), flags)
+        if found:
+            corners = cv2.cornerSubPix(
+                gray, corners, (11, 11), (-1, -1),
+                (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER,
+                 30, 0.001))
+        return found, corners
 
     def image_cb(self, msg):
         if self._done:
@@ -130,20 +192,41 @@ class CalibrateCameraNode(Node):
             self.get_logger().error('이미지 해상도가 도중에 바뀌었습니다')
             return
 
-        flags = (cv2.CALIB_CB_ADAPTIVE_THRESH |
-                 cv2.CALIB_CB_NORMALIZE_IMAGE |
-                 cv2.CALIB_CB_FAST_CHECK)
-        found, corners = cv2.findChessboardCorners(
-            gray, (self.cols, self.rows), flags)
+        found, corners = self.find_corners(gray)
         if not found:
+            self._candidate_corners = None
             return
 
-        corners = cv2.cornerSubPix(
-            gray, corners, (11, 11), (-1, -1),
-            (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001))
+        if self.settle_time > 0.0:
+            if self._candidate_corners is None:
+                self._candidate_corners = corners.copy()
+                self._stable_since = now
+                return
+            delta = corners.reshape(-1, 2) - \
+                self._candidate_corners.reshape(-1, 2)
+            motion = float(np.sqrt(np.mean(np.sum(delta * delta, axis=1))))
+            self._candidate_corners = corners.copy()
+            if motion > self.max_stable_motion:
+                self._stable_since = now
+                return
+            if now - self._stable_since < self.settle_time:
+                return
+
+        if self.min_pose_change > 0.0 and self.image_points:
+            current = corners.reshape(-1, 2)
+            pose_changes = []
+            for previous in self.image_points:
+                delta = current - previous.reshape(-1, 2)
+                pose_changes.append(float(np.sqrt(
+                    np.mean(np.sum(delta * delta, axis=1)))))
+            if min(pose_changes) < self.min_pose_change:
+                self._candidate_corners = None
+                return
+
         self.object_points.append(self.object_template.copy())
         self.image_points.append(corners)
         self._last_capture = now
+        self._candidate_corners = None
         self.get_logger().info(
             f'수집 {len(self.image_points)}/{self.target_samples}')
 
@@ -153,9 +236,52 @@ class CalibrateCameraNode(Node):
 
     def solve_and_save(self):
         self.get_logger().info('캘리브레이션 계산 중...')
-        rms, camera_matrix, dist_coeffs, _, _ = cv2.calibrateCamera(
-            self.object_points, self.image_points, self.image_size,
-            None, None)
+        active = list(range(len(self.image_points)))
+        pruned = []
+
+        while True:
+            object_points = [self.object_points[index] for index in active]
+            image_points = [self.image_points[index] for index in active]
+            rms, camera_matrix, dist_coeffs, rvecs, tvecs = \
+                cv2.calibrateCamera(
+                    object_points, image_points, self.image_size, None, None)
+
+            per_view_errors = []
+            for object_point, image_point, rvec, tvec in zip(
+                    object_points, image_points, rvecs, tvecs):
+                projected, _ = cv2.projectPoints(
+                    object_point, rvec, tvec, camera_matrix, dist_coeffs)
+                delta = image_point.reshape(-1, 2) - projected.reshape(-1, 2)
+                per_view_errors.append(float(np.sqrt(
+                    np.mean(np.sum(delta * delta, axis=1)))))
+
+            if (rms <= self.max_rms or
+                    len(pruned) >= self.max_pruned_samples or
+                    len(active) <= self.min_retained_samples):
+                break
+
+            errors = np.asarray(per_view_errors)
+            median = float(np.median(errors))
+            mad = float(np.median(np.abs(errors - median)))
+            robust_limit = max(
+                self.max_rms * 1.25,
+                median + 2.5 * 1.4826 * mad)
+            worst_position = int(np.argmax(errors))
+            worst_error = float(errors[worst_position])
+            if worst_error <= robust_limit:
+                break
+            pruned.append((active[worst_position], worst_error))
+            del active[worst_position]
+
+        if per_view_errors:
+            self.get_logger().info(
+                '샘플별 RMS 범위 '
+                f'{min(per_view_errors):.3f}~{max(per_view_errors):.3f} px '
+                f'(사용 {len(active)}/{len(self.image_points)})')
+        if pruned:
+            details = ', '.join(
+                f'#{index + 1}:{error:.2f}px' for index, error in pruned)
+            self.get_logger().warn(f'이상 샘플 제외: {details}')
 
         fx = camera_matrix[0, 0]
         fy = camera_matrix[1, 1]
@@ -170,7 +296,6 @@ class CalibrateCameraNode(Node):
             self.get_logger().error(
                 f'RMS 오차가 한계({self.max_rms} px)를 초과했습니다. '
                 '저장하지 않습니다. 보드를 더 다양한 각도/거리로 다시 촬영하세요')
-            rclpy.shutdown()
             return
 
         directory = os.path.dirname(self.output_path)
@@ -188,19 +313,20 @@ class CalibrateCameraNode(Node):
         self.get_logger().info(
             '이 파일을 config/에 두고 colcon build 후 launch의 '
             'camera_calib 인자로 지정하세요')
-        rclpy.shutdown()
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = CalibrateCameraNode()
     try:
-        rclpy.spin(node)
+        while rclpy.ok() and not node._done:
+            rclpy.spin_once(node, timeout_sec=0.2)
     except KeyboardInterrupt:
-        node.get_logger().info('중단됨 — 저장하지 않았습니다')
+        if not node._done:
+            node.get_logger().info('중단됨 — 저장하지 않았습니다')
     finally:
+        node.destroy_node()
         if rclpy.ok():
-            node.destroy_node()
             rclpy.shutdown()
 
 

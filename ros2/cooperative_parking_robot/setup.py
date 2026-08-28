@@ -42,7 +42,8 @@ setup(
             ('rigid_body_sync_legacy = '
              'cooperative_parking_robot.rigid_body_sync_node:main'),
             'state_machine = cooperative_parking_robot.robot_state_machine_node:main',
-            'stm32_bridge = cooperative_parking_robot.stm32_bridge_node:main',
+            ('stm32_bridge = '
+             'cooperative_parking_robot.mvp_stm32_bridge_node:main'),
             ('individual_move = '
              'cooperative_parking_robot.mvp_runtime_nodes:'
              'individual_move_main'),

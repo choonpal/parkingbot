@@ -23,6 +23,8 @@ from rclpy.qos import (
 )
 from std_msgs.msg import Bool, String
 
+from cooperative_parking_robot.fault_policy import classify_fault
+
 from cooperative_parking_robot.command_qos import CMD_VEL_QOS
 from cooperative_parking_robot.latest_qos import (
     SENSOR_LATEST_QOS,
@@ -1009,8 +1011,10 @@ class RigidBodySyncNode(Node):
         self.has_path = False
         self.final_mode = False
         self.publish_status_now()
-        self.pub_estop.publish(Bool(data=True))
-        self.estop = True
+        policy = classify_fault(f'SYNC,{reason}')
+        if policy.estop_required:
+            self.pub_estop.publish(Bool(data=True))
+            self.estop = True
         self.get_logger().error(reason)
 
     def recoverable_hold(self, reason):

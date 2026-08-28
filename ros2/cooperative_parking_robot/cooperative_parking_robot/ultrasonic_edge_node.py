@@ -126,6 +126,7 @@ class UltrasonicEdgeNode(Node):
         self.last_odom_time = 0.0
         self.active_target = None
         self.robot_state = "IDLE"
+        self.ultrasonic_phase_ready = False
         self.published = False
         self.last_range_time = {"left": 0.0, "right": 0.0}
         self.threshold_m = float(gp("threshold_m").value)
@@ -174,6 +175,9 @@ class UltrasonicEdgeNode(Node):
             STATE_LATEST_QOS)
         self.create_subscription(
             Bool, f"/{self.role}/wheel_scan_reset", self.scan_reset_cb, 10)
+        self.create_subscription(
+            Bool, f"/{self.role}/ultrasonic_ready",
+            self.ultrasonic_ready_cb, STATE_LATEST_QOS)
         self.create_subscription(
             String, "/parking/vehicle_spec", self.vehicle_spec_cb, 10)
         for side in ("left", "right"):
@@ -295,6 +299,17 @@ class UltrasonicEdgeNode(Node):
                 f"[{self.role}] wheel scan reset requested")
             self.reset_cycle()
 
+    def ultrasonic_ready_cb(self, msg):
+        ready = bool(msg.data)
+        previous = self.ultrasonic_phase_ready
+        self.ultrasonic_phase_ready = ready
+        if ready and not previous:
+            # Start the detector with only samples from this acknowledged,
+            # validated activation generation.
+            self.reset_cycle()
+        elif not ready and previous:
+            self.publish_lateral(time.monotonic())
+
     def median_distance(self, side):
         history = self.lateral_hist[side]
         if not history:
@@ -348,6 +363,8 @@ class UltrasonicEdgeNode(Node):
         self.get_logger().error(f"[{self.role}] ultrasonic fault: {reason}")
 
     def range_cb(self, side, msg):
+        if not self.ultrasonic_phase_ready:
+            return
         accepted, reason = self.range_gates[side].accept(
             stamp_to_ns(msg.header.stamp),
             self.get_clock().now().nanoseconds)
@@ -368,7 +385,8 @@ class UltrasonicEdgeNode(Node):
         self.publish_lateral(now)
 
     def check_sensor_freshness(self):
-        if self.robot_state != "ALIGN":
+        if (self.robot_state != "ALIGN" or
+                not self.ultrasonic_phase_ready):
             return
         now = time.monotonic()
         if (self.active_target is None and
@@ -389,7 +407,8 @@ class UltrasonicEdgeNode(Node):
                         f"ULTRASONIC_{side.upper()}_STREAM_TIMEOUT")
 
     def process_distance(self, side, distance, timestamp):
-        if self.robot_state != "ALIGN" or self.published:
+        if (self.robot_state != "ALIGN" or
+                not self.ultrasonic_phase_ready or self.published):
             return
         if self.robot_pose is None:
             return

@@ -8,6 +8,7 @@ RPi → STM32 (기존 단일문자 시험 명령과 충돌하지 않도록 @ pre
   @S,attach,pulse1_us,pulse2_us
   @S,grip | @S,release
   @HB,session_id:sequence
+  @U,ON | @U,OFF
   @ESTOP
 
 STM32 → RPi
@@ -38,6 +39,7 @@ PROTOCOL_VERSION = 2
 UART_BAUD_RATE = 115200
 PROTOCOL_CAPABILITIES = frozenset({
     'SESSION_HELLO', 'SESSION_HEARTBEAT_ACK', 'ZERO_V_ACK', 'SERVO_ATTACH',
+    'ULTRASONIC_CONTROL',
 })
 SESSION_ID_PATTERN = re.compile(r'^[A-Za-z0-9_-]{8,16}$')
 ACK_TOKEN_PATTERN = re.compile(r'^[A-Za-z0-9_.:-]{1,48}$')
@@ -106,6 +108,10 @@ class UartProtocol:
 
     def encode_estop(self):
         return "@ESTOP\n"
+
+    @staticmethod
+    def encode_ultrasonic(enabled):
+        return f"@U,{'ON' if bool(enabled) else 'OFF'}\n"
 
     def parse(self, line):
         """STM32 → RPi 응답을 엄격하게 파싱한다."""

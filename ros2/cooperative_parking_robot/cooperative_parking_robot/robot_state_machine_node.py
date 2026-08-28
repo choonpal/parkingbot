@@ -403,7 +403,13 @@ class RobotStateMachineNode(Node):
         if self.hardware_fault and self.state != "FAULT":
             # HELLO 전 previous-session timeout은 bridge가 INFO로 격리한다.
             # 여기 도달한 실제 ERR/ESTOP은 IDLE 중이어도 current fault다.
-            self.pub_estop.publish(Bool(data=True))
+            # Communication loss is already fail-closed by bridge velocity
+            # suppression and the MCU's 250 ms command watchdog.  Latching the
+            # physical ESTOP here would prevent the new HELLO session needed
+            # to diagnose/recover communication.  Mission state still latches
+            # FAULT and therefore cannot resume motion automatically.
+            if self._fault_requires_estop(self.hardware_fault):
+                self.pub_estop.publish(Bool(data=True))
             self.transition("FAULT")
 
         if self.state == "IDLE":
@@ -490,7 +496,13 @@ class RobotStateMachineNode(Node):
                 self.fail("RETURN_TIMEOUT")
 
         elif self.state == "FAULT":
-            self.pub_estop.publish(Bool(data=True))
+            if self._fault_requires_estop(self.hardware_fault):
+                self.pub_estop.publish(Bool(data=True))
+
+    @staticmethod
+    def _fault_requires_estop(fault):
+        from cooperative_parking_robot.fault_policy import classify_fault
+        return classify_fault(fault).estop_required
 
     def send_action_with_retry(self, action):
         now = time.monotonic()
@@ -500,10 +512,11 @@ class RobotStateMachineNode(Node):
         self.pub_grip.publish(String(data=action))
 
     def fail(self, reason):
-        # fail() 은 미션 진행 중 타임아웃 등에서만 불린다. 여기서는 항상
-        # ESTOP 을 건다.
+        # Mission failure always stops progression, but only an explicitly
+        # classified physical emergency is promoted to the MCU hard latch.
         self.hardware_fault = reason
-        self.pub_estop.publish(Bool(data=True))
+        if self._fault_requires_estop(reason):
+            self.pub_estop.publish(Bool(data=True))
         self.transition("FAULT")
 
     def rear_lifted_cb(self, msg):

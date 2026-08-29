@@ -522,6 +522,36 @@ def test_repeated_callbacks_cannot_flood_heartbeat_slot(monkeypatch):
     assert len(heartbeats) == 2
 
 
+def test_dedicated_producer_does_not_skip_boundary_ticks(monkeypatch):
+    node = bridge_for_unit_test()
+    now = [1.0]
+
+    class FourTickEvent:
+        def __init__(self):
+            self.wait_count = 0
+
+        def is_set(self):
+            return self.wait_count >= 4
+
+        def wait(self, delay):
+            now[0] += max(0.0, delay)
+            self.wait_count += 1
+            return False
+
+    monkeypatch.setattr(bridge_module.time, 'monotonic', lambda: now[0])
+    node.hello_acknowledged = True
+    # Isolate cadence from the independent ACK-timeout recovery policy.
+    node.communication_recovering = True
+    node.next_heartbeat_due = now[0]
+    node.heartbeat_thread_stop = FourTickEvent()
+
+    node._heartbeat_producer_loop()
+
+    heartbeats = [frame for frame in node.ser.writes
+                  if frame.startswith(b'@HB,')]
+    assert len(heartbeats) == 4
+
+
 def test_shutdown_zero_survives_repeated_sigint_during_logging():
     node = bridge_for_unit_test()
 
@@ -551,6 +581,7 @@ def test_heartbeat_producer_is_independent_of_ros_callback_execution():
     assert 'callback_group=self.serial_callback_group' in bridge_source
     assert 'target=self._heartbeat_producer_loop' in bridge_source
     assert "name=f'{self.role}-heartbeat-producer'" in bridge_source
+    assert 'send_heartbeat(force=True, scheduled_due=next_tick)' in bridge_source
     assert 'self.heartbeat_period, self.send_heartbeat,' not in bridge_source
     assert 'MultiThreadedExecutor(num_threads=2)' in bridge_source
     assert 'MultiThreadedExecutor(num_threads=2)' in mvp_source

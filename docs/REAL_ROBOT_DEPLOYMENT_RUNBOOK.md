@@ -357,8 +357,9 @@ Cam2를 debug 화면으로 선택하면 `debug_image_topic:=/cctv2/image_rect`�
 
 ### Rear Raspberry Pi
 
-아래 예시는 외부 camera driver가 `/rear/marker_camera/image`를 발행하는 권장
-구성이다. 대문자 변수에는 해당 장비에서 검증한 값만 넣는다.
+아래 예시는 내장 OpenCV camera를 persistent V4L by-id 경로로 여는 구성이다.
+외부 camera driver를 쓰는 현장은 `enable_rear_camera:=false`와 검증된 외부
+driver 명령을 사용한다. 대문자 변수에는 해당 장비에서 검증한 값만 넣는다.
 
 ```bash
 : "${REAR_SERIAL:?set stable Rear STM32 by-id}"
@@ -369,13 +370,15 @@ Cam2를 debug 화면으로 선택하면 `debug_image_topic:=/cctv2/image_rect`�
 : "${REAR_LY:?set measured Rear ly}"
 : "${REAR_LEFT_SENSOR_X:?set measured left sensor offset}"
 : "${REAR_RIGHT_SENSOR_X:?set measured right sensor offset}"
+: "${REAR_CAMERA_DEVICE:?set stable Rear camera by-id}"
 REAR_CALIB="${REAR_CALIB:-${HOME}/.ros/adaptive_valet_bot/rear_camera_calibration.npz}"
 
 ros2 launch cooperative_parking_robot rear_robot.launch.py \
   serial_port:="${REAR_SERIAL}" \
   enable_serial:=true require_serial:=true \
   require_hardware_ready:=true require_ultrasonic_for_ready:=true \
-  enable_rear_camera:=false \
+  enable_rear_camera:=true \
+  rear_camera_device:="${REAR_CAMERA_DEVICE}" \
   rear_camera_topic:=/rear/marker_camera/image \
   camera_calib:="${REAR_CALIB}" \
   wheelbase:="${WHEELBASE}" \
@@ -389,7 +392,8 @@ ros2 launch cooperative_parking_robot rear_robot.launch.py \
   simultaneous_entry:=false
 ```
 
-외부 driver가 없을 때만 내장 OpenCV camera와 숫자 `rear_camera_id`를 fallback으로
+외부 driver가 없을 때 내장 OpenCV camera를 사용한다. 이 경우에도 persistent
+`rear_camera_device`가 기본이며 숫자 `rear_camera_id`는 현장 진단용 fallback으로만
 사용하고, 그 부팅에서 실제 영상을 확인한다.
 
 ### Front Raspberry Pi

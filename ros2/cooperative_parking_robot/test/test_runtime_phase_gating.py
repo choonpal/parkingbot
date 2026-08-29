@@ -121,3 +121,17 @@ def test_rear_launch_prewarms_vision_then_starts_bridge_in_standby():
     assert '"runtime_enable_topic": "/rear/relative_vision_enable"' in source
     assert source.count('"start_enabled": False') >= 2
     assert '"standby_fps": _float("rear_camera_standby_fps")' in source
+    assert '"capture_fps": _float("rear_camera_capture_fps")' in source
+    assert '"rear_camera_fourcc", default_value="MJPG"' in source
+
+
+def test_full_system_gates_only_rear_marker_camera_not_overview_cctv():
+    source = (ROOT / 'launch/full_system.launch.py').read_text()
+    overview_start = source.index("name='opencv_camera_node'")
+    rear_start = source.index("name='rear_marker_camera_node'")
+    overview_block = source[overview_start:rear_start]
+    rear_block = source[rear_start:]
+
+    assert "'runtime_enable_topic'" not in overview_block
+    assert "'runtime_enable_topic': '/rear/relative_vision_enable'" in rear_block
+    assert "'capture_fps': _float('rear_camera_capture_fps')" in rear_block

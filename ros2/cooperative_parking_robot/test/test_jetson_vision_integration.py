@@ -91,6 +91,14 @@ def test_camera_node_prefers_persistent_device_path_with_id_fallback():
     assert 'cv2.CAP_V4L2' in camera
 
 
+def test_camera_node_separates_capture_rate_and_v4l2_format_from_output_rate():
+    camera = (PKG / 'opencv_camera_node.py').read_text()
+    assert "declare_parameter('capture_fps', 0.0)" in camera
+    assert "declare_parameter('v4l2_fourcc', '')" in camera
+    assert 'cv2.CAP_PROP_FOURCC' in camera
+    assert 'requested_capture_fps = self.capture_fps or self.fps' in camera
+
+
 def test_camera_node_can_publish_a_rate_limited_small_preview():
     camera = (PKG / 'opencv_camera_node.py').read_text()
     assert "declare_parameter('preview_topic', '')" in camera

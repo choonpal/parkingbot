@@ -783,13 +783,17 @@ class Stm32BridgeNode(Node):
             wait_s = max(0.0, next_tick - now)
             if self.heartbeat_thread_stop.wait(wait_s):
                 return
-            self.send_heartbeat()
+            # This loop owns the absolute 100 ms cadence. Bypass the
+            # callback-side duplicate guard here; otherwise a tick arriving a
+            # few microseconds before ``next_heartbeat_due`` skips every other
+            # send and silently turns the real cadence into ~200 ms.
+            self.send_heartbeat(force=True, scheduled_due=next_tick)
             next_tick += self.heartbeat_period
             now = time.monotonic()
             if next_tick <= now:
                 next_tick = now + self.heartbeat_period
 
-    def send_heartbeat(self, *, force=False):
+    def send_heartbeat(self, *, force=False, scheduled_due=None):
         now = time.monotonic()
         with self.heartbeat_lock:
             if (not self.ser or not self.hello_acknowledged or
@@ -812,9 +816,18 @@ class Stm32BridgeNode(Node):
                 return
             self.heartbeat_sequence += 1
             token = f'{self.session_id}:{self.heartbeat_sequence}'
-            due = self.next_heartbeat_due
-            self.next_heartbeat_due = max(due + self.heartbeat_period,
-                                          now + self.heartbeat_period)
+            if scheduled_due is not None:
+                due = float(scheduled_due)
+            elif force:
+                due = now
+            else:
+                due = self.next_heartbeat_due
+            if force:
+                self.next_heartbeat_due = now + self.heartbeat_period
+            else:
+                self.next_heartbeat_due = max(
+                    due + self.heartbeat_period,
+                    now + self.heartbeat_period)
         self._write(self.protocol.encode_heartbeat(token), kind='heartbeat',
                     priority=P1_REALTIME, deadline=due,
                     metadata={'token': token, 'due': due})

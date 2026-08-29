@@ -37,7 +37,7 @@ import time
 
 import rclpy
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
-from rclpy.executors import MultiThreadedExecutor
+from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from geometry_msgs.msg import TwistStamped
 from nav_msgs.msg import Odometry
@@ -1412,7 +1412,7 @@ class Stm32BridgeNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = Stm32BridgeNode()
-    executor = MultiThreadedExecutor(num_threads=2)
+    executor = SingleThreadedExecutor()
     executor.add_node(node)
     try:
         executor.spin()

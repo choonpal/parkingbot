@@ -529,8 +529,10 @@ def test_heartbeat_producer_is_independent_of_ros_callback_execution():
     assert 'send_heartbeat(force=True, scheduled_due=next_tick)' in bridge_source
     assert 'self.heartbeat_period, self.send_heartbeat,' not in bridge_source
     assert 'callback_group=self.serial_callback_group' in bridge_source
-    assert 'MultiThreadedExecutor(num_threads=2)' in bridge_source
-    assert 'MultiThreadedExecutor(num_threads=2)' in mvp_source
+    assert 'SingleThreadedExecutor()' in bridge_source
+    assert 'SingleThreadedExecutor()' in mvp_source
+    assert 'MultiThreadedExecutor' not in bridge_source
+    assert 'MultiThreadedExecutor' not in mvp_source
     assert 'executor.spin()' in mvp_source
 
 

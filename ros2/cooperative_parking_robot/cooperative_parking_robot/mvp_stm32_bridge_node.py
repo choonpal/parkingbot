@@ -4,7 +4,7 @@
 import signal
 
 import rclpy
-from rclpy.executors import MultiThreadedExecutor
+from rclpy.executors import SingleThreadedExecutor
 
 from cooperative_parking_robot.stm32_bridge_node import Stm32BridgeNode
 
@@ -16,7 +16,7 @@ class MvpStm32BridgeNode(Stm32BridgeNode):
 def main(args=None):
     rclpy.init(args=args)
     node = MvpStm32BridgeNode()
-    executor = MultiThreadedExecutor(num_threads=2)
+    executor = SingleThreadedExecutor()
     executor.add_node(node)
     try:
         executor.spin()

@@ -3,14 +3,14 @@
 robot-2 **Front**와 robot-1 **Rear**를 ArUco로 정렬한 뒤, 두 로봇을 하나의
 강체처럼 `W/A/S/D/Q/E`로 움직이는 현장 시험 절차입니다.
 
-> **현재 상태 (2026-08-28)**
+> **현재 상태 (2026-08-29)**
 >
-> 오늘 시험 branch를 양쪽 로봇에 임시 배포해 바퀴를 띄운 상태의 `W/S` 방향과
-> 정지 동작을 확인했습니다. `A/D/Q/E`, 지면 주행, 장시간 marker dropout 및 열
-> 안정성은 아직 미확인입니다. robot-1이 중복 production launch와 함께 실행될 때
-> 78.8°C까지 올라 최종 시험을 중단했습니다. 최신 main 통합본을 다시 배포하고
-> 아래 전체 체크리스트를 통과하기 전에는 production 검증 완료로 간주하지 않습니다.
-> 이 시험은 기존 `keyboard_follow`가 아닌 별도 `rigid_pair_teleop`을 사용합니다.
+> 기존 현장 시험에서 `W/S`와 정지는 확인했고 `A/D/Q/E`의 반대 부호를 수정했지만,
+> 부호 수정 뒤 `A/D/Q/E`, 최신 통합본의 지면 주행, 장시간 marker dropout과 열
+> 안정성은 아직 재검증하지 않았습니다. pair heading hold와 연속 gap 보정은 현재
+> 통합 branch에 포함돼 있고 소프트웨어 회귀는 통과했습니다. 최신 통합본을 양쪽에
+> 같은 SHA로 다시 배포하고 아래 전체 체크리스트를 통과하기 전에는 production
+> 검증 완료로 간주하지 않습니다. 이 시험은 별도 `rigid_pair_teleop`을 사용합니다.
 
 ## 안전 원칙
 
@@ -27,24 +27,27 @@ robot-2 **Front**와 robot-1 **Rear**를 ArUco로 정렬한 뒤, 두 로봇을 �
 | Rear | `robot@robot-1.local` |
 | Front | `robot@robot-2.local` |
 | 격리 시험 ROS domain | `142` |
-| 오늘 검증한 로봇 workspace | `/home/robot/parkingbot` |
+| 로봇 workspace | 배포 때 기록한 동일 SHA의 절대 colcon workspace |
 | 목표 중심 간격 | `78.5 cm` |
 | Rear 카메라에서 보이는 ID0 raw forward | 약 `21.5 cm` |
 | Front serial | `/dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_0667FF485270535067112920-if02` |
 | Rear serial | `/dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066AFF485270535067112511-if02` |
 | Rear camera | `/dev/v4l/by-path/platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.1:1.0-video-index0` |
 | Rear calibration | `/home/robot/ov2710_calib_23mm_white.npz` |
-| Rear camera mode | `1280x720 @ 12 fps` |
+| Rear camera mode | `1280x720 @ 8 fps` |
 | Front rear-face marker | `DICT_4X4_50 ID0`, black square `0.10 m` |
 
 IP는 DHCP로 바뀌므로 SSH와 웹 접속에는 항상 `*.local` 이름을 사용합니다.
 
 ## 2. 배포 후 최초 1회 확인
 
-양쪽 로봇에서 새 소스를 배포·빌드한 뒤 실행합니다.
+양쪽 로봇에서 같은 검증 SHA의 소스를 배포·빌드한 뒤 실행합니다. 아래
+`PARKINGBOT_WS`는 경로 이름을 추측하지 말고 그 배포에서 만든 colcon workspace의
+절대 경로로 바꿉니다.
 
 ```bash
-cd /home/robot/parkingbot
+export PARKINGBOT_WS=/absolute/path/to/validated-colcon-workspace
+cd "${PARKINGBOT_WS}"
 source /opt/ros/humble/setup.bash
 colcon build --symlink-install --packages-select cooperative_parking_robot
 source install/setup.bash
@@ -91,8 +94,9 @@ vcgencmd get_throttled
 robot-2 터미널에서 실행합니다.
 
 ```bash
+export PARKINGBOT_WS=/absolute/path/to/validated-colcon-workspace
 source /opt/ros/humble/setup.bash
-source /home/robot/parkingbot/install/setup.bash
+source "${PARKINGBOT_WS}/install/setup.bash"
 export ROS_DOMAIN_ID=142
 
 ros2 launch cooperative_parking_robot cooperative_drive_test_front.launch.py \
@@ -106,8 +110,9 @@ ros2 launch cooperative_parking_robot cooperative_drive_test_front.launch.py \
 robot-1 터미널에서 실행합니다.
 
 ```bash
+export PARKINGBOT_WS=/absolute/path/to/validated-colcon-workspace
 source /opt/ros/humble/setup.bash
-source /home/robot/parkingbot/install/setup.bash
+source "${PARKINGBOT_WS}/install/setup.bash"
 export ROS_DOMAIN_ID=142
 
 ros2 launch cooperative_parking_robot cooperative_drive_test_rear.launch.py \

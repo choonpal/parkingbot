@@ -1,7 +1,7 @@
 # V9 scan-in complete merge — 2026-08-03
 
 > **과거 기록 — v1.8.0/2026-08-03 병합 스냅샷.** 현재 패키지 구조와 검증 범위는
-> 저장소의 `ros2/cooperative_parking_robot/README.md`와
+> 저장소의 `ros2/cooperative_parking_robot/docs/README.md`와
 > `docs/REAL_WORLD_READINESS.md`를 따른다.
 
 ## 기준과 범위

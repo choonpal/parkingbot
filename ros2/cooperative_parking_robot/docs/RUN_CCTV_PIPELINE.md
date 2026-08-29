@@ -1,6 +1,11 @@
 # CCTV 파이프라인 실행 절차 (젯슨)
 
-`parkingbot-main 2` 기준 · 패키지 배치부터 토픽 확인까지
+2026-08-29 통합 기준 · 패키지 배치부터 토픽 확인까지
+
+Production은 `site_jetson.launch.py` 또는 저장소 루트의 `robot_start`를 우선한다.
+현재 교체 카메라 asset은 **640x360 @ 30 fps**로 보정됐으며 camera·calibration·
+Homography의 픽셀 frame을 함께 바꾸지 않는다. 5008 관제탑은 두 CCTV와 BEV를
+보는 화면이고 Rear ID0 전용 5005 화면과 다르다.
 
 ---
 
@@ -9,10 +14,10 @@
 ROS 워크스페이스에는 **`ros2/cooperative_parking_robot` 하나만** 넣는다.
 `stm32/`와 최상위 `docs/`는 워크스페이스에 들어갈 것이 아니다.
 
-```
-parkingbot-main 2/ros2/cooperative_parking_robot/
-        ↓ 복사
-~/ros2_ws/src/cooperative_parking_robot/
+```text
+<repository>/ros2/cooperative_parking_robot/
+        ↓ symlink 또는 검증된 배포
+<colcon-workspace>/src/cooperative_parking_robot/
         ├── package.xml        ← 이 폴더 바로 밑에 있어야 함
         ├── setup.py
         ├── cooperative_parking_robot/
@@ -23,25 +28,21 @@ parkingbot-main 2/ros2/cooperative_parking_robot/
         └── docs/
 ```
 
-기존 것이 있으면 먼저 치운다.
-
-```bash
-mv ~/ros2_ws/src/cooperative_parking_robot ~/ros2_ws/src/cooperative_parking_robot.bak
-# VSCode 원격 탐색기로 새 폴더를 ~/ros2_ws/src/cooperative_parking_robot 에 복사
-```
-
-> `.bak` 폴더는 빌드에 쓰이지 않는다. 여기에 npy나 npz를 넣어도 런타임이 못 읽는다.
+source와 install의 SHA를 배포 기록에 남긴다. 예전 디렉터리를 복사해 덮어쓰지
+말고 [실차 Runbook](../../../docs/REAL_ROBOT_DEPLOYMENT_RUNBOOK.md)의 clean build와
+동일 SHA 확인 절차를 따른다.
 
 ---
 
 ## 1. 빌드
 
 ```bash
-find ~/ros2_ws/src -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null
-cd ~/ros2_ws
-rm -rf build install log
-colcon build --symlink-install --packages-select cooperative_parking_robot
-source install/setup.bash
+export PARKINGBOT_REPO=/absolute/path/to/parkingbot
+export PARKINGBOT_WS=/absolute/path/to/colcon-workspace
+source /opt/ros/humble/setup.bash
+"${PARKINGBOT_REPO}/ros2/cooperative_parking_robot/scripts/humble_build_check.sh" \
+  "${PARKINGBOT_WS}"
+source "${PARKINGBOT_WS}/install/setup.bash"
 ```
 
 `Unknown distribution option: 'tests_require'` 경고는 무시한다.
@@ -49,7 +50,7 @@ source install/setup.bash
 **확인:**
 
 ```bash
-ros2 pkg executables cooperative_parking_robot | wc -l      # 19
+ros2 pkg executables cooperative_parking_robot
 ls $(ros2 pkg prefix cooperative_parking_robot)/share/cooperative_parking_robot/models/
 ```
 
@@ -61,27 +62,15 @@ ls $(ros2 pkg prefix cooperative_parking_robot)/share/cooperative_parking_robot/
 ## 2. 환경 변수 (새 터미널마다)
 
 ```bash
+export PARKINGBOT_WS=/absolute/path/to/colcon-workspace
 source /opt/ros/humble/setup.bash
-source ~/ros2_ws/install/setup.bash
+source "${PARKINGBOT_WS}/install/setup.bash"
 export ROS_DOMAIN_ID=42
 export ROS_LOCALHOST_ONLY=0
 ```
 
-매번 치기 번거로우면 `~/.bashrc`에 넣는다.
-
-```bash
-cat >> ~/.bashrc <<'EOF'
-source /opt/ros/humble/setup.bash
-source ~/ros2_ws/install/setup.bash
-export ROS_DOMAIN_ID=42
-export ROS_LOCALHOST_ONLY=0
-export PIP_CONSTRAINT=$HOME/pip-constraints.txt
-EOF
-echo "numpy<2" > ~/pip-constraints.txt
-```
-
-`PIP_CONSTRAINT`는 pip 설치 때마다 numpy가 2로 올라가 `cv_bridge`를 깨뜨리는
-것을 막는다. 이것 때문에 세 번 막혔다.
+workspace 경로는 장비별 deployment config에서 관리한다. `.bashrc`에 특정 임시
+설치본을 고정하면 새 shell이 구 overlay를 import할 수 있으므로 넣지 않는다.
 
 ---
 
@@ -94,11 +83,13 @@ ls -l /dev/video*
 v4l2-ctl --list-devices
 ```
 
-**launch 기본값이 `camera0_id:=2`, `camera2_id:=0`이다.** 실제 배선과 다르면
-반드시 인자로 바꿔 준다. 어느 장치가 어느 카메라인지 헷갈리면:
+현장 `CAM0_DEVICE`, `CAM2_DEVICE`에는 확인한 `/dev/v4l/by-path/...`를 쓴다.
+숫자 `camera0_id:=2`, `camera2_id:=0`은 device path를 빈 문자열로 명시했을 때만
+쓰는 fallback이며 재부팅 후 역할을 보장하지 않는다. 어느 장치가 어느 카메라인지
+헷갈리면:
 
 ```bash
-bash ~/ros2_ws/src/cooperative_parking_robot/scripts/check_cameras.sh
+bash "${PARKINGBOT_WS}/src/cooperative_parking_robot/scripts/check_cameras.sh"
 ```
 
 ### 3-2. 캘리브레이션 파일
@@ -150,9 +141,13 @@ homography가 아직 없거나 기준점을 찍을 때 쓴다. YOLO를 끄면 �
 30fps 가까이 나와 클릭이 훨씬 수월하다.
 
 ```bash
+export CAM0_DEVICE=/dev/v4l/by-path/REPLACE_CAM0-video-index0
+export CAM2_DEVICE=/dev/v4l/by-path/REPLACE_CAM2-video-index0
 ros2 launch cooperative_parking_robot cctv_server_dual.launch.py \
   enable_opencv_camera:=true \
-  camera0_id:=0 camera2_id:=2 \
+  camera0_device:="${CAM0_DEVICE}" camera2_device:="${CAM2_DEVICE}" \
+  camera_width_px:=640 camera_height_px:=360 \
+  calibration_width_px:=640 calibration_height_px:=360 \
   enable_vision:=false \
   enable_cctv_robot_markers:=false
 ```
@@ -162,9 +157,13 @@ ros2 launch cooperative_parking_robot cctv_server_dual.launch.py \
 ### 4-B. 전체 파이프라인
 
 ```bash
+export CAM0_DEVICE=/dev/v4l/by-path/REPLACE_CAM0-video-index0
+export CAM2_DEVICE=/dev/v4l/by-path/REPLACE_CAM2-video-index0
 ros2 launch cooperative_parking_robot cctv_server_dual.launch.py \
   enable_opencv_camera:=true \
-  camera0_id:=0 camera2_id:=2 \
+  camera0_device:="${CAM0_DEVICE}" camera2_device:="${CAM2_DEVICE}" \
+  camera_width_px:=640 camera_height_px:=360 \
+  calibration_width_px:=640 calibration_height_px:=360 \
   homography_cam0_file:=$HOME/.ros/adaptive_valet_bot/homography_cam0_rectified.npy \
   homography_cam2_file:=$HOME/.ros/adaptive_valet_bot/homography_cam2_rectified.npy \
   layout_config:=$HOME/.ros/adaptive_valet_bot/parking_layout.yaml
@@ -185,9 +184,9 @@ TensorRT engine을 만들었다면:
 
 ```
 [opencv_camera_node_cam0] CCTV camera opened: camera_id=0 -> /cctv0/image_raw
-[opencv_camera_node_cam0] CCTV first frame: 640x480, reported_fps=30.00
+[opencv_camera_node_cam0] CCTV first frame: 640x360, reported_fps=30.00
 [cctv_rectify_node_cam0]  CCTV calibration loaded | fx=436.85 ...
-[cctv_rectify_node_cam0]  CCTV undistort map ready: 640x480
+[cctv_rectify_node_cam0]  CCTV undistort map ready: 640x360
 [yolo_bev_map_node_cam0]  YOLO loaded: ... | mode=vehicle_seg | task=... | imgsz=640
 [yolo_bev_map_node_cam0]  yolo_bev_map 시작 | camera_id=cam0 | mission_outputs=False
 [yolo_bev_map_node_cam0]  [cam0] coverage polygon: (...)
@@ -435,7 +434,7 @@ sudo fuser -v /dev/video0 /dev/video2    # 비어야 함
 ## 10. 터미널 배치 요약
 
 ```
-[터미널 1] cctv_server_dual.launch.py     ← 닫지 말 것
+[터미널 1] site_jetson.launch.py 또는 cctv_server_dual.launch.py  ← 닫지 말 것
 [터미널 2] 토픽 확인 (merge_status, parking/*)
 [터미널 3] camera_preview (5008) 또는 show_map_ascii
 [터미널 4] tile_homography (5006)  — 기준점 등록할 때만

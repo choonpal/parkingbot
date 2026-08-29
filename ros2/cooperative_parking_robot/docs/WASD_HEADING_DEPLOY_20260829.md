@@ -2,7 +2,12 @@
 
 기록 시각: 2026-08-29 00:38 KST
 
-## 현재 결론
+> **역사 기록:** 아래의 “실행 중”, 임시 경로, 미커밋 상태와 test 개수는 기록
+> 시점의 사실이다. 이후 변경은 통합 branch에 커밋됐고 현재 원격 실행 상태를
+> 뜻하지 않는다. 현재 기준은 [문서 안내](README.md)와
+> [통합 상태](../../../docs/CURRENT_INTEGRATION_STATUS.md)를 따른다.
+
+## 기록 당시 결론
 
 - W/A/S/D 보정 코드는 로컬 작업 트리에 반영했다.
 - 로컬 전체 테스트는 `752 passed, 1 skipped`로 통과했다.
@@ -60,7 +65,7 @@ python3 -m pytest -q
 - W/A/S/D에만 진행각 보정이 적용되고 Q/E 명령은 바뀌지 않는 테스트 포함
 - 간격 보정이 데드밴드 경계에서 불연속적으로 튀지 않는 테스트 포함
 
-## 배포 상태
+## 기록 당시 배포 상태
 
 기존 실행본은 보존했다.
 
@@ -103,7 +108,7 @@ heading_kp = 1.2
 initial_lateral_limit_m = 0.02
 ```
 
-## 마지막 5007 상태
+## 기록 당시 마지막 5007 상태
 
 ```text
 state: IDLE
@@ -148,4 +153,3 @@ tmux attach -t rigid-pair-wasd-20260829
 ```bash
 tmux send-keys -t rigid-pair-wasd-20260829 C-c
 ```
-

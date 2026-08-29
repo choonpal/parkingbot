@@ -1,6 +1,8 @@
 # 실차 적용 전 필수 점검 — v1.6
 
-> **현재 배포 기준:** Ubuntu 22.04 + ROS 2 Humble. `docs/HUMBLE_DEPLOYMENT.md`와 `hardware_preflight`를 먼저 수행한다.
+> **현재 배포 기준:** Ubuntu 22.04 + ROS 2 Humble. 저장소 루트의
+> [실차 Runbook](../../../docs/REAL_ROBOT_DEPLOYMENT_RUNBOOK.md)과
+> `hardware_preflight`를 먼저 수행한다.
 
 ## 판정
 
@@ -10,7 +12,7 @@
 
 - RPi `stm32_bridge_node`: ROS2↔UART 변환, 엔코더 odom 및 초음파 Range 생성
 - STM32: 메카넘 역기구학, 바퀴 PID, 모터 PWM, 서보 soft-start, HC-SR04 펄스 측정
-- 300 ms heartbeat/command timeout 시 모터 정지
+- 250 ms command timeout 또는 300 ms heartbeat timeout 시 모터 정지
 - ACK 중단, odom timeout, ArUco 장기 손실, 거리/yaw 과오차 시 ESTOP
 - ESTOP 시 모터 PWM 0, 서보는 갑자기 해제하지 않고 현재 각도 유지
 - `GRIP_DONE`/`RELEASE_DONE`: 서보 목표각 소프트웨어 도달 신호

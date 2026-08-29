@@ -2,7 +2,7 @@
 
 > **과거 기록 — v1.10 변경 스냅샷.** 본문의 미구현 항목과 테스트 수는 당시 이력이다.
 > 현재 기준은 저장소의 `docs/README.md`, `docs/REAL_ROBOT_DEPLOYMENT_RUNBOOK.md`,
-> `ros2/cooperative_parking_robot/README.md`를
+> `ros2/cooperative_parking_robot/docs/README.md`를
 > 따르며, 출차 통합의 세부 이력은 `docs/RETRIEVAL_MISSION_INTEGRATION_PLAN.md`와 repository 최상위 ADR에 남아 있다.
 
 기준: v1.9 (`adaptive_valet_bot_v1_9_bev_slot_parking_20260804`)

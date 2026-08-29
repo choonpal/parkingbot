@@ -41,6 +41,11 @@ queue로 직접 이동한다. 시작점이 차량 뒤 보호경계 밖이 아니
 이 상태에는 자동 이탈이 없으므로 차량을 들어 올리지 말고, 별도로 검증된 수동
 회수 절차로 두 로봇을 꺼낸다.
 
+현재 commissioning 기본 측면 offset은 `entry_side_offset_m=0.50`이다. 이 값과
+아래 초음파-그리퍼 offset은 역할이 다르다. 특히
+`left_sensor_to_gripper_x_m`와 `right_sensor_to_gripper_x_m`가 임시 0이거나
+미측정이면 차축 중심 계산을 신뢰할 수 없으므로 자동 진입하지 않는다.
+
 현재 phase는 `/{role}/motion_phase`에 발행한다. 이동 노드가 고정한 차량
 좌표계는 `/{role}/active_target_pose`로 초음파 노드에 전달하므로, CCTV의
 후속 jitter가 스캔 좌표계를 바꾸지 않는다.
@@ -96,6 +101,8 @@ ros2 bag record \
   /front/wheel_center_s /rear/wheel_center_s \
   /front/wheel_detected /rear/wheel_detected \
   /front/wheel_aligned /rear/wheel_aligned \
+  /front/aligned_hold /rear/aligned_hold \
+  /mission/commit \
   /emergency_stop
 ```
 
@@ -107,6 +114,8 @@ ros2 bag record \
 - `wheel_detected=true` 전에 좌우 센서 모두 entry와 exit edge를 만든다.
 - 한쪽 센서만 검출되면 `wheel_aligned`가 나오지 않고
   `WHEEL_PAIR_NOT_DETECTED` 또는 스트림 timeout으로 FAULT가 난다.
+- `stop_after_align=true`이면 양쪽 `aligned_hold=true`, 양쪽 속도 0이며
+  `/mission/commit`에 LIFT가 없어야 한다.
 - release 후 반드시 `EXIT_UNDERBODY`, `EXIT_TO_SIDE` 순서로 차량을 벗어난다.
 
 ## 알려진 입력 제한

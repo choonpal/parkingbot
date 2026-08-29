@@ -29,6 +29,7 @@ class RobotStateMachineNode(Node):
         self.declare_parameter("coordination_timeout_s", 1.5)
         self.declare_parameter("fleet_timeout_s", 2.5)
         self.declare_parameter("future_tolerance_s", 0.25)
+        self.declare_parameter("stop_after_align", False)
 
         gp = self.get_parameter
         self.role = str(gp("role").value)
@@ -46,6 +47,7 @@ class RobotStateMachineNode(Node):
             gp("coordination_timeout_s").value)
         self.fleet_timeout = float(gp("fleet_timeout_s").value)
         self.future_tolerance = float(gp("future_tolerance_s").value)
+        self.stop_after_align = bool(gp("stop_after_align").value)
         if any(value <= 0.0 for value in (
                 self.approach_timeout, self.align_timeout,
                 self.drive_timeout, self.return_timeout,
@@ -62,6 +64,7 @@ class RobotStateMachineNode(Node):
         self.release_done = False
         self.other_align_done = False
         self.alignment_announced = False
+        self.aligned_hold = False
         self.other_release_done = False
         self.release_announced = False
         self.arrived = False
@@ -135,6 +138,8 @@ class RobotStateMachineNode(Node):
             Bool, f"/{self.role}/lifted", 10)
         self.pub_align_done = self.create_publisher(
             Bool, f"/align/{self.role}_done", 10)
+        self.pub_aligned_hold = self.create_publisher(
+            Bool, f"/{self.role}/aligned_hold", STATE_LATEST_QOS)
         self.pub_release_done = self.create_publisher(
             Bool, f"/release/{self.role}_done", 10)
         self.pub_ready = self.create_publisher(
@@ -165,7 +170,8 @@ class RobotStateMachineNode(Node):
             f"align:{self.align_timeout:.1f}s/"
             f"drive:{self.drive_timeout:.1f}s/"
             f"return:{self.return_timeout:.1f}s | "
-            f"coordination_timeout={self.coordination_timeout:.1f}s")
+            f"coordination_timeout={self.coordination_timeout:.1f}s | "
+            f"stop_after_align={self.stop_after_align}")
 
     def aligned_cb(self, msg):
         if msg.data:
@@ -266,6 +272,11 @@ class RobotStateMachineNode(Node):
         event = self.decode_coordination_event(msg, "front")
         if event is None or event["sequence"] <= self.last_commit_sequence:
             return
+        if self.stop_after_align and event["stage"] == "LIFT":
+            self.get_logger().warn(
+                f"[{self.role}] ignored LIFT commit in stop_after_align mode",
+                throttle_duration_sec=2.0)
+            return
         self.last_commit_sequence = event["sequence"]
         self.committed_stages.add(event["stage"])
 
@@ -330,6 +341,8 @@ class RobotStateMachineNode(Node):
         self.get_logger().info(
             f"[{self.role}] {self.state} -> {new}")
         self.state = new
+        if new != "ALIGN":
+            self.aligned_hold = False
         self.enter_time = time.monotonic()
         self.last_action_time = 0.0
         self.local_ready_stage = None
@@ -430,6 +443,14 @@ class RobotStateMachineNode(Node):
                 self.alignment_announced = True
             if self.alignment_announced:
                 self.pub_align_done.publish(Bool(data=True))
+                if self.stop_after_align:
+                    if not self.aligned_hold:
+                        self.get_logger().warn(
+                            f"[{self.role}] axle aligned; holding at zero "
+                            "with grip/lift disabled")
+                    self.aligned_hold = True
+                    self.pub_aligned_hold.publish(Bool(data=True))
+                    return
                 self.publish_ready_stage("LIFT")
                 self.maybe_publish_commit("LIFT")
             if "LIFT" in self.committed_stages:
@@ -557,6 +578,7 @@ class RobotStateMachineNode(Node):
         self.release_done = False
         self.other_align_done = False
         self.alignment_announced = False
+        self.aligned_hold = False
         self.other_release_done = False
         self.release_announced = False
         self.arrived = False
@@ -579,6 +601,7 @@ class RobotStateMachineNode(Node):
         self.pub_lifted.publish(Bool(data=self.local_lifted))
         self.pub_align_done.publish(
             Bool(data=self.alignment_announced))
+        self.pub_aligned_hold.publish(Bool(data=self.aligned_hold))
         self.pub_release_done.publish(
             Bool(data=self.release_announced))
         if not self.is_rear:

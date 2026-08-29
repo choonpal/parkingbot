@@ -4,7 +4,7 @@
 from pathlib import Path
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, TimerAction
 from launch.conditions import IfCondition
 from launch.substitutions import (
     LaunchConfiguration, PathJoinSubstitution, PythonExpression,
@@ -172,13 +172,16 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "entry_standoff_m", default_value="0.85"),
         DeclareLaunchArgument(
-            "entry_side_offset_m", default_value="0.40"),
+            "entry_side_offset_m", default_value="0.50"),
         DeclareLaunchArgument(
             "entry_side", default_value="-1"),
         DeclareLaunchArgument(
             "exit_distance_m", default_value="0.50"),
         DeclareLaunchArgument(
             "simultaneous_entry", default_value="false"),
+        DeclareLaunchArgument(
+            "stop_after_align", default_value="false",
+            description="Hold after axle alignment and never commit LIFT"),
         DeclareLaunchArgument(
             "same_direction_exit", default_value="false"),
         DeclareLaunchArgument(
@@ -230,7 +233,9 @@ def generate_launch_description():
         # P0-1: ID0 관측용 rear 전면 카메라 발행자.
         # 이 노드가 없으면 /sync/relative_pose가 영원히 발행되지 않아
         # WAIT_PEER_STAGED에서 ALIGN_TIMEOUT -> FAULT가 확정적으로 발생한다.
-        Node(
+        # Start the serial bridge immediately and stagger cold-start imports so
+        # the 300 ms STM32 heartbeat watchdog remains serviced during launch.
+        TimerAction(period=20.0, actions=[Node(
             package="cooperative_parking_robot",
             executable="opencv_camera",
             name="rear_marker_camera_node",
@@ -246,9 +251,9 @@ def generate_launch_description():
                 "buffer_size": 1,
                 "require_camera": True,
             }],
-            output="screen"),
+            output="screen")]),
 
-        Node(
+        TimerAction(period=24.0, actions=[Node(
             package="cooperative_parking_robot",
             executable="aruco_tracker",
             name="aruco_tracker_node",
@@ -264,9 +269,9 @@ def generate_launch_description():
                 "min_marker_distance_rate": aruco_min_marker_distance_rate,
                 "allow_uncalibrated": allow_uncalibrated,
             }],
-            output="screen"),
+            output="screen")]),
 
-        Node(
+        TimerAction(period=16.0, actions=[Node(
             package="cooperative_parking_robot",
             executable="individual_move",
             name="rear_individual_move",
@@ -279,9 +284,9 @@ def generate_launch_description():
                 "center_tolerance_m": 0.01,
                 **entry_parameters,
             }],
-            output="screen"),
+            output="screen")]),
 
-        Node(
+        TimerAction(period=4.0, actions=[Node(
             package="cooperative_parking_robot",
             executable="state_machine",
             name="rear_state_machine",
@@ -292,8 +297,9 @@ def generate_launch_description():
                 "drive_timeout_s": 120.0,
                 "return_timeout_s": _float("return_timeout_s"),
                 "require_hardware_ready": require_hardware_ready,
+                "stop_after_align": _bool("stop_after_align"),
             }],
-            output="screen"),
+            output="screen")]),
 
         Node(
             package="cooperative_parking_robot",
@@ -315,7 +321,7 @@ def generate_launch_description():
             }],
             output="screen"),
 
-        Node(
+        TimerAction(period=8.0, actions=[Node(
             package="cooperative_parking_robot",
             executable="ultrasonic_edge",
             name="rear_ultrasonic",
@@ -334,9 +340,9 @@ def generate_launch_description():
                 "axle_position_tolerance_m": _float(
                     "axle_position_tolerance_m"),
             }],
-            output="screen"),
+            output="screen")]),
 
-        Node(
+        TimerAction(period=12.0, actions=[Node(
             package="cooperative_parking_robot",
             executable="pose_fusion",
             name="rear_pose_fusion",
@@ -346,5 +352,5 @@ def generate_launch_description():
                 "init_y": waiting_y,
                 "init_yaw": home_yaw_rad,
             }],
-            output="screen"),
+            output="screen")]),
     ])

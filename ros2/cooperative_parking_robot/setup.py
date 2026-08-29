@@ -23,7 +23,8 @@ setup(
              'cooperative_parking_robot.yolo_bev_map_production_node:main'),
             ('yolo_bev_map_baseline = '
              'cooperative_parking_robot.mvp_integration_nodes:yolo_bev_map_main'),
-            'fleet_manager = cooperative_parking_robot.fleet_manager_node:main',
+            ('fleet_manager = '
+             'cooperative_parking_robot.mvp_fleet_manager_node:main'),
             'ultrasonic_edge = cooperative_parking_robot.ultrasonic_edge_node:main',
             'aruco_tracker = cooperative_parking_robot.aruco_tracker_node:main',
             ('cctv_robot_marker = '
@@ -41,7 +42,8 @@ setup(
              'cooperative_parking_robot.rigid_body_sync_safe_node:main'),
             ('rigid_body_sync_legacy = '
              'cooperative_parking_robot.rigid_body_sync_node:main'),
-            'state_machine = cooperative_parking_robot.robot_state_machine_node:main',
+            ('state_machine = '
+             'cooperative_parking_robot.mvp_state_machine_node:main'),
             ('stm32_bridge = '
              'cooperative_parking_robot.mvp_stm32_bridge_node:main'),
             ('individual_move = '
@@ -57,7 +59,7 @@ setup(
              'cooperative_parking_robot.drive_pulse_node:main'),
             'cooperative_drive_test = cooperative_parking_robot.cooperative_drive_test_node:main',
             ('rigid_pair_teleop = '
-             'cooperative_parking_robot.rigid_pair_teleop_node:main'),
+             'cooperative_parking_robot.rigid_pair_teleop_production_node:main'),
             # Compatibility name; new launch files use rigid_pair_teleop.
             'keyboard_follow = cooperative_parking_robot.keyboard_follow_node:main',
             'calibrate_camera = cooperative_parking_robot.calibrate_camera_node:main',

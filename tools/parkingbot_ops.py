@@ -354,15 +354,38 @@ def q(value):
 def launch_command(config, role):
     if role == "jetson":
         runtime = "$HOME/.ros/adaptive_valet_bot"
+        camera_width = config.get("CAMERA_WIDTH_PX", "640")
+        camera_height = config.get("CAMERA_HEIGHT_PX", "360")
+        camera_fps = config.get("CAMERA_FPS", "30")
+
+        def mjpeg_pipeline(device):
+            return (
+                f"v4l2src device={device} io-mode=2 ! "
+                f"image/jpeg,width={camera_width},height={camera_height},"
+                f"framerate={camera_fps}/1 ! jpegdec ! videoconvert ! "
+                "video/x-raw,format=BGR ! "
+                "appsink drop=true max-buffers=1 sync=false")
+
         args = {
             "enable_opencv_camera": "true", "camera0_device": config["CAM0_DEVICE"],
             "camera2_device": config["CAM2_DEVICE"],
+            "camera_width_px": camera_width,
+            "camera_height_px": camera_height,
+            "camera_fps": camera_fps,
+            "camera0_gstreamer_pipeline": mjpeg_pipeline(
+                config["CAM0_DEVICE"]),
+            "camera2_gstreamer_pipeline": mjpeg_pipeline(
+                config["CAM2_DEVICE"]),
             "cctv0_camera_calib": f"{runtime}/cctv0_camera_calibration.npz",
             "cctv2_camera_calib": f"{runtime}/cctv2_camera_calibration.npz",
+            "calibration_width_px": camera_width,
+            "calibration_height_px": camera_height,
             "homography_cam0_file": f"{runtime}/homography_cam0_rectified.npy",
             "homography_cam2_file": f"{runtime}/homography_cam2_rectified.npy",
             "layout_config": f"{runtime}/parking_layout.yaml",
-            "parking_registry_db_path": f"{runtime}/parking_registry.db",
+            "parking_registry_db_path": config.get(
+                "PARKING_REGISTRY_DB_PATH",
+                f"{runtime}/parking_registry.db"),
             "model_path": config["MODEL_PATH"],
             "cam0_ground_x_m": config["CAM0_GROUND_X_M"],
             "cam0_ground_y_m": config["CAM0_GROUND_Y_M"],

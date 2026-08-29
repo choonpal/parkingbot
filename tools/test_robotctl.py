@@ -240,6 +240,12 @@ def test_launch_commands_use_documented_production_launches_and_no_force():
                    "REAR_ENABLE_INTERNAL_CAMERA": "false",
                    "REAR_CAMERA_TOPIC": "/rear/marker_camera/image"})
     assert "cctv_server_dual.launch.py" in ops.launch_command(config, "jetson")
+    jetson = ops.launch_command(config, "jetson")
+    assert "camera_width_px:=640" in jetson
+    assert "camera_height_px:=360" in jetson
+    assert "calibration_width_px:=640" in jetson
+    assert "calibration_height_px:=360" in jetson
+    assert "image/jpeg,width=640,height=360,framerate=30/1" in jetson
     assert "front_robot.launch.py" in ops.launch_command(config, "front")
     assert "rear_robot.launch.py" in ops.launch_command(config, "rear")
     assert "--force" not in " ".join(

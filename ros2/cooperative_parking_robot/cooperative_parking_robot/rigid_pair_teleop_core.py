@@ -20,11 +20,17 @@ ZERO_COMMAND = (0.0, 0.0, 0.0)
 class RigidPairTeleopLimits:
     linear_limit_mps: float = 0.08
     angular_limit_rps: float = 0.20
-    gap_kp: float = 1.0
+    gap_kp: float = 1.8
     lateral_kp: float = 1.0
-    yaw_kp: float = 1.0
+    yaw_kp: float = 1.5
+    heading_kp: float = 1.2
+    gap_deadband_m: float = 0.004
+    yaw_deadband_rad: float = math.radians(0.8)
+    heading_deadband_rad: float = math.radians(0.5)
+    gap_correction_limit_mps: float = 0.025
     linear_correction_limit_mps: float = 0.015
     yaw_correction_limit_rps: float = 0.08
+    heading_correction_limit_rps: float = 0.04
     gap_stop_m: float = 0.03
     lateral_stop_m: float = 0.03
     yaw_stop_rad: float = math.radians(5.0)
@@ -36,8 +42,12 @@ class RigidPairTeleopLimits:
             raise ValueError('rigid-pair teleop limits must be finite and positive')
         if self.linear_correction_limit_mps >= self.linear_limit_mps:
             raise ValueError('linear correction must be below the command limit')
-        if self.yaw_correction_limit_rps >= self.angular_limit_rps:
-            raise ValueError('yaw correction must be below the command limit')
+        if self.gap_correction_limit_mps >= self.linear_limit_mps:
+            raise ValueError('gap correction must be below the command limit')
+        if (self.yaw_correction_limit_rps >= self.angular_limit_rps or
+                self.heading_correction_limit_rps >= self.angular_limit_rps):
+            raise ValueError(
+                'yaw/heading correction must be below the command limit')
         if self.max_session_distance_m > 1.0:
             raise ValueError('rigid-pair session distance must not exceed 1m')
 
@@ -261,6 +271,38 @@ def clamp(value, limit):
     return max(-limit, min(limit, float(value)))
 
 
+def smooth_deadband_correction(error, *, kp, deadband, limit):
+    """Return a continuous correction based on error outside a deadband."""
+    error = float(error)
+    kp = float(kp)
+    deadband = float(deadband)
+    limit = float(limit)
+    if (not all(math.isfinite(value) for value in
+                (error, kp, deadband, limit)) or
+            kp <= 0.0 or deadband <= 0.0 or limit <= 0.0):
+        raise ValueError('correction inputs must be finite and positive')
+    excess = abs(error) - deadband
+    if excess <= 0.0:
+        return 0.0
+    return math.copysign(min(kp * excess, limit), error)
+
+
+def bounded_gap_correction(limits, gap_error_m):
+    """Return bounded gap feedback without a speed jump at the deadband."""
+    return smooth_deadband_correction(
+        gap_error_m, kp=limits.gap_kp,
+        deadband=limits.gap_deadband_m,
+        limit=limits.gap_correction_limit_mps)
+
+
+def bounded_relative_yaw_correction(limits, yaw_error_rad):
+    """Ignore measured ArUco yaw noise, then correct sustained misalignment."""
+    return smooth_deadband_correction(
+        yaw_error_rad, kp=limits.yaw_kp,
+        deadband=limits.yaw_deadband_rad,
+        limit=limits.yaw_correction_limit_rps)
+
+
 def is_zero(command, tolerance=1e-9):
     return all(abs(float(value)) <= tolerance for value in command)
 
@@ -332,6 +374,49 @@ def capture_pair_reference(relative_pose):
     return values
 
 
+def capture_aligned_pair_reference(relative_pose):
+    """Keep measured spacing while targeting zero lateral and yaw error."""
+    forward, _, _ = capture_pair_reference(relative_pose)
+    return (forward, 0.0, 0.0)
+
+
+def pair_heading(front_yaw_rad, rear_yaw_rad):
+    """Return the wrap-safe mean heading of the two wheel odometry poses."""
+    front = float(front_yaw_rad)
+    rear = float(rear_yaw_rad)
+    if not all(math.isfinite(value) for value in (front, rear)):
+        raise ValueError('pair headings must be finite')
+    sine = math.sin(front) + math.sin(rear)
+    cosine = math.cos(front) + math.cos(rear)
+    if math.hypot(sine, cosine) <= 1e-9:
+        raise ValueError('pair headings cannot be opposite')
+    return math.atan2(sine, cosine)
+
+
+def heading_hold_omega(limits, reference_rad, front_yaw_rad, rear_yaw_rad):
+    """Return common yaw feedback that holds the pair's armed heading."""
+    error = angle_norm(
+        pair_heading(front_yaw_rad, rear_yaw_rad) - float(reference_rad))
+    return -smooth_deadband_correction(
+        error, kp=limits.heading_kp,
+        deadband=limits.heading_deadband_rad,
+        limit=limits.heading_correction_limit_rps)
+
+
+def hold_translation_heading(limits, intent, reference_rad,
+                             front_yaw_rad, rear_yaw_rad):
+    """Add common heading feedback to translation, leaving Q/E unchanged."""
+    values = tuple(float(value) for value in intent)
+    if len(values) != 3 or not all(math.isfinite(value) for value in values):
+        raise ValueError('pair intent must contain three finite values')
+    if abs(values[2]) > 1e-9 or math.hypot(values[0], values[1]) <= 1e-9:
+        return values
+    return (
+        values[0], values[1],
+        heading_hold_omega(
+            limits, reference_rad, front_yaw_rad, rear_yaw_rad))
+
+
 def split_pair_centre_twist(limits, intent, separation_m, *, gap_error_m,
                             lateral_error_m, yaw_error_rad):
     """Split one virtual pair-centre twist into symmetric robot commands."""
@@ -346,13 +431,11 @@ def split_pair_centre_twist(limits, intent, separation_m, *, gap_error_m,
         raise ValueError('pair separation must be positive')
 
     front, rear = RigidBodyKinematics(separation_m).split(*values)
-    gap_correction = clamp(
-        limits.gap_kp * gap_error_m, limits.linear_correction_limit_mps)
+    gap_correction = bounded_gap_correction(limits, gap_error_m)
     lateral_correction = clamp(
         limits.lateral_kp * lateral_error_m,
         limits.linear_correction_limit_mps)
-    yaw_correction = clamp(
-        limits.yaw_kp * yaw_error_rad, limits.yaw_correction_limit_rps)
+    yaw_correction = bounded_relative_yaw_correction(limits, yaw_error_rad)
     front = (
         front[0] - 0.5 * gap_correction,
         front[1] - 0.5 * lateral_correction,

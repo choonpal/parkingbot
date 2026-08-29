@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Keyboard/web control for a bounded ArUco-held virtual rigid robot pair.
 
-One node owns both manual command channels.  It captures the currently
-observed ArUco forward/lateral/yaw as the exact reference when armed, commands
-Front and Rear as a virtual rigid pair, and stops both on stale telemetry,
-graph conflicts, relative-pose deviation, or a bounded session-distance limit.
-No gripper command is exposed in this mode.
+One node owns both manual command channels.  It captures the observed ArUco
+spacing when armed, holds zero lateral/relative-yaw error and the pair's wheel
+odometry heading during translation, and stops both on stale telemetry, graph
+conflicts, relative-pose deviation, or a bounded session-distance limit.  No
+gripper command is exposed in this mode.
 """
 
 from __future__ import annotations
@@ -35,8 +35,10 @@ from cooperative_parking_robot.rigid_pair_teleop_core import (
     MarkerRecoveryGate,
     RigidPairTeleopLimits,
     angle_norm,
-    capture_pair_reference,
+    capture_aligned_pair_reference,
     evaluate_rigid_pair,
+    hold_translation_heading,
+    pair_heading,
     split_pair_centre_twist,
     is_zero,
     median_relative_pose,
@@ -303,6 +305,7 @@ async function tick() {
     row('좌우 오차', n(p.lateral_error_cm, 1, ' cm')) +
     row('각도 오차(3프레임)', n(p.yaw_error_deg, 1, '°')) +
     row('각도 원시값', n(p.raw_yaw_error_deg, 1, '°')) +
+    row('전체 진행각 오차', n(p.pair_heading_error_deg, 1, '°')) +
     row('마커 안전상태', esc(p.marker_tracking) + ' (' +
       Number(p.recovery_samples) + '/' + Number(p.recovery_required) + ')');
   document.getElementById('commands').innerHTML =
@@ -417,8 +420,16 @@ class RigidPairTeleopNode(Node):
         self.declare_parameter('arm_timeout_s', 10.0)
         self.declare_parameter('min_marker_distance_m', 0.10)
         self.declare_parameter('max_marker_distance_m', 1.00)
-        self.declare_parameter('initial_lateral_limit_m', 0.10)
-        self.declare_parameter('initial_yaw_limit_deg', 15.0)
+        self.declare_parameter('initial_lateral_limit_m', 0.02)
+        self.declare_parameter('initial_yaw_limit_deg', 3.0)
+        self.declare_parameter('gap_kp', 1.8)
+        self.declare_parameter('gap_deadband_m', 0.004)
+        self.declare_parameter('gap_correction_limit_mps', 0.025)
+        self.declare_parameter('yaw_kp', 1.5)
+        self.declare_parameter('yaw_deadband_deg', 0.8)
+        self.declare_parameter('heading_kp', 1.2)
+        self.declare_parameter('heading_deadband_deg', 0.5)
+        self.declare_parameter('heading_correction_limit_rps', 0.04)
         self.declare_parameter('gap_stop_m', 0.03)
         self.declare_parameter('lateral_stop_m', 0.03)
         self.declare_parameter('yaw_stop_deg', 5.0)
@@ -434,6 +445,18 @@ class RigidPairTeleopNode(Node):
             angular_speed=float(gp('angular_speed_rps').value),
             deadman_s=float(gp('deadman_s').value))
         self.limits = RigidPairTeleopLimits(
+            gap_kp=float(gp('gap_kp').value),
+            gap_deadband_m=float(gp('gap_deadband_m').value),
+            gap_correction_limit_mps=float(
+                gp('gap_correction_limit_mps').value),
+            yaw_kp=float(gp('yaw_kp').value),
+            yaw_deadband_rad=math.radians(float(
+                gp('yaw_deadband_deg').value)),
+            heading_kp=float(gp('heading_kp').value),
+            heading_deadband_rad=math.radians(float(
+                gp('heading_deadband_deg').value)),
+            heading_correction_limit_rps=float(
+                gp('heading_correction_limit_rps').value),
             gap_stop_m=float(gp('gap_stop_m').value),
             lateral_stop_m=float(gp('lateral_stop_m').value),
             yaw_stop_rad=math.radians(float(gp('yaw_stop_deg').value)),
@@ -513,6 +536,12 @@ class RigidPairTeleopNode(Node):
                     self.placement_lateral_tolerance,
                     self.placement_yaw_tolerance))):
             raise ValueError('placement guide tolerances must be positive')
+        if (not all(math.isfinite(value) and value > 0.0 for value in (
+                    self.initial_lateral_limit, self.initial_yaw_limit)) or
+                self.initial_lateral_limit > self.limits.lateral_stop_m or
+                self.initial_yaw_limit > self.limits.yaw_stop_rad):
+            raise ValueError(
+                'initial alignment limits must fit the running safety limits')
 
         self.state = 'IDLE'
         self.decision = '정지 상태입니다. 강체 쌍 준비를 누르세요.'
@@ -520,6 +549,7 @@ class RigidPairTeleopNode(Node):
         self.estop = False
         self.arm_deadline = 0.0
         self.reference = None
+        self.pair_heading_reference = None
         self.relative = None
         self.raw_relative = None
         self.relative_samples = deque(maxlen=3)
@@ -831,9 +861,13 @@ class RigidPairTeleopNode(Node):
                 blockers.append(
                     f'ArUco 간격 {forward * 100.0:.1f} cm가 허용 범위 밖')
             if abs(lateral) > self.initial_lateral_limit:
-                blockers.append('초기 좌우 정렬이 10 cm보다 큼')
+                blockers.append(
+                    f'초기 좌우 정렬이 '
+                    f'{self.initial_lateral_limit * 100.0:.1f} cm보다 큼')
             if abs(yaw) > self.initial_yaw_limit:
-                blockers.append('초기 상대 각도가 15°보다 큼')
+                blockers.append(
+                    f'초기 상대 각도가 '
+                    f'{math.degrees(self.initial_yaw_limit):.1f}°보다 큼')
         conflicts = self._graph_conflicts()
         if conflicts:
             blockers.append('다른 주행 발행자 존재: ' + ', '.join(conflicts))
@@ -875,6 +909,7 @@ class RigidPairTeleopNode(Node):
                     self._publish_zero()
                     self.state = 'IDLE'
                     self.reference = None
+                    self.pair_heading_reference = None
                     self.reason = ''
                     self.decision = '정지하고 양쪽 제어권을 해제했습니다.'
                 continue
@@ -955,11 +990,13 @@ class RigidPairTeleopNode(Node):
             self._publish_zero()
             blockers = self._blockers(now, require_manual=True)
             if not blockers:
-                # Raw ID0 pose is the feedback reference.  The calibrated
-                # robot-centre lever arm is pair_separation_m, used below.
-                self.reference = capture_pair_reference(self.relative)
+                # Preserve the measured forward spacing, but actively align
+                # lateral offset and relative yaw to the calibrated zero.
+                self.reference = capture_aligned_pair_reference(self.relative)
                 self.start_odom = {
                     role: self.odom[role]['pose'] for role in ('front', 'rear')}
+                self.pair_heading_reference = pair_heading(
+                    self.start_odom['front'][2], self.start_odom['rear'][2])
                 self.distance = {'front': 0.0, 'rear': 0.0}
                 for role in ('front', 'rear'):
                     self.odom_path[role].reset()
@@ -968,7 +1005,8 @@ class RigidPairTeleopNode(Node):
                 self.state = 'ARMED'
                 self.decision = (
                     f'준비 완료 · 현재 ArUco 간격 '
-                    f'{self.reference[0] * 100.0:.1f} cm를 목표로 유지합니다.')
+                    f'{self.reference[0] * 100.0:.1f} cm와 정렬 자세를 '
+                    '목표로 유지합니다.')
             elif now >= self.arm_deadline:
                 self._fault('FAULT', '준비 시간 초과: ' + blockers[0])
             else:
@@ -979,8 +1017,9 @@ class RigidPairTeleopNode(Node):
             if owns_control:
                 self._publish_zero()
             return
-        if self.reference is None or self.relative is None:
-            self._fault('FAULT', 'ArUco 기준값이 없음')
+        if (self.reference is None or self.relative is None or
+                self.pair_heading_reference is None):
+            self._fault('FAULT', 'ArUco 또는 진행각 기준값이 없음')
             return
 
         forward, lateral, yaw = self.relative
@@ -1039,6 +1078,11 @@ class RigidPairTeleopNode(Node):
             self.key_intent = '정지'
             self._publish_zero()
             return
+        # W/A/S/D translation holds the heading captured at Arm. Q/E keeps
+        # its existing rigid-pair rotation path and is intentionally untouched.
+        intent = hold_translation_heading(
+            self.limits, intent, self.pair_heading_reference,
+            self.odom['front']['pose'][2], self.odom['rear']['pose'][2])
         # ID0's raw forward value is the relative-pose reference only.  Its
         # camera-to-marker offset is not the Front/Rear centre lever arm.
         front_cmd, rear_cmd = split_pair_centre_twist(
@@ -1062,6 +1106,18 @@ class RigidPairTeleopNode(Node):
             None if relative is None or self.raw_relative is None or
             reference is None
             else angle_norm(self.raw_relative[2] - reference[2]))
+        pair_heading_error = None
+        if (self.pair_heading_reference is not None and
+                all(self.odom[role]['pose'] is not None
+                    for role in ('front', 'rear'))):
+            try:
+                pair_heading_error = angle_norm(
+                    pair_heading(
+                        self.odom['front']['pose'][2],
+                        self.odom['rear']['pose'][2]) -
+                    self.pair_heading_reference)
+            except ValueError:
+                pair_heading_error = None
         placement = evaluate_placement_guide(
             relative_pose=relative, marker_fresh=self._marker_fresh(now),
             stable=self._relative_stable_for_arm(now),
@@ -1089,6 +1145,8 @@ class RigidPairTeleopNode(Node):
                 math.degrees(yaw_error),
                 'raw_yaw_error_deg': None if raw_yaw_error is None else
                 math.degrees(raw_yaw_error),
+                'pair_heading_error_deg': None if pair_heading_error is None
+                else math.degrees(pair_heading_error),
                 'filter_samples': len(self.relative_samples),
                 'marker_tracking': (
                     '안정' if self._marker_fresh(now) else

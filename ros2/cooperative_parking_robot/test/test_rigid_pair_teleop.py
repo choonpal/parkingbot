@@ -10,10 +10,16 @@ from builtin_interfaces.msg import Time
 
 from cooperative_parking_robot.keyboard_follow_node import RigidPairTeleopNode
 from cooperative_parking_robot.rigid_pair_teleop_core import (
+    bounded_gap_correction,
+    bounded_relative_yaw_correction,
     MarkerRecoveryGate,
     RigidPairTeleopLimits,
+    capture_aligned_pair_reference,
     capture_pair_reference,
     evaluate_rigid_pair,
+    heading_hold_omega,
+    hold_translation_heading,
+    pair_heading,
     split_pair_centre_twist,
     OdomPathAccumulator,
     relative_pose_is_stable,
@@ -34,6 +40,11 @@ def _safe_inputs():
 def test_canonical_core_captures_measured_spacing_without_nominal_geometry():
     observed = (0.423, -0.014, math.radians(3.0))
     assert capture_pair_reference(observed) == observed
+
+
+def test_aligned_reference_keeps_spacing_but_targets_zero_lateral_and_yaw():
+    observed = (0.423, -0.014, math.radians(3.0))
+    assert capture_aligned_pair_reference(observed) == (0.423, 0.0, 0.0)
 
 
 @pytest.mark.parametrize('intent', [
@@ -69,6 +80,63 @@ def test_relative_pose_feedback_is_symmetric_between_both_robots():
     assert front[0] < rear[0]
     assert front[1] > rear[1]
     assert front[2] < rear[2]
+
+
+def test_gap_correction_is_continuous_after_deadband_and_bounded():
+    limits = RigidPairTeleopLimits()
+    assert bounded_gap_correction(limits, 0.004) == 0.0
+    assert bounded_gap_correction(limits, 0.005) == pytest.approx(0.0018)
+    assert bounded_gap_correction(limits, -0.005) == pytest.approx(-0.0018)
+    assert bounded_gap_correction(limits, 0.020) == pytest.approx(0.025)
+
+
+def test_relative_yaw_feedback_rejects_noise_then_grows_smoothly():
+    limits = RigidPairTeleopLimits()
+    assert bounded_relative_yaw_correction(
+        limits, math.radians(0.8)) == pytest.approx(0.0)
+    assert bounded_relative_yaw_correction(
+        limits, math.radians(1.8)) == pytest.approx(math.radians(1.5))
+    assert bounded_relative_yaw_correction(
+        limits, math.radians(10.0)) == pytest.approx(
+            limits.yaw_correction_limit_rps)
+
+
+def test_pair_heading_mean_handles_angle_wraparound():
+    mean = pair_heading(math.radians(179.0), math.radians(-179.0))
+    assert abs(math.degrees(mean)) == pytest.approx(180.0)
+
+
+def test_heading_hold_is_common_signed_feedback_with_deadband_and_limit():
+    limits = RigidPairTeleopLimits()
+    assert heading_hold_omega(
+        limits, 0.0, math.radians(0.4), math.radians(0.4)) == 0.0
+    assert heading_hold_omega(
+        limits, 0.0, math.radians(1.5), math.radians(1.5)) < 0.0
+    assert heading_hold_omega(
+        limits, 0.0, math.radians(-20.0), math.radians(-20.0)) == pytest.approx(
+            limits.heading_correction_limit_rps)
+
+
+def test_heading_hold_applies_to_wasd_but_leaves_qe_rotation_unchanged():
+    limits = RigidPairTeleopLimits()
+    translated = hold_translation_heading(
+        limits, (0.0628, 0.0, 0.0), 0.0,
+        math.radians(2.0), math.radians(2.0))
+    assert translated[:2] == pytest.approx((0.0628, 0.0))
+    assert translated[2] < 0.0
+
+    rotation = (0.0, 0.0, 0.12)
+    assert hold_translation_heading(
+        limits, rotation, 0.0,
+        math.radians(2.0), math.radians(2.0)) == rotation
+
+
+def test_stronger_gap_correction_does_not_change_pair_centre_intent():
+    front, rear = split_pair_centre_twist(
+        RigidPairTeleopLimits(), (0.0628, 0.0, 0.0), 0.785,
+        gap_error_m=0.020, lateral_error_m=0.0, yaw_error_rad=0.0)
+    assert (front[0] + rear[0]) / 2.0 == pytest.approx(0.0628)
+    assert rear[0] - front[0] == pytest.approx(0.025)
 
 
 def test_session_distance_accumulates_path_instead_of_start_end_displacement():

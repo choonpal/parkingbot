@@ -93,6 +93,19 @@ def generate_launch_description():
         DeclareLaunchArgument('rigid_pair_dashboard_port', default_value='5007'),
         DeclareLaunchArgument('rigid_pair_linear_speed_mps', default_value='0.0628'),
         DeclareLaunchArgument('rigid_pair_angular_speed_rps', default_value='0.12'),
+        DeclareLaunchArgument('rigid_pair_gap_kp', default_value='1.8'),
+        DeclareLaunchArgument(
+            'rigid_pair_gap_deadband_m', default_value='0.004'),
+        DeclareLaunchArgument(
+            'rigid_pair_gap_correction_limit_mps', default_value='0.025'),
+        DeclareLaunchArgument('rigid_pair_yaw_kp', default_value='1.5'),
+        DeclareLaunchArgument(
+            'rigid_pair_yaw_deadband_deg', default_value='0.8'),
+        DeclareLaunchArgument('rigid_pair_heading_kp', default_value='1.2'),
+        DeclareLaunchArgument(
+            'rigid_pair_heading_deadband_deg', default_value='0.5'),
+        DeclareLaunchArgument(
+            'rigid_pair_heading_correction_limit_rps', default_value='0.04'),
         DeclareLaunchArgument(
             'rigid_pair_marker_loss_grace_s', default_value='0.60'),
         DeclareLaunchArgument(
@@ -258,6 +271,20 @@ def generate_launch_description():
             parameters=[LaunchConfiguration('id0_calibration'), {
                 'linear_speed_mps': _float('rigid_pair_linear_speed_mps'),
                 'angular_speed_rps': _float('rigid_pair_angular_speed_rps'),
+                'gap_kp': _float('rigid_pair_gap_kp'),
+                'gap_deadband_m': _float('rigid_pair_gap_deadband_m'),
+                'gap_correction_limit_mps': _float(
+                    'rigid_pair_gap_correction_limit_mps'),
+                'yaw_kp': _float('rigid_pair_yaw_kp'),
+                'yaw_deadband_deg': _float(
+                    'rigid_pair_yaw_deadband_deg'),
+                'heading_kp': _float('rigid_pair_heading_kp'),
+                'heading_deadband_deg': _float(
+                    'rigid_pair_heading_deadband_deg'),
+                'heading_correction_limit_rps': _float(
+                    'rigid_pair_heading_correction_limit_rps'),
+                'initial_lateral_limit_m': 0.02,
+                'initial_yaw_limit_deg': 3.0,
                 'marker_loss_grace_s': _float(
                     'rigid_pair_marker_loss_grace_s'),
                 'marker_recovery_samples': _int(
@@ -289,6 +316,20 @@ def generate_launch_description():
             parameters=[LaunchConfiguration('id0_calibration'), {
                 'linear_speed_mps': _float('follow_linear_speed_mps'),
                 'angular_speed_rps': _float('follow_angular_speed_rps'),
+                'gap_kp': _float('rigid_pair_gap_kp'),
+                'gap_deadband_m': _float('rigid_pair_gap_deadband_m'),
+                'gap_correction_limit_mps': _float(
+                    'rigid_pair_gap_correction_limit_mps'),
+                'yaw_kp': _float('rigid_pair_yaw_kp'),
+                'yaw_deadband_deg': _float(
+                    'rigid_pair_yaw_deadband_deg'),
+                'heading_kp': _float('rigid_pair_heading_kp'),
+                'heading_deadband_deg': _float(
+                    'rigid_pair_heading_deadband_deg'),
+                'heading_correction_limit_rps': _float(
+                    'rigid_pair_heading_correction_limit_rps'),
+                'initial_lateral_limit_m': 0.02,
+                'initial_yaw_limit_deg': 3.0,
                 'marker_loss_grace_s': _float(
                     'rigid_pair_marker_loss_grace_s'),
                 'marker_recovery_samples': _int(

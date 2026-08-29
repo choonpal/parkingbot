@@ -18,9 +18,9 @@
 시험이 완료되지 않았으므로 사람 없는 무인 차량 인양은 **NO-GO**다.
 
 현재 통합 감사 범위는 `stop_after_align=true`인 차량 하부 진입·차축 정렬·정지까지다.
-Front에는 최신 통합본을 배포해 초음파-그리퍼 X offset `0.0m`를 확인했지만 Rear
-두 값과 Rear/Jetson 동일 SHA 배포가 미확정이므로 자동 진입은 현재 **NO-GO**다.
-최신 판정은
+Front와 Rear의 초음파-그리퍼 X offset 네 값 `0.0m`는 역할별 수동 왕복으로
+확인했다. 그러나 세 장비 동일 SHA 배포와 단계별 자동 진입 실기 gate가
+미완료이므로 자동 진입은 현재 **NO-GO**다. 최신 판정은
 [현재 통합 상태](../CURRENT_INTEGRATION_STATUS.md)를 따른다.
 
 ## 2. 시스템 구성

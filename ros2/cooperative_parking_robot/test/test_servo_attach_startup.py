@@ -143,7 +143,7 @@ def bridge_for_unit_test(profile='robot-2'):
     node.communication_recovering = False
     node.communication_recovered = False
     node.recovery_ack_count = 0
-    node.heartbeat_lock = threading.Lock()
+    node.heartbeat_lock = threading.RLock()
     node.heartbeat_stats = {
         'tx_count': 0, 'ack_count': 0, 'lost_count': 0,
         'stale_ack_count': 0, 'duplicate_ack_count': 0,
@@ -496,6 +496,30 @@ def test_partial_uart_write_is_transport_fault(monkeypatch):
     node.send_hello()
     assert node.transport_fault == 'ERR,UART_PARTIAL_WRITE'
     assert node.ser is None
+    assert any('"kind":"hello"' in message
+               for level, message in node.logger.messages
+               if level == 'error')
+
+
+def test_repeated_callbacks_cannot_flood_heartbeat_slot(monkeypatch):
+    node = bridge_for_unit_test()
+    now = [100.0]
+    monkeypatch.setattr(bridge_module.time, 'monotonic', lambda: now[0])
+    node.hello_acknowledged = True
+    node.next_heartbeat_due = now[0]
+
+    node.send_heartbeat()
+    node.send_heartbeat()
+    node.send_heartbeat()
+    heartbeats = [frame for frame in node.ser.writes
+                  if frame.startswith(b'@HB,')]
+    assert len(heartbeats) == 1
+
+    now[0] += node.heartbeat_period
+    node.send_heartbeat()
+    heartbeats = [frame for frame in node.ser.writes
+                  if frame.startswith(b'@HB,')]
+    assert len(heartbeats) == 2
 
 
 def test_shutdown_zero_survives_repeated_sigint_during_logging():
@@ -516,7 +540,7 @@ def test_serial_port_is_opened_exclusively():
     assert 'exclusive=True' in text
 
 
-def test_heartbeat_and_uart_use_dedicated_multithreaded_executor_path():
+def test_heartbeat_producer_is_independent_of_ros_callback_execution():
     bridge_source = Path(bridge_module.__file__).read_text(encoding='utf-8')
     mvp_source = Path(
         bridge_module.__file__).with_name('mvp_stm32_bridge_node.py').read_text(
@@ -524,8 +548,10 @@ def test_heartbeat_and_uart_use_dedicated_multithreaded_executor_path():
 
     assert 'MutuallyExclusiveCallbackGroup' in bridge_source
     assert 'self.serial_callback_group' in bridge_source
-    assert 'self.heartbeat_period, self.send_heartbeat,' in bridge_source
     assert 'callback_group=self.serial_callback_group' in bridge_source
+    assert 'target=self._heartbeat_producer_loop' in bridge_source
+    assert "name=f'{self.role}-heartbeat-producer'" in bridge_source
+    assert 'self.heartbeat_period, self.send_heartbeat,' not in bridge_source
     assert 'MultiThreadedExecutor(num_threads=2)' in bridge_source
     assert 'MultiThreadedExecutor(num_threads=2)' in mvp_source
     assert 'executor.spin()' in mvp_source

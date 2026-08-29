@@ -233,6 +233,11 @@ def generate_launch_description():
                 'fps': _float('camera_fps'),
                 'buffer_size': 1,
                 'require_camera': True,
+                'runtime_enable_topic': '/rear/relative_vision_enable',
+                'runtime_ready_topic': '/rear/marker_camera_ready',
+                'start_enabled': False,
+                'standby_fps': 1.0,
+                'activation_drop_frames': 2,
             }],
             output='screen'),
 
@@ -395,6 +400,9 @@ def generate_launch_description():
                 'yaw_sign': _float('rear_aruco_yaw_sign'),
                 'gray_gain': _float('rear_aruco_gray_gain'),
                 'allow_uncalibrated': False,
+                'runtime_enable_topic': '/rear/relative_vision_enable',
+                'runtime_ready_topic': '/rear/relative_vision_ready',
+                'start_enabled': False,
             }],
             output='screen'),
 

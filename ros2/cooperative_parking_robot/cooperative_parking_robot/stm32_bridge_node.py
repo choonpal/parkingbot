@@ -91,6 +91,7 @@ class Stm32BridgeNode(Node):
         # 이 구간에 framed 명령이 겹치면 부분 frame/legacy byte가 RX queue를
         # 오염시킬 수 있으므로 입력을 비운 뒤에만 첫 HELLO를 보낸다.
         self.declare_parameter('serial_startup_settle_s', 0.50)
+        self.declare_parameter('serial_write_timeout_s', 0.05)
         self.declare_parameter('enable_serial', True)
         self.declare_parameter('require_serial', False)
         # BOM의 100 mm 메카넘 휠 기준 명목 반경. 실물 유효반경은 실측 후 갱신.
@@ -128,6 +129,9 @@ class Stm32BridgeNode(Node):
         self.declare_parameter('heartbeat_tx_late_warn_s', 0.04)
         self.declare_parameter('heartbeat_rtt_warn_s', 0.10)
         self.declare_parameter('heartbeat_recovery_ack_count', 3)
+        # Velocity is a replaceable state update. 20 Hz remains well inside
+        # the 250 ms command watchdog while leaving UART headroom for HB/ACK.
+        self.declare_parameter('velocity_tx_rate_hz', 20.0)
         self.declare_parameter('uart_frame_fault_count', 3)
         self.declare_parameter('uart_frame_fault_window_s', 1.0)
         self.declare_parameter('serial_reconnect_interval_s', 1.0)
@@ -167,6 +171,8 @@ class Stm32BridgeNode(Node):
             self.get_parameter('uart_frame_fault_window_s').value)
         self.serial_reconnect_interval = float(
             self.get_parameter('serial_reconnect_interval_s').value)
+        self.velocity_tx_rate_hz = float(
+            self.get_parameter('velocity_tx_rate_hz').value)
         if (self.hello_retry_interval <= 0.0 or
                 self.hello_handshake_timeout <= self.hello_retry_interval):
             raise ValueError('invalid HELLO retry/timeout parameters')
@@ -186,6 +192,8 @@ class Stm32BridgeNode(Node):
             raise ValueError('invalid UART frame fault threshold')
         if self.serial_reconnect_interval < 0.25:
             raise ValueError('serial_reconnect_interval_s must be at least 0.25')
+        if not 10.0 <= self.velocity_tx_rate_hz <= 50.0:
+            raise ValueError('velocity_tx_rate_hz must be in [10,50]')
         self.max_linear = float(self.get_parameter('max_linear_mps').value)
         self.max_angular = float(self.get_parameter('max_angular_rps').value)
         self.protocol = UartProtocol()
@@ -195,8 +203,12 @@ class Stm32BridgeNode(Node):
                 f'serial_baud must match firmware ({UART_BAUD_RATE})')
         self.serial_startup_settle = float(
             self.get_parameter('serial_startup_settle_s').value)
+        self.serial_write_timeout = float(
+            self.get_parameter('serial_write_timeout_s').value)
         if not 0.0 <= self.serial_startup_settle <= 5.0:
             raise ValueError('serial_startup_settle_s must be in [0,5]')
+        if not 0.01 <= self.serial_write_timeout <= 0.10:
+            raise ValueError('serial_write_timeout_s must be in [0.01,0.10]')
         self.ultrasonic_min_range = float(
             self.get_parameter('ultrasonic_min_range_m').value)
         self.ultrasonic_max_range = float(
@@ -266,7 +278,12 @@ class Stm32BridgeNode(Node):
         self.communication_recovering = False
         self.communication_recovered = False
         self.recovery_ack_count = 0
-        self.heartbeat_lock = threading.Lock()
+        # ACK processing, the dedicated producer and transport recovery may
+        # call one another. RLock keeps session transitions atomic without a
+        # self-deadlock on the fail-closed recovery path.
+        self.heartbeat_lock = threading.RLock()
+        self.heartbeat_thread_stop = threading.Event()
+        self.heartbeat_thread = None
         self.heartbeat_stats = {
             'tx_count': 0, 'ack_count': 0, 'lost_count': 0,
             'stale_ack_count': 0, 'duplicate_ack_count': 0,
@@ -325,7 +342,7 @@ class Stm32BridgeNode(Node):
                     self.serial_port,
                     self.serial_baud,
                     timeout=0.0,
-                    write_timeout=0.05,
+                    write_timeout=self.serial_write_timeout,
                     exclusive=True)
                 self.ser.reset_input_buffer()
                 self.serial_ready_at = (
@@ -341,6 +358,7 @@ class Stm32BridgeNode(Node):
         elif require_serial:
             raise RuntimeError('pyserial is required when require_serial=true')
         self.tx_scheduler.start()
+        self._start_heartbeat_producer()
 
         # ===== 구독 =====
         self.create_subscription(
@@ -394,20 +412,16 @@ class Stm32BridgeNode(Node):
             String, f'/{self.role}/heartbeat_diagnostics', 10)
 
         # ===== 루프 =====
-        # Heartbeat 생성과 UART ACK 수신은 motion/telemetry 콜백 부하와
-        # 실행 슬롯을 공유하면 안 된다. STM32 watchdog은 300 ms이므로 일반
-        # 콜백이 길어질 때 SingleThreadedExecutor에서 heartbeat가 큐에 늦게
-        # 들어가는 것만으로도 안전 latch가 걸릴 수 있다. 같은 그룹 안에서는
-        # protocol 상태를 직렬화하고, 아래 main의 별도 executor worker가 이
-        # 그룹을 일반 콜백과 병렬로 처리한다.
+        # UART RX/handshake는 일반 motion 콜백과 분리한다. Heartbeat 생성은
+        # 이 ROS callback group에도 의존하지 않고 전용 producer thread가
+        # 절대 monotonic 주기로 scheduler의 replaceable slot에 넣는다.
         self.serial_callback_group = MutuallyExclusiveCallbackGroup()
         self.create_timer(
             0.02, self.read_serial,
             callback_group=self.serial_callback_group)  # UART 수신
-        self.create_timer(0.02, self.send_velocity_loop)  # 속도 송신 50Hz (감쇠 포함)
         self.create_timer(
-            self.heartbeat_period, self.send_heartbeat,
-            callback_group=self.serial_callback_group)
+            1.0 / self.velocity_tx_rate_hz,
+            self.send_velocity_loop)  # bounded replaceable velocity state
         self.create_timer(
             0.1, self.send_servo_attach,
             callback_group=self.serial_callback_group)  # bounded startup retry
@@ -589,6 +603,8 @@ class Stm32BridgeNode(Node):
 
     def shutdown_stop(self):
         """종료 직전 0 속도를 보낸다. 실패해도 종료를 막지 않는다."""
+        # Do not let a concurrent heartbeat enqueue behind the final zero.
+        self._stop_heartbeat_producer()
         if self.ser is None:
             return
         sent = False
@@ -739,16 +755,52 @@ class Stm32BridgeNode(Node):
         if not self.servo_attached:
             self.send_servo_attach()
 
-    def send_heartbeat(self):
-        if (not self.ser or not self.hello_acknowledged or
-                self.estop_latched or
-                (self.active_fault and not (
-                    self.communication_recovering or
-                    self.communication_recovered)) or
-                self.transport_fault):
+    def _start_heartbeat_producer(self):
+        """Start the watchdog-critical producer independently of ROS work."""
+        if (self.heartbeat_thread is not None and
+                self.heartbeat_thread.is_alive()):
             return
+        self.heartbeat_thread_stop.clear()
+        self.heartbeat_thread = threading.Thread(
+            target=self._heartbeat_producer_loop,
+            name=f'{self.role}-heartbeat-producer', daemon=True)
+        self.heartbeat_thread.start()
+
+    def _stop_heartbeat_producer(self, timeout=1.0):
+        stop_event = getattr(self, 'heartbeat_thread_stop', None)
+        if stop_event is not None:
+            stop_event.set()
+        thread = getattr(self, 'heartbeat_thread', None)
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout)
+        self.heartbeat_thread = None
+
+    def _heartbeat_producer_loop(self):
+        """Use absolute monotonic ticks and never emit a catch-up burst."""
+        next_tick = time.monotonic()
+        while not self.heartbeat_thread_stop.is_set():
+            now = time.monotonic()
+            wait_s = max(0.0, next_tick - now)
+            if self.heartbeat_thread_stop.wait(wait_s):
+                return
+            self.send_heartbeat()
+            next_tick += self.heartbeat_period
+            now = time.monotonic()
+            if next_tick <= now:
+                next_tick = now + self.heartbeat_period
+
+    def send_heartbeat(self, *, force=False):
         now = time.monotonic()
         with self.heartbeat_lock:
+            if (not self.ser or not self.hello_acknowledged or
+                    self.estop_latched or
+                    (self.active_fault and not (
+                        self.communication_recovering or
+                        self.communication_recovered)) or
+                    self.transport_fault):
+                return
+            if not force and now < self.next_heartbeat_due:
+                return
             oldest_tx = (min(self.outstanding_heartbeats.values())
                          if self.outstanding_heartbeats else 0.0)
             ack_reference = self.last_heartbeat_ack_time or oldest_tx
@@ -758,21 +810,22 @@ class Stm32BridgeNode(Node):
                     not self.communication_recovering):
                 self._begin_communication_recovery('HEARTBEAT_ACK_TIMEOUT')
                 return
-        self.heartbeat_sequence += 1
-        token = f'{self.session_id}:{self.heartbeat_sequence}'
-        due = self.next_heartbeat_due
-        self.next_heartbeat_due = max(due + self.heartbeat_period,
-                                      now + self.heartbeat_period)
+            self.heartbeat_sequence += 1
+            token = f'{self.session_id}:{self.heartbeat_sequence}'
+            due = self.next_heartbeat_due
+            self.next_heartbeat_due = max(due + self.heartbeat_period,
+                                          now + self.heartbeat_period)
         self._write(self.protocol.encode_heartbeat(token), kind='heartbeat',
                     priority=P1_REALTIME, deadline=due,
                     metadata={'token': token, 'due': due})
 
     def _heartbeat_fresh(self, now=None):
         now = time.monotonic() if now is None else now
-        return (self.hello_acknowledged and
-                self.last_heartbeat_ack_time > 0.0 and
-                now - self.last_heartbeat_ack_time <
-                self.heartbeat_ack_timeout)
+        with self.heartbeat_lock:
+            return (self.hello_acknowledged and
+                    self.last_heartbeat_ack_time > 0.0 and
+                    now - self.last_heartbeat_ack_time <
+                    self.heartbeat_ack_timeout)
 
     def _latch_fault(self, status, *, transport=False):
         if not status.startswith(('ERR,', 'ESTOP')):
@@ -798,34 +851,35 @@ class Stm32BridgeNode(Node):
 
     def _begin_communication_recovery(self, code):
         """Open a new communication session but keep motion fault-latched."""
-        if self.communication_recovering or self.estop_latched:
-            return
-        self.heartbeat_stats['timeout_count'] += 1
-        self.heartbeat_stats['lost_count'] += len(
-            self.outstanding_heartbeats)
-        self.communication_recovering = True
-        self.communication_recovered = False
-        self.recovery_ack_count = 0
-        self._latch_fault(f'ERR,{code}')
-        self.publish_status(
-            f'INFO,RECOVERY_STATE:FAULTED_RECOVERABLE:{code}')
-        self.tx_scheduler.discard_non_emergency()
-        self.session_id = secrets.token_hex(8)
-        self.hello_started_at = time.monotonic()
-        self.last_hello_request_time = None
-        self.hello_acknowledged = False
-        self.last_zero_request_time = None
-        self.zero_command_sent = False
-        self.zero_command_acknowledged = False
-        self.servo_attached = False
-        self.servo_attach_requested = False
-        self.last_servo_attach_request_time = None
-        self.ultrasonic_enable_target = False
-        self.ultrasonic_command_acknowledged = True
-        self.ultrasonic_health.disable()
-        self.outstanding_heartbeats.clear()
-        self.last_heartbeat_ack_time = 0.0
-        self.next_heartbeat_due = time.monotonic()
+        with self.heartbeat_lock:
+            if self.communication_recovering or self.estop_latched:
+                return
+            self.heartbeat_stats['timeout_count'] += 1
+            self.heartbeat_stats['lost_count'] += len(
+                self.outstanding_heartbeats)
+            self.communication_recovering = True
+            self.communication_recovered = False
+            self.recovery_ack_count = 0
+            self._latch_fault(f'ERR,{code}')
+            self.publish_status(
+                f'INFO,RECOVERY_STATE:FAULTED_RECOVERABLE:{code}')
+            self.tx_scheduler.discard_non_emergency()
+            self.session_id = secrets.token_hex(8)
+            self.hello_started_at = time.monotonic()
+            self.last_hello_request_time = None
+            self.hello_acknowledged = False
+            self.last_zero_request_time = None
+            self.zero_command_sent = False
+            self.zero_command_acknowledged = False
+            self.servo_attached = False
+            self.servo_attach_requested = False
+            self.last_servo_attach_request_time = None
+            self.ultrasonic_enable_target = False
+            self.ultrasonic_command_acknowledged = True
+            self.ultrasonic_health.disable()
+            self.outstanding_heartbeats.clear()
+            self.last_heartbeat_ack_time = 0.0
+            self.next_heartbeat_due = time.monotonic()
         self.get_logger().warn(
             f'[{self.role}] communication recovery session started; '
             'motion remains fault-latched')
@@ -834,15 +888,15 @@ class Stm32BridgeNode(Node):
     def publish_heartbeat_diagnostics(self):
         with self.heartbeat_lock:
             snapshot = dict(self.heartbeat_stats)
-        snapshot.update({
-            'role': self.role,
-            'session': self.session_id,
-            'recovering': self.communication_recovering,
-            'communication_recovered': self.communication_recovered,
-            'motion_fault_latched': self.active_fault is not None,
-            'outstanding_count': len(self.outstanding_heartbeats),
-            'intended_period_ms': self.heartbeat_period * 1000.0,
-        })
+            snapshot.update({
+                'role': self.role,
+                'session': self.session_id,
+                'recovering': self.communication_recovering,
+                'communication_recovered': self.communication_recovered,
+                'motion_fault_latched': self.active_fault is not None,
+                'outstanding_count': len(self.outstanding_heartbeats),
+                'intended_period_ms': self.heartbeat_period * 1000.0,
+            })
         self.pub_heartbeat_diag.publish(String(
             data=json.dumps(snapshot, separators=(',', ':'), sort_keys=True)))
 
@@ -880,7 +934,33 @@ class Stm32BridgeNode(Node):
             status = ('ERR,UART_PARTIAL_WRITE'
                       if 'partial UART write' in str(error)
                       else 'ERR,UART_WRITE')
-            self._latch_transport_fault(status, str(error))
+            pending = (
+                self.tx_scheduler.pending_snapshot()
+                if hasattr(self.tx_scheduler, 'pending_snapshot') else {})
+            serial_handle = self.ser
+            try:
+                out_waiting = int(serial_handle.out_waiting)
+            except Exception:
+                out_waiting = None
+            queue_wait_ms = max(0.0, started - item.enqueued_at) * 1000.0 \
+                if hasattr(item, 'enqueued_at') else None
+            deadline_late_ms = (
+                max(0.0, started - item.deadline) * 1000.0
+                if hasattr(item, 'deadline') and
+                math.isfinite(item.deadline) else None)
+            detail = json.dumps({
+                'kind': getattr(item, 'kind', 'unknown'),
+                'priority': getattr(item, 'priority', None),
+                'payload_bytes': len(getattr(item, 'payload', b'')),
+                'queue_wait_ms': queue_wait_ms,
+                'deadline_late_ms': deadline_late_ms,
+                'write_duration_ms': duration * 1000.0,
+                'exception_type': type(error).__name__,
+                'exception': str(error),
+                'serial_out_waiting': out_waiting,
+                'pending': pending,
+            }, separators=(',', ':'), sort_keys=True)
+            self._latch_transport_fault(status, detail)
             return
         if item.kind != 'heartbeat':
             return
@@ -1016,19 +1096,28 @@ class Stm32BridgeNode(Node):
 
     def _handle_ack(self, value):
         now = time.monotonic()
-        expected_hello = self.protocol.hello_ack_value(self.session_id)
+        with self.heartbeat_lock:
+            expected_hello = self.protocol.hello_ack_value(self.session_id)
         if value.startswith('HELLO:'):
-            if (value != expected_hello or
-                    (self.active_fault and not (
-                        self.communication_recovering or
-                        self.communication_recovered)) or
-                    self.estop_latched):
-                self.get_logger().warn(
-                    f'current session과 불일치하는 HELLO ACK 무시: {value}')
-                self.publish_status('WARN,IGNORED_HELLO_ACK')
-                return
-            if not self.hello_acknowledged:
+            with self.heartbeat_lock:
+                if (value != expected_hello or
+                        (self.active_fault and not (
+                            self.communication_recovering or
+                            self.communication_recovered)) or
+                        self.estop_latched):
+                    self.get_logger().warn(
+                        'current session과 불일치하는 HELLO ACK 무시: '
+                        f'{value}')
+                    self.publish_status('WARN,IGNORED_HELLO_ACK')
+                    return
+                first_ack = not self.hello_acknowledged
                 self.hello_acknowledged = True
+                if first_ack:
+                    # No heartbeat was required before HELLO. Start the first
+                    # real deadline now instead of counting import time as
+                    # scheduler lateness.
+                    self.next_heartbeat_due = now
+            if first_ack:
                 self.get_logger().info(
                     f'[{self.role}] protocol v2 HELLO ACK '
                     f'session={self.session_id}')
@@ -1038,7 +1127,7 @@ class Stm32BridgeNode(Node):
                     self.publish_status(
                         f'INFO,PREVIOUS_SESSION_FAULT:{code}')
                 self.previous_session_faults.clear()
-                self.send_heartbeat()
+                self.send_heartbeat(force=True)
             return
 
         if value == 'ULTRASONIC:ON':
@@ -1060,27 +1149,30 @@ class Stm32BridgeNode(Node):
             self.publish_status('ACK,ULTRASONIC:OFF')
             return
 
-        sent_at = self.outstanding_heartbeats.pop(value, None)
+        with self.heartbeat_lock:
+            sent_at = self.outstanding_heartbeats.pop(value, None)
         if sent_at is not None:
             rtt = now - sent_at
-            if (not self.hello_acknowledged or
-                    rtt >= self.heartbeat_ack_timeout or
-                    (self.active_fault and not (
-                        self.communication_recovering or
-                        self.communication_recovered)) or
-                    self.estop_latched):
-                self.heartbeat_stats['stale_ack_count'] += 1
-                self.get_logger().warn(f'stale heartbeat ACK 무시: {value}')
-                return
-            self.last_heartbeat_ack_time = now
-            count = self.heartbeat_stats['ack_count'] + 1
-            old_average = self.heartbeat_stats['rtt_average_ms']
-            rtt_ms = rtt * 1000.0
-            self.heartbeat_stats['ack_count'] = count
-            self.heartbeat_stats['rtt_average_ms'] = (
-                old_average + (rtt_ms - old_average) / count)
-            self.heartbeat_stats['max_rtt_ms'] = max(
-                self.heartbeat_stats['max_rtt_ms'], rtt_ms)
+            with self.heartbeat_lock:
+                if (not self.hello_acknowledged or
+                        rtt >= self.heartbeat_ack_timeout or
+                        (self.active_fault and not (
+                            self.communication_recovering or
+                            self.communication_recovered)) or
+                        self.estop_latched):
+                    self.heartbeat_stats['stale_ack_count'] += 1
+                    self.get_logger().warn(
+                        f'stale heartbeat ACK 무시: {value}')
+                    return
+                self.last_heartbeat_ack_time = now
+                count = self.heartbeat_stats['ack_count'] + 1
+                old_average = self.heartbeat_stats['rtt_average_ms']
+                rtt_ms = rtt * 1000.0
+                self.heartbeat_stats['ack_count'] = count
+                self.heartbeat_stats['rtt_average_ms'] = (
+                    old_average + (rtt_ms - old_average) / count)
+                self.heartbeat_stats['max_rtt_ms'] = max(
+                    self.heartbeat_stats['max_rtt_ms'], rtt_ms)
             sequence = value.rsplit(':', 1)[-1]
             message = f'HB ACK seq={sequence} rtt={rtt_ms:.1f}ms'
             if rtt >= self.heartbeat_rtt_warn:
@@ -1088,31 +1180,39 @@ class Stm32BridgeNode(Node):
             else:
                 self.get_logger().debug(message)
             self.publish_status(f'ACK,{value}')
-            if self.communication_recovering:
-                self.recovery_ack_count += 1
-                if self.recovery_ack_count >= self.heartbeat_recovery_ack_count:
-                    self.communication_recovering = False
-                    self.communication_recovered = True
-                    self._clear_recoverable_fault()
-                    self.publish_status(
-                        'INFO,COMMUNICATION_RECOVERED:MOTION_REARM_REQUIRED')
-                    self.publish_status('INFO,RECOVERY_STATE:WAIT_ZERO_ACK')
-                    self.get_logger().warn(
-                        f'[{self.role}] communication recovered; '
-                        'motion remains fault-latched')
+            with self.heartbeat_lock:
+                if self.communication_recovering:
+                    self.recovery_ack_count += 1
+                    if (self.recovery_ack_count >=
+                            self.heartbeat_recovery_ack_count):
+                        self.communication_recovering = False
+                        self.communication_recovered = True
+                        self._clear_recoverable_fault()
+                        self.publish_status(
+                            'INFO,COMMUNICATION_RECOVERED:'
+                            'MOTION_REARM_REQUIRED')
+                        self.publish_status(
+                            'INFO,RECOVERY_STATE:WAIT_ZERO_ACK')
+                        self.get_logger().warn(
+                            f'[{self.role}] communication recovered; '
+                            'motion remains fault-latched')
+                        self.send_zero_velocity_probe()
+                else:
                     self.send_zero_velocity_probe()
-            else:
-                self.send_zero_velocity_probe()
             return
 
-        if value.startswith(f'{self.session_id}:'):
-            self.heartbeat_stats['duplicate_ack_count'] += 1
+        with self.heartbeat_lock:
+            current_session_prefix = f'{self.session_id}:'
+        if value.startswith(current_session_prefix):
+            with self.heartbeat_lock:
+                self.heartbeat_stats['duplicate_ack_count'] += 1
             self.get_logger().warn(f'duplicate/out-of-order heartbeat ACK: {value}')
             return
         token_parts = value.split(':')
         if (len(token_parts) == 2 and len(token_parts[0]) >= 8 and
                 token_parts[1].isdigit()):
-            self.heartbeat_stats['stale_ack_count'] += 1
+            with self.heartbeat_lock:
+                self.heartbeat_stats['stale_ack_count'] += 1
             self.get_logger().warn(f'previous-session heartbeat ACK ignored: {value}')
             return
 
@@ -1201,7 +1301,7 @@ class Stm32BridgeNode(Node):
         try:
             handle = serial.Serial(
                 self.serial_port, self.serial_baud, timeout=0.0,
-                write_timeout=0.05, exclusive=True)
+                write_timeout=self.serial_write_timeout, exclusive=True)
             handle.reset_input_buffer()
         except Exception as exc:
             self.get_logger().warn(
@@ -1332,6 +1432,7 @@ class Stm32BridgeNode(Node):
         self.pub_odom.publish(msg)
 
     def destroy_node(self):
+        self._stop_heartbeat_producer()
         if self.ser:
             serial_handle = self.ser
             if not self.estop_latched:

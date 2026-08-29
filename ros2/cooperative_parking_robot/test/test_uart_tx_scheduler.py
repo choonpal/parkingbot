@@ -79,6 +79,21 @@ def test_servo_attach_and_hello_are_deduplicated():
     assert tx.pending_count('hello') == 1
 
 
+def test_pending_snapshot_reports_bounded_replaceable_load():
+    tx, clock = scheduler()
+    for tick in range(100):
+        clock.now = tick * 0.01
+        tx.enqueue(b'velocity', kind='velocity', priority=P1_REALTIME,
+                   deadline=clock.now + 0.20)
+        if tick % 10 == 0:
+            tx.enqueue(b'heartbeat', kind='heartbeat',
+                       priority=P1_REALTIME, deadline=clock.now + 0.10)
+    snapshot = tx.pending_snapshot()
+    assert snapshot['total'] == 2
+    assert snapshot['slots'] == 2
+    assert snapshot['by_kind'] == {'velocity': 1, 'heartbeat': 1}
+
+
 def test_firmware_heartbeat_ack_has_dedicated_high_priority_mailbox():
     source = (Path(__file__).resolve().parents[3] /
               'stm32/parking_robot/Core/Src/parking_robot_firmware.c').read_text()

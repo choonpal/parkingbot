@@ -3119,7 +3119,10 @@ class CameraPreviewNode(Node):
         y = float(vector[1] / vector[2])
         if not (math.isfinite(x) and math.isfinite(y)):
             return None
-        optics = self.camera_optics.get(label)
+        # Pure geometry callers and lightweight test doubles predate the
+        # optional parallax configuration. Missing optics must preserve the
+        # original floor-homography behavior instead of becoming an API break.
+        optics = getattr(self, 'camera_optics', {}).get(label)
         if optics is not None and float(height) > 0.0:
             ground_x, ground_y, cam_height = optics
             try:
@@ -3133,7 +3136,7 @@ class CameraPreviewNode(Node):
 
     def parallax_shift_m(self, label, height):
         """이 카메라·높이에서 화면 가장자리가 얼마나 밀리는지(m). 화면 표시용."""
-        optics = self.camera_optics.get(label)
+        optics = getattr(self, 'camera_optics', {}).get(label)
         if optics is None or float(height) <= 0.0:
             return None
         _gx, _gy, cam_height = optics

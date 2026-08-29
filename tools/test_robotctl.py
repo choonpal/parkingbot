@@ -345,6 +345,20 @@ def test_remote_protocol_doctor_checks_deployed_ros_sources():
     assert 'UART_PROTOCOL_VERSION' not in command
     assert 'UART_BAUD_RATE' in command
     assert package in command
+    assert package + '/ros2/cooperative_parking_robot/' in command
+    assert 'if test -f' in command
+
+
+def test_remote_launch_doctor_accepts_monorepo_and_legacy_layouts():
+    repository = '/srv/parkingbot_ws/src/cooperative_parking_robot'
+    command = ops.launch_file_check_command(
+        repository, 'front_robot.launch.py')
+    assert (
+        repository +
+        '/ros2/cooperative_parking_robot/launch/front_robot.launch.py'
+        in command)
+    assert repository + '/launch/front_robot.launch.py' in command
+    assert ' || ' in command
 
 
 @pytest.mark.parametrize("arguments", (

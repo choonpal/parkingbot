@@ -127,17 +127,33 @@ def protocol_source_check_command(repository_root) -> str:
     # 루트에만 있다. 여기서 펌웨어까지 찾으면 어떤 장비에서도 통과할 수
     # 없다. 펌웨어 대조는 제어 장비의 protocol_consistency_errors() 가
     # 이미 수행하므로, 원격에서는 배포된 ROS 소스만 확인한다.
-    # 호출부는 패키지 루트(.../src/cooperative_parking_robot)를 넘긴다.
-    # 파이썬 모듈은 그 아래 같은 이름의 폴더에 있다.
-    package = shlex.quote(
-        str(repository_root) + "/cooperative_parking_robot")
+    # 호출부는 저장소 루트(.../src/cooperative_parking_robot)를 넘긴다.
+    # 현재 통합 저장소는 ROS 패키지가 ros2/ 아래에 있지만, 기존 장비의
+    # package-only 배포도 계속 진단할 수 있어야 한다.
+    repository = str(repository_root)
+    monorepo_package = shlex.quote(
+        repository + "/ros2/cooperative_parking_robot/"
+        "cooperative_parking_robot")
+    legacy_package = shlex.quote(
+        repository + "/cooperative_parking_robot")
     return (
+        f"if test -f {monorepo_package}/uart_protocol.py; then "
+        f"package={monorepo_package}; else package={legacy_package}; fi && "
         f"grep -Eq 'PROTOCOL_VERSION[[:space:]]*=[[:space:]]*"
-        f"{EXPECTED_UART_PROTOCOL_VERSION}' {package}/uart_protocol.py && "
+        f"{EXPECTED_UART_PROTOCOL_VERSION}' \"$package/uart_protocol.py\" && "
         f"grep -Eq 'UART_BAUD_RATE[[:space:]]*=[[:space:]]*"
-        f"{EXPECTED_UART_BAUD_RATE}' {package}/uart_protocol.py && "
+        f"{EXPECTED_UART_BAUD_RATE}' \"$package/uart_protocol.py\" && "
         f"grep -q 'encode_hello(self.session_id)' "
-        f"{package}/stm32_bridge_node.py")
+        f"\"$package/stm32_bridge_node.py\"")
+
+
+def launch_file_check_command(repository_root, launch_file) -> str:
+    """Check a launch file in monorepo and legacy package-only deployments."""
+    repository = str(repository_root)
+    monorepo_launch = shlex.quote(
+        repository + "/ros2/cooperative_parking_robot/launch/" + launch_file)
+    legacy_launch = shlex.quote(repository + "/launch/" + launch_file)
+    return f"test -f {monorepo_launch} || test -f {legacy_launch}"
 
 
 def load_env(path: Path) -> dict[str, str]:

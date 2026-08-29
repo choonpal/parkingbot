@@ -516,6 +516,21 @@ def test_serial_port_is_opened_exclusively():
     assert 'exclusive=True' in text
 
 
+def test_heartbeat_and_uart_use_dedicated_multithreaded_executor_path():
+    bridge_source = Path(bridge_module.__file__).read_text(encoding='utf-8')
+    mvp_source = Path(
+        bridge_module.__file__).with_name('mvp_stm32_bridge_node.py').read_text(
+            encoding='utf-8')
+
+    assert 'MutuallyExclusiveCallbackGroup' in bridge_source
+    assert 'self.serial_callback_group' in bridge_source
+    assert 'self.heartbeat_period, self.send_heartbeat,' in bridge_source
+    assert 'callback_group=self.serial_callback_group' in bridge_source
+    assert 'MultiThreadedExecutor(num_threads=2)' in bridge_source
+    assert 'MultiThreadedExecutor(num_threads=2)' in mvp_source
+    assert 'executor.spin()' in mvp_source
+
+
 def test_grip_is_blocked_until_full_attach_ack(monkeypatch):
     node = bridge_for_unit_test()
     now = [100.0]

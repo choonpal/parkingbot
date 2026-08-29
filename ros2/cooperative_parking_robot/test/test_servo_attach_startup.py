@@ -143,7 +143,7 @@ def bridge_for_unit_test(profile='robot-2'):
     node.communication_recovering = False
     node.communication_recovered = False
     node.recovery_ack_count = 0
-    node.heartbeat_lock = threading.Lock()
+    node.heartbeat_lock = threading.RLock()
     node.heartbeat_stats = {
         'tx_count': 0, 'ack_count': 0, 'lost_count': 0,
         'stale_ack_count': 0, 'duplicate_ack_count': 0,
@@ -516,7 +516,7 @@ def test_serial_port_is_opened_exclusively():
     assert 'exclusive=True' in text
 
 
-def test_heartbeat_and_uart_use_dedicated_multithreaded_executor_path():
+def test_heartbeat_producer_is_independent_of_ros_callback_execution():
     bridge_source = Path(bridge_module.__file__).read_text(encoding='utf-8')
     mvp_source = Path(
         bridge_module.__file__).with_name('mvp_stm32_bridge_node.py').read_text(
@@ -524,11 +524,43 @@ def test_heartbeat_and_uart_use_dedicated_multithreaded_executor_path():
 
     assert 'MutuallyExclusiveCallbackGroup' in bridge_source
     assert 'self.serial_callback_group' in bridge_source
-    assert 'self.heartbeat_period, self.send_heartbeat,' in bridge_source
+    assert 'target=self._heartbeat_producer_loop' in bridge_source
+    assert "name=f'{self.role}-heartbeat-producer'" in bridge_source
+    assert 'send_heartbeat(force=True, scheduled_due=next_tick)' in bridge_source
+    assert 'self.heartbeat_period, self.send_heartbeat,' not in bridge_source
     assert 'callback_group=self.serial_callback_group' in bridge_source
     assert 'MultiThreadedExecutor(num_threads=2)' in bridge_source
     assert 'MultiThreadedExecutor(num_threads=2)' in mvp_source
     assert 'executor.spin()' in mvp_source
+
+
+def test_dedicated_producer_does_not_skip_boundary_ticks(monkeypatch):
+    node = bridge_for_unit_test()
+    now = [1.0]
+
+    class FourTickEvent:
+        def __init__(self):
+            self.wait_count = 0
+
+        def is_set(self):
+            return self.wait_count >= 4
+
+        def wait(self, delay):
+            now[0] += max(0.0, delay)
+            self.wait_count += 1
+            return False
+
+    monkeypatch.setattr(bridge_module.time, 'monotonic', lambda: now[0])
+    node.hello_acknowledged = True
+    node.communication_recovering = True
+    node.next_heartbeat_due = now[0]
+    node.heartbeat_thread_stop = FourTickEvent()
+
+    node._heartbeat_producer_loop()
+
+    heartbeats = [frame for frame in node.ser.writes
+                  if frame.startswith(b'@HB,')]
+    assert len(heartbeats) == 4
 
 
 def test_grip_is_blocked_until_full_attach_ack(monkeypatch):

@@ -50,6 +50,13 @@ def repo_root():
     return HERE.parent
 
 
+def deployed_repository(config, role):
+    """Return the source repository used for a role's runtime install."""
+    if role == "jetson" and role_host(config, role) == "local":
+        return str(repo_root())
+    return role_workspace(config, role) + '/src/cooperative_parking_robot'
+
+
 def config_path(args):
     return Path(args.config or os.environ.get("PARKINGBOT_CONFIG", DEFAULT_CONFIG)).expanduser()
 
@@ -272,8 +279,7 @@ def start(args):
     # Check every deployment before starting the first process. A mixed
     # firmware/bridge release fails without disrupting any running stack.
     for role in ROLES:
-        remote_repository = (
-            role_workspace(config, role) + '/src/cooperative_parking_robot')
+        remote_repository = deployed_repository(config, role)
         protocol_check = remote_run(
             runner, role_host(config, role),
             protocol_source_check_command(remote_repository), timeout=7)
@@ -289,7 +295,8 @@ def start(args):
     for role in ROLES:
         remote_head = remote_run(
             runner, role_host(config, role),
-            f"git -C {shlex.quote(role_workspace(config, role) + '/src/cooperative_parking_robot')} rev-parse HEAD",
+            f"git -C {shlex.quote(deployed_repository(config, role))} "
+            "rev-parse HEAD",
             timeout=7).stdout.strip()
         if remote_head and head and remote_head != head:
             print(f"[WARN] {role.title()} code revision differs\n  Controller: {head}\n  {role.title()}: {remote_head}")

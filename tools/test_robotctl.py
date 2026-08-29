@@ -316,6 +316,8 @@ def test_remote_protocol_doctor_checks_deployed_ros_sources():
     assert 'UART_PROTOCOL_VERSION' not in command
     assert 'UART_BAUD_RATE' in command
     assert package in command
+    assert package + '/ros2/cooperative_parking_robot/' in command
+    assert 'if test -f' in command
 
 
 @pytest.mark.parametrize("arguments", (

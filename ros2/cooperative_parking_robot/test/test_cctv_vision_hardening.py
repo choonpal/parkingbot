@@ -112,13 +112,25 @@ def test_delayed_correction_rewinds_then_replays_later_wheel_steps():
 
 def test_measured_geometry_and_unknown_sloped_vehicle_height():
     assert CAMERA_GEOMETRY['cam0'].optical_axis_ground_m == pytest.approx(
-        (2.463, 1.982))
+        (2.319423, 2.315810))
     assert CAMERA_GEOMETRY['cam2'].optical_axis_ground_m == pytest.approx(
-        (1.831, 0.507))
+        (1.891773, 1.296094))
     assert CAMERA_GEOMETRY['cam0'].optical_center_height_m == pytest.approx(2.61)
     assert CAMERA_GEOMETRY['cam2'].optical_center_height_m == pytest.approx(2.61)
     assert ROBOT_MARKER_HEIGHT_M == pytest.approx(0.12)
     assert VEHICLE_DETECTION_EFFECTIVE_HEIGHT_M is None
+
+
+def test_production_wrappers_preserve_explicit_site_geometry():
+    yolo = (ROOT / (
+        'cooperative_parking_robot/yolo_bev_map_production_node.py'
+    )).read_text()
+    marker = (ROOT / (
+        'cooperative_parking_robot/cctv_robot_marker_production_node.py'
+    )).read_text()
+    assert 'if configured:' in yolo
+    assert 'elif geometry is not None:' in yolo
+    assert 'if not configured and set(ids) == set(CAMERA_GEOMETRY):' in marker
 
 
 def test_production_entrypoints_are_source_aware():

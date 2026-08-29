@@ -73,11 +73,22 @@ class YoloBevMapNode(BaselineYoloBevMapNode):
     def __init__(self):
         super().__init__()
         geometry = CAMERA_GEOMETRY.get(self.camera_id)
-        if geometry is not None:
+        configured = (
+            self.camera_height > 0.0 and
+            any(abs(value) > 1.0e-9 for value in self.camera_ground)
+        )
+        if configured:
+            self.get_logger().info(
+                f'[{self.camera_id}] configured optical geometry active | '
+                f'ground=({self.camera_ground[0]:.3f},'
+                f'{self.camera_ground[1]:.3f})m | '
+                f'height={self.camera_height:.3f}m')
+        elif geometry is not None:
             self.camera_ground = geometry.optical_axis_ground_m
             self.camera_height = geometry.optical_center_height_m
-            self.get_logger().info(
-                f'[{self.camera_id}] measured optical geometry active | '
+            self.get_logger().warn(
+                f'[{self.camera_id}] site optical geometry was not configured; '
+                'using repository fallback | '
                 f'ground=({self.camera_ground[0]:.3f},'
                 f'{self.camera_ground[1]:.3f})m | '
                 f'height={self.camera_height:.3f}m')

@@ -106,10 +106,14 @@ class CctvRobotMarkerNode(BaselineCctvRobotMarkerNode):
                 f'failed to apply measured parameter {name}: {result.reason}')
 
     def _apply_measured_site_geometry(self):
-        """Install confirmed geometry without guessing the sloped car height."""
+        """Prefer launch-provided site geometry and fill only missing values."""
         if len(self.cameras) == 2:
             ids = [camera['camera_id'] for camera in self.cameras]
-            if set(ids) == set(CAMERA_GEOMETRY):
+            configured = all(
+                camera['height_m'] > 0.0 and
+                any(abs(value) > 1.0e-9 for value in camera['axis_ground'])
+                for camera in self.cameras)
+            if not configured and set(ids) == set(CAMERA_GEOMETRY):
                 ground = []
                 heights = []
                 for camera_id in ids:
@@ -122,14 +126,23 @@ class CctvRobotMarkerNode(BaselineCctvRobotMarkerNode):
                     geometry = CAMERA_GEOMETRY[camera_id]
                     camera['axis_ground'] = geometry.optical_axis_ground_m
                     camera['height_m'] = geometry.optical_center_height_m
-        self._set_parameter('front_marker_height_m', ROBOT_MARKER_HEIGHT_M)
-        self._set_parameter('rear_marker_height_m', ROBOT_MARKER_HEIGHT_M)
-        self._set_parameter('front_marker_offset_x_m', FRONT_MARKER_OFFSET_X_M)
-        self._set_parameter('rear_marker_offset_x_m', REAR_MARKER_OFFSET_X_M)
-        self.marker_height['front'] = ROBOT_MARKER_HEIGHT_M
-        self.marker_height['rear'] = ROBOT_MARKER_HEIGHT_M
-        self.marker_offset_x['front'] = FRONT_MARKER_OFFSET_X_M
-        self.marker_offset_x['rear'] = REAR_MARKER_OFFSET_X_M
+                self.get_logger().warn(
+                    'site camera geometry was not configured; using '
+                    'repository fallback')
+        for role, fallback_height, fallback_offset in (
+                ('front', ROBOT_MARKER_HEIGHT_M, FRONT_MARKER_OFFSET_X_M),
+                ('rear', ROBOT_MARKER_HEIGHT_M, REAR_MARKER_OFFSET_X_M)):
+            if self.marker_height[role] <= 0.0:
+                self._set_parameter(
+                    f'{role}_marker_height_m', fallback_height)
+                self.marker_height[role] = fallback_height
+            # Zero is a valid measured centre offset. Preserve every explicit
+            # launch value instead of silently replacing it after a camera or
+            # marker remount.
+            if not math.isfinite(self.marker_offset_x[role]):
+                self._set_parameter(
+                    f'{role}_marker_offset_x_m', fallback_offset)
+                self.marker_offset_x[role] = fallback_offset
 
     @staticmethod
     def _stamp_s(stamp):

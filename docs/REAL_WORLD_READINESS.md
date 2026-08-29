@@ -89,7 +89,8 @@ localization, 초음파 정렬, 결합 footprint A*, UI 승인과 SQLite Registr
 - [ ] 펌웨어의 현재 명목 PPR `5182.0f`를 그대로 믿지 않고 로봇별 측정값으로
       ROS/firmware를 일치시킴
 - [ ] 좌우 ultrasonic-to-gripper offset, lateral sign, threshold와 freshness 확인
-- [ ] 실차 launch 안전 flag와 `use_aruco_distance=false` 확인
+- [ ] 현재 ID0 장착에서 실측한 `aruco_distance_offset_m=0.570`을 재확인한 뒤에만
+      `use_aruco_distance=true`; 카메라/마커 장착 변경 또는 미확인 시 `false`
 - [ ] 단일 메인 전원 제약, 물리 ESTOP, fuse, 공통 GND, level shift, 전 바퀴
       공중 고정과 보호 지그 확인
 - [ ] software와 단계 gate 1~8 결과를 현장 기록으로 검토

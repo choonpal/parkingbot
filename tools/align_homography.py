@@ -41,7 +41,7 @@ import urllib.request
 import numpy as np
 
 
-DEFAULT_URL = 'http://127.0.0.1:5005/api/info'
+DEFAULT_URL = 'http://127.0.0.1:5008/api/info'
 DEFAULT_DIR = Path('~/.ros/adaptive_valet_bot').expanduser()
 # 마커마다 차이가 이보다 더 흩어지면 평행이동으로 설명되지 않는다.
 SPREAD_LIMIT_M = 0.05

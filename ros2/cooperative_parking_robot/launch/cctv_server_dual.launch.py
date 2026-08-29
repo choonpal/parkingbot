@@ -94,6 +94,7 @@ def generate_launch_description():
     enable_yolo_cam0 = LaunchConfiguration('enable_yolo_cam0')
     enable_yolo_cam2 = LaunchConfiguration('enable_yolo_cam2')
     enable_markers = LaunchConfiguration('enable_cctv_robot_markers')
+    enable_control_tower = LaunchConfiguration('enable_control_tower_preview')
     enable_web = PythonExpression([
         "'", LaunchConfiguration('enable_operator_ui'),
         "'.lower() in ('true', '1', 'yes', 'on') or '",
@@ -175,7 +176,7 @@ def generate_launch_description():
             'merge_camera_ids', default_value="['cam0', 'cam2']",
             description='merge_detection_topics 와 같은 길이·순서'),
         DeclareLaunchArgument('camera_width_px', default_value='640'),
-        DeclareLaunchArgument('camera_height_px', default_value='480'),
+        DeclareLaunchArgument('camera_height_px', default_value='360'),
         DeclareLaunchArgument('camera_fps', default_value='30.0'),
         DeclareLaunchArgument('camera0_gstreamer_pipeline', default_value=''),
         DeclareLaunchArgument('camera2_gstreamer_pipeline', default_value=''),
@@ -186,7 +187,7 @@ def generate_launch_description():
         DeclareLaunchArgument('cctv0_camera_calib', default_value=default_calib0),
         DeclareLaunchArgument('cctv2_camera_calib', default_value=default_calib2),
         DeclareLaunchArgument('calibration_width_px', default_value='640'),
-        DeclareLaunchArgument('calibration_height_px', default_value='480'),
+        DeclareLaunchArgument('calibration_height_px', default_value='360'),
         DeclareLaunchArgument(
             'require_exact_camera_resolution', default_value='true',
             description='Homography pixel frame 보호를 위해 크기 불일치 frame 폐기'),
@@ -324,6 +325,13 @@ def generate_launch_description():
         DeclareLaunchArgument('debug_web_host', default_value='0.0.0.0'),
         DeclareLaunchArgument('debug_web_port', default_value='5000'),
         DeclareLaunchArgument('debug_jpeg_quality', default_value='70'),
+        DeclareLaunchArgument(
+            'enable_control_tower_preview', default_value='true',
+            description='두 CCTV/BEV/로봇 상태 관제탑을 읽기 전용으로 실행'),
+        DeclareLaunchArgument(
+            'control_tower_web_host', default_value='0.0.0.0'),
+        DeclareLaunchArgument(
+            'control_tower_web_port', default_value='5008'),
 
         # ============================================================
         # 노드 — 카메라 0
@@ -535,6 +543,55 @@ def generate_launch_description():
                 'camera_height_m': _float('cam0_height_m'),
                 'front_marker_height_m': _float('front_marker_height_m'),
                 'rear_marker_height_m': _float('rear_marker_height_m'),
+            }],
+            output='screen'),
+
+        # ============================================================
+        # 두 카메라 + BEV + 로봇 상태 관제탑 (Production 토픽 read-only)
+        # ============================================================
+        Node(
+            package='cooperative_parking_robot',
+            executable='camera_preview',
+            name='cctv_control_tower_preview_node',
+            condition=IfCondition(enable_control_tower),
+            parameters=[{
+                'image_topics_csv': [
+                    LaunchConfiguration('cctv0_rect_topic'),
+                    TextSubstitution(text=','),
+                    LaunchConfiguration('cctv2_rect_topic'),
+                ],
+                'labels_csv': 'cctv0,cctv2',
+                'detection_topics_csv':
+                    '/cctv0/detections,/cctv2/detections',
+                'web_host': LaunchConfiguration('control_tower_web_host'),
+                'web_port': _int('control_tower_web_port'),
+                'calibration_width_px': _int('calibration_width_px'),
+                'calibration_height_px': _int('calibration_height_px'),
+                'enable_aruco': True,
+                'aruco_dict': LaunchConfiguration('aruco_dict'),
+                'marker_size_m': _float('marker_size_m'),
+                'enable_bev': True,
+                'layout_yaml': LaunchConfiguration('layout_config'),
+                # Production YOLO 결과만 구독해 GPU 모델을 중복 로드하지 않는다.
+                'enable_yolo': False,
+                'yolo_switch_mode': 'off',
+                'camera_optics_csv': ParameterValue([
+                    TextSubstitution(text='cctv0:'),
+                    LaunchConfiguration('cam0_ground_x_m'),
+                    TextSubstitution(text=','),
+                    LaunchConfiguration('cam0_ground_y_m'),
+                    TextSubstitution(text=','),
+                    LaunchConfiguration('cam0_height_m'),
+                    TextSubstitution(text=';cctv2:'),
+                    LaunchConfiguration('cam2_ground_x_m'),
+                    TextSubstitution(text=','),
+                    LaunchConfiguration('cam2_ground_y_m'),
+                    TextSubstitution(text=','),
+                    LaunchConfiguration('cam2_height_m'),
+                ], value_type=str),
+                'vehicle_detection_height_m': _float(
+                    'vehicle_detection_height_m'),
+                'marker_height_m': _float('front_marker_height_m'),
             }],
             output='screen'),
 

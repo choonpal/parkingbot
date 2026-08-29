@@ -39,10 +39,10 @@
   확인했고 이후 `A/D/Q/E` 부호, ArUco 연속성, 진행각 유지 보정을 통합했다.
 - 소프트웨어 통합됨: HELLO/session heartbeat 복구, phase별 command owner,
   Front-first 하부 진입, 초음파 차축 정렬, `stop_after_align`, 640x360 듀얼 CCTV와
-  5008 관제탑. Front에는 `main` `3f3ab73`을 격리 배포했다.
-- 실기 차단: Front 좌·우 ultrasonic-to-gripper X offset `0.0m`는 수동 왕복으로
-  확인했지만 Rear 두 값과 Rear/Jetson 동일 SHA 배포가 남아 자동 진입은 NO-GO다.
-  `A/D/Q/E` 수정 뒤 실기, 초음파 차축 반복정밀도,
+  5008 관제탑. Front와 Rear에는 각각 격리 설치본을 배포해 수동 시험했다.
+- 실기 차단: Front/Rear ultrasonic-to-gripper X offset 네 값 `0.0m`는 역할별 수동
+  왕복으로 확인했다. 세 장비 동일 SHA 배포와 단계별 실기 gate가 남아 자동 진입은
+  NO-GO다. `A/D/Q/E` 수정 뒤 실기, 초음파 차축 반복정밀도,
   보호 지그 저하중과 전체 park/retrieve cycle도 남아 있다.
 - 현재 STM32 watchdog: 주행 명령 250 ms, heartbeat 300 ms
 

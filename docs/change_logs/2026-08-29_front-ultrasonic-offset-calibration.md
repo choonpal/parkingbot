@@ -76,5 +76,9 @@ FRONT_RIGHT_SENSOR_X=0.0
 ```
 
 이 결정의 현장 유효 오차 범위는 약 `±0.02m`다. Front의 `0.0m`는 이번 수동
-왕복 시험에서 확인됐지만 Rear 두 센서에는 이 결과를 복사하지 않는다. Rear
-좌·우 offset은 Rear 자체의 동일 시험 또는 직접 치수 측정 전까지 미확정이다.
+왕복 시험에서 확인했지만 Rear 두 센서에는 이 결과를 복사하지 않았다. 이 Front
+시험 시점에는 Rear 좌·우 offset이 미확정이었다.
+
+후속 Rear 자체 측정은
+[Rear offset 수동 보정](./2026-08-29_rear-ultrasonic-offset-calibration.md)에
+별도로 기록했다.

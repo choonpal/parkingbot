@@ -18,6 +18,7 @@
 
 | 날짜 | 변경 내용 | 주요 영역 |
 |---|---|---|
+| 2026-08-29 | [Rear 초음파-그리퍼 X offset 수동 보정](./2026-08-29_rear-ultrasonic-offset-calibration.md) | Rear / Ultrasonic / Calibration |
 | 2026-08-29 | [Front 초음파-그리퍼 X offset 수동 보정](./2026-08-29_front-ultrasonic-offset-calibration.md) | Front / Ultrasonic / Calibration |
 | 2026-08-29 | [통합·정렬 후 정지 시험 감사](./2026-08-29_unified-pregrip-update-audit.md) | Pregrip / CCTV / UART / Operations |
 | 2026-08-28 | [기능별 테스트·강체 쌍 실차시험 main 통합](./2026-08-28_feature-tests-and-rigid-pair-field-test.md) | Feature tests / ArUco / Rigid-pair |

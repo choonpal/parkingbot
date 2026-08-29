@@ -21,10 +21,10 @@ ROS 2 Humble 협동 주차 로봇, Jetson 인지/UI, STM32F401RE 제어 펌웨�
 
 이 통합본의 STM32 기준은 `stm32/parking_robot`이다. Front=`robot-2`,
 Rear=`robot-1`이며 역할별 firmware profile을 따로 빌드·플래시한다. 2026-08-29
-기준 pregrip 소프트웨어 통합과 clean build는 통과했다. Front에는 같은 `main`
-설치본을 배포해 수동 왕복으로 좌·우 초음파-그리퍼 X offset `0.0m`를 확인했지만,
-Rear 두 값과 Jetson/Rear 동일 SHA 배포가 남아 있어 차량 하부 자동 진입은
-**NO-GO**다. 정확한 현재 판정은
+기준 pregrip 소프트웨어 통합과 clean build는 통과했다. Front와 Rear를 각각
+수동 왕복해 초음파-그리퍼 X offset 네 값 `0.0m`를 약 ±0.02m 현장 오차로
+확인했다. 하지만 세 장비 동일 SHA 배포와 단계별 실기 gate가 남아 있어 차량
+하부 자동 진입은 **NO-GO**다. 정확한 현재 판정은
 [현재 통합 상태](docs/CURRENT_INTEGRATION_STATUS.md)를 따른다.
 
 저장소 기본 branch 또는 검증된 release를 배포한다. 과거 실험 branch를 운용

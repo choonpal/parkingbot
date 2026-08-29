@@ -407,11 +407,45 @@ def test_publish_fail_closed_resets_trackers_and_publishes_unavailable():
     assert status['ready'] is False
 
 
+def test_mission_snapshot_only_owns_an_approved_active_park():
+    node = CctvMergeNode.__new__(CctvMergeNode)
+    node.mission_snapshot = {'merged': []}
+    node.target_tracker = SimpleNamespace(latched=(2.3, 0.6))
+
+    node.fleet_state = 'WAIT_TARGET'
+    assert not CctvMergeNode._mission_snapshot_active(node)
+    node.fleet_state = 'WAIT_LIFT'
+    assert CctvMergeNode._mission_snapshot_active(node)
+    node.target_tracker.latched = None
+    assert not CctvMergeNode._mission_snapshot_active(node)
+
+
+def test_perception_suspend_command_is_edge_triggered():
+    node = CctvMergeNode.__new__(CctvMergeNode)
+    node.perception_suspended = False
+    node.pub_perception_suspend = RecordingPublisher()
+    node.get_logger = lambda: SimpleNamespace(info=lambda *_args: None)
+
+    CctvMergeNode._set_perception_suspended(node, True)
+    CctvMergeNode._set_perception_suspended(node, True)
+    CctvMergeNode._set_perception_suspended(node, False)
+
+    assert [msg.data for msg in node.pub_perception_suspend.messages] == [
+        True, False]
+
+
 def test_dual_launch_fails_closed_when_any_camera_is_missing_by_default():
     dual = (ROOT / 'launch/cctv_server_dual.launch.py').read_text()
     assert "'require_all_cameras', default_value='true'" in dual
     merge = (ROOT / 'cooperative_parking_robot/cctv_merge_node.py').read_text()
     assert "declare_parameter('require_all_cameras', True)" in merge
+
+
+def test_dual_launch_staggers_second_tensorrt_model_load():
+    dual = (ROOT / 'launch/cctv_server_dual.launch.py').read_text()
+    assert 'TimerAction' in dual
+    assert "'yolo_cam2_start_delay_s', default_value='15.0'" in dual
+    assert "period=LaunchConfiguration('yolo_cam2_start_delay_s')" in dual
 
 
 def test_vehicle_dimensions_reject_out_of_range_masks():

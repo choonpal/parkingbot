@@ -49,7 +49,13 @@ from cooperative_parking_robot.vision_utils import (
     parse_class_ids,
     principal_axis_yaw,
 )
-from cooperative_parking_robot.latest_qos import SENSOR_LATEST_QOS
+from cooperative_parking_robot.latest_qos import (
+    SAFETY_STATE_QOS,
+    SENSOR_LATEST_QOS,
+)
+from cooperative_parking_robot.gpu_inference_guard import (
+    release_unused_cuda_cache,
+)
 from cooperative_parking_robot.parking_geometry import (
     parse_registered_slots,
     polygon_overlap_ratio,
@@ -60,6 +66,7 @@ from cooperative_parking_robot.bev_fusion_core import (
     encode_detection_envelope,
     image_corner_coverage,
 )
+import gc
 import math
 import os
 import time
@@ -385,6 +392,8 @@ class YoloBevMapNode(Node):
         # ===== 모델 로드 =====
         self.bridge = CvBridge() if DEPS_OK else None
         self.model = None
+        self.classifier = None
+        self.detector_suspended = False
         self.H = None
         if not DEPS_OK and self.get_parameter('require_dependencies').value:
             raise RuntimeError(
@@ -406,6 +415,9 @@ class YoloBevMapNode(Node):
         # P3: 임무가 끝나면 타겟 latch를 풀어 다음 차량을 인식할 수 있게 한다.
         self.create_subscription(
             String, '/mission/complete', self.mission_complete_cb, 10)
+        self.create_subscription(
+            Bool, '/parking/perception_suspend',
+            self.perception_suspend_cb, SAFETY_STATE_QOS)
 
         # ===== 발행 =====
         self.mission_qos = QoSProfile(
@@ -601,6 +613,36 @@ class YoloBevMapNode(Node):
             self.pub_target_ready.publish(Bool(data=False))
         self.get_logger().info(
             f'임무 {mission_id} 완료 — 타겟 latch 해제')
+
+    def perception_suspend_cb(self, msg):
+        """Release the heavy detector while a fixed mission snapshot is used."""
+        suspend = bool(msg.data)
+        if suspend == self.detector_suspended:
+            return
+        if suspend:
+            self.detector_suspended = True
+            self.model = None
+            self.classifier = None
+            gc.collect()
+            release_unused_cuda_cache()
+            self.get_logger().info(
+                f'[{self.camera_id}] mission snapshot active — YOLO unloaded')
+            return
+
+        # The production wrapper serializes reloads across camera processes.
+        # Keep this node suspended if load fails so image_cb cannot use a
+        # partially initialized detector.
+        try:
+            self._load_models()
+        except Exception as exc:
+            self.detector_suspended = True
+            self.model = None
+            self.get_logger().error(
+                f'[{self.camera_id}] YOLO reload failed: {exc}')
+            return
+        self.detector_suspended = False
+        self.get_logger().info(
+            f'[{self.camera_id}] YOLO reloaded for next mission')
 
     def odom_cb(self, role, msg):
         self.robot_pose[role] = (

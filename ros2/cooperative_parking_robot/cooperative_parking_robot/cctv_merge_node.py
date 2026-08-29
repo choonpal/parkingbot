@@ -64,6 +64,7 @@ from cooperative_parking_robot.parking_geometry import (
     slot_polygon,
 )
 from cooperative_parking_robot.latest_qos import (
+    SAFETY_STATE_QOS,
     SENSOR_LATEST_QOS,
     STATE_LATEST_QOS,
 )
@@ -154,6 +155,7 @@ class CctvMergeNode(Node):
         self.declare_parameter('vehicle_spec_republish_s', 1.0)
         self.declare_parameter('yaw_ema_alpha', 0.15)
         self.declare_parameter('waiting_yaw_deg', 0.0)
+        self.declare_parameter('suspend_detectors_after_mission_lock', True)
 
         if not DEPS_OK:
             raise RuntimeError(
@@ -363,6 +365,11 @@ class CctvMergeNode(Node):
         self._target_last_observed_wall = 0.0
         self.fleet_state = 'UNKNOWN'
         self.vehicle_lifted = False
+        self.suspend_detectors_after_mission_lock = bool(
+            self.get_parameter(
+                'suspend_detectors_after_mission_lock').value)
+        self.perception_suspended = False
+        self.mission_snapshot = None
 
     def _setup_ros_interfaces(self):
         for camera_id, topic in zip(self.camera_ids, self.detection_topics):
@@ -403,6 +410,10 @@ class CctvMergeNode(Node):
             String, '/parking/target_status', 10)
         self.pub_status = self.create_publisher(
             String, '/cctv/merge_status', 10)
+        self.pub_perception_suspend = self.create_publisher(
+            Bool, '/parking/perception_suspend', SAFETY_STATE_QOS)
+        # Clear a retained suspend command after a merge-node restart.
+        self.pub_perception_suspend.publish(Bool(data=False))
 
         self.create_timer(1.0 / self.merge_rate_hz, self.merge_cycle)
 
@@ -442,6 +453,7 @@ class CctvMergeNode(Node):
         try:
             payload = json.loads(msg.data)
             self.fleet_state = str(payload['state'])
+            self._activate_mission_snapshot_if_ready()
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
             self.get_logger().warn(
                 'invalid fleet/state envelope', throttle_duration_sec=5.0)
@@ -465,6 +477,8 @@ class CctvMergeNode(Node):
         age_s = (self.get_clock().now().nanoseconds - stamp_ns) * 1e-9
         if not -0.5 <= age_s <= 10.0:
             return
+        self.mission_snapshot = None
+        self._set_perception_suspended(False)
         if self.target_tracker.latched is None:
             return
         self.target_tracker.reset()
@@ -502,6 +516,14 @@ class CctvMergeNode(Node):
             }
             if alive:
                 alive_envelopes[camera_id] = envelope
+
+        # An approved park mission owns a stationary, dimensioned target.
+        # Live YOLO is intentionally absent here; keep the mission inputs
+        # fresh from the frozen snapshot while marker localization and odom
+        # continue independently.
+        if self._mission_snapshot_active():
+            self._publish_mission_snapshot(camera_states, now)
+            return
 
         perception_available = perception_is_available(
             camera_states, self.require_all_cameras)
@@ -615,6 +637,56 @@ class CctvMergeNode(Node):
             current_visible=target_detection is not None,
             ready=ready,
         )
+        if latched is not None and self.dimension_tracker.dimension_valid:
+            self.mission_snapshot = {
+                'merged': list(merged),
+                'coverage_polygons': dict(coverage_polygons),
+                'stamp_ns': int(newest_stamp_ns),
+            }
+            self._activate_mission_snapshot_if_ready()
+
+    def _mission_snapshot_active(self):
+        return (
+            self.mission_snapshot is not None and
+            self.target_tracker.latched is not None and
+            self.fleet_state in ('WAIT_LIFT', 'PLAN_PATH', 'NAVIGATING'))
+
+    def _activate_mission_snapshot_if_ready(self):
+        if not self._mission_snapshot_active():
+            return False
+        if self.suspend_detectors_after_mission_lock:
+            self._set_perception_suspended(True)
+        return True
+
+    def _set_perception_suspended(self, suspended):
+        suspended = bool(suspended)
+        if suspended == self.perception_suspended:
+            return
+        self.perception_suspended = suspended
+        self.pub_perception_suspend.publish(Bool(data=suspended))
+        self.get_logger().info(
+            'MISSION_SNAPSHOT — YOLO unload requested'
+            if suspended else
+            'MISSION_COMPLETE — YOLO reload requested')
+
+    def _publish_mission_snapshot(self, camera_states, now):
+        snapshot = self.mission_snapshot
+        latched = self.target_tracker.latched
+        self._publish_target(latched)
+        if (not self.spec_sent or self.spec_last_publish_wall is None or
+                now - self.spec_last_publish_wall >= self.spec_republish_s):
+            self._publish_vehicle_spec()
+        self._publish_empty_slots()
+        self._publish_map(
+            snapshot['merged'], latched, snapshot['coverage_polygons'])
+        self._publish_status(
+            camera_states, snapshot['merged'], snapshot['stamp_ns'],
+            self.slot_tracker.state)
+        self.pub_target_ready.publish(Bool(data=True))
+        self._last_target_ready = True
+        self._publish_target_status(
+            now, current_visible=False, ready=True,
+            reason='MISSION_SNAPSHOT')
 
     # ------------------------------------------------------------------
     # 발행 helper

@@ -7,6 +7,7 @@ import time
 import numpy as np
 
 from cooperative_parking_robot import yolo_bev_map_production_node as module
+from cooperative_parking_robot import yolo_bev_map_node as baseline_module
 
 
 class Delegate:
@@ -54,3 +55,33 @@ def test_production_guards_both_model_load_and_inference():
     assert 'def _load_models(self):' in source
     assert source.count('with GPU_INFERENCE_GUARD.hold():') >= 2
     assert 'result.cpu()' in source
+
+
+def test_detector_suspend_unloads_and_reload_restores_model(monkeypatch):
+    node = baseline_module.YoloBevMapNode.__new__(
+        baseline_module.YoloBevMapNode)
+    node.detector_suspended = False
+    node.model = object()
+    node.classifier = object()
+    node.camera_id = 'cam0'
+    logs = []
+    node.get_logger = lambda: type('Logger', (), {
+        'info': lambda _self, message: logs.append(message),
+        'error': lambda _self, message: logs.append(message),
+    })()
+    monkeypatch.setattr(baseline_module.gc, 'collect', lambda: None)
+    monkeypatch.setattr(
+        baseline_module, 'release_unused_cuda_cache', lambda: None)
+
+    baseline_module.YoloBevMapNode.perception_suspend_cb(
+        node, type('Msg', (), {'data': True})())
+    assert node.detector_suspended is True
+    assert node.model is None
+    assert node.classifier is None
+
+    sentinel = object()
+    node._load_models = lambda: setattr(node, 'model', sentinel)
+    baseline_module.YoloBevMapNode.perception_suspend_cb(
+        node, type('Msg', (), {'data': False})())
+    assert node.detector_suspended is False
+    assert node.model is sentinel

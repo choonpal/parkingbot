@@ -93,15 +93,7 @@ class YoloBevMapNode(BaselineYoloBevMapNode):
                 f'{self.camera_ground[1]:.3f})m | '
                 f'height={self.camera_height:.3f}m')
 
-        # Keep runtime and camera_preview on exactly the same centre definition:
-        # Seg mask minAreaRect centre -> Homography -> optional parallax.
-        if self.model is not None:
-            vehicle_class_id = (
-                self.cls_vehicle
-                if self.model_mode in ('vehicle_seg', 'parking_seg')
-                else None)
-            self.model = _MaskCenteredYoloModel(
-                self.model, vehicle_class_id)
+        # _load_models() also owns runtime reloads, so it installs the wrapper.
         if (self.model is not None and
                 self.model_mode in ('vehicle_seg', 'parking_seg')):
             self.get_logger().info(
@@ -125,6 +117,15 @@ class YoloBevMapNode(BaselineYoloBevMapNode):
                 super()._load_models()
             finally:
                 release_unused_cuda_cache()
+        # Restore the production mask-centre policy after both cold start and
+        # a mission-snapshot unload/reload.
+        if self.model is not None:
+            vehicle_class_id = (
+                self.cls_vehicle
+                if self.model_mode in ('vehicle_seg', 'parking_seg')
+                else None)
+            self.model = _MaskCenteredYoloModel(
+                self.model, vehicle_class_id)
 
 
 def main(args=None):

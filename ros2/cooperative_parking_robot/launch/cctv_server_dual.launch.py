@@ -40,7 +40,7 @@
 from typing import List
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, TimerAction
 from launch.conditions import IfCondition
 from launch.substitutions import (
     EnvironmentVariable, LaunchConfiguration, PathJoinSubstitution,
@@ -168,6 +168,9 @@ def generate_launch_description():
         # 병합 노드가 오지 않는 카메라를 계속 "죽었다"고 보고한다.
         DeclareLaunchArgument('enable_yolo_cam0', default_value='true'),
         DeclareLaunchArgument('enable_yolo_cam2', default_value='true'),
+        DeclareLaunchArgument(
+            'yolo_cam2_start_delay_s', default_value='15.0',
+            description='Jetson cold-start memory peak를 피하는 cam2 load 지연'),
         DeclareLaunchArgument(
             'merge_detection_topics',
             default_value="['/cctv0/detections', '/cctv2/detections']",
@@ -431,25 +434,28 @@ def generate_launch_description():
             }],
             output='screen'),
 
-        Node(
-            package='cooperative_parking_robot',
-            executable='yolo_bev_map',
-            name='yolo_bev_map_node_cam2',
-            condition=IfCondition(enable_yolo_cam2),
-            parameters=[LaunchConfiguration('layout_config'),
-                        dict(common_vision_params, **{
-                            'camera_id': 'cam2',
-                            'detection_topic': '/cctv2/detections',
-                            'image_topic': LaunchConfiguration('cctv2_rect_topic'),
-                            'homography_file': LaunchConfiguration(
-                                'homography_cam2_file'),
-                            'camera_ground_x_m': _float('cam2_ground_x_m'),
-                            'camera_ground_y_m': _float('cam2_ground_y_m'),
-                            'camera_height_m': _float('cam2_height_m'),
-                            'vehicle_detection_height_m': _float(
-                                'vehicle_detection_height_m'),
-                        })],
-            output='screen'),
+        TimerAction(
+            period=LaunchConfiguration('yolo_cam2_start_delay_s'),
+            actions=[Node(
+                package='cooperative_parking_robot',
+                executable='yolo_bev_map',
+                name='yolo_bev_map_node_cam2',
+                condition=IfCondition(enable_yolo_cam2),
+                parameters=[LaunchConfiguration('layout_config'),
+                            dict(common_vision_params, **{
+                                'camera_id': 'cam2',
+                                'detection_topic': '/cctv2/detections',
+                                'image_topic': LaunchConfiguration(
+                                    'cctv2_rect_topic'),
+                                'homography_file': LaunchConfiguration(
+                                    'homography_cam2_file'),
+                                'camera_ground_x_m': _float('cam2_ground_x_m'),
+                                'camera_ground_y_m': _float('cam2_ground_y_m'),
+                                'camera_height_m': _float('cam2_height_m'),
+                                'vehicle_detection_height_m': _float(
+                                    'vehicle_detection_height_m'),
+                            })],
+                output='screen')]),
 
         # ============================================================
         # 병합 노드 — /parking/* 최종 발행자
@@ -481,6 +487,7 @@ def generate_launch_description():
                     'target_position_filter_window'),
                 'use_fixed_wheelbase': True,
                 'fixed_wheelbase_m': _float('fixed_wheelbase_m'),
+                'suspend_detectors_after_mission_lock': True,
             }],
             output='screen'),
 

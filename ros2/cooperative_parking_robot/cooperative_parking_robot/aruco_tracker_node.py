@@ -148,6 +148,12 @@ class ArucoTrackerNode(Node):
     def runtime_enable_cb(self, msg):
         enabled = bool(msg.data)
         if enabled == self.runtime_enabled:
+            # Rear's phase owner repeats the volatile enable state.  Mirror a
+            # repeated standby request onto marker_visible so a late-joining
+            # startup observer can distinguish a healthy gated tracker from a
+            # missing tracker without activating any image processing.
+            if not enabled:
+                self.pub_visible.publish(Bool(data=False))
             return
         self.runtime_enabled = enabled
         self._set_runtime_ready(False)

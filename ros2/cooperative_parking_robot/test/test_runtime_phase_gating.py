@@ -92,6 +92,17 @@ def test_disabled_aruco_returns_before_image_conversion():
     node.image_cb(object())
 
 
+def test_disabled_aruco_repeats_false_state_for_late_startup_observers():
+    node = object.__new__(ArucoTrackerNode)
+    node.runtime_enabled = False
+    node.pub_visible = Publisher()
+
+    node.runtime_enable_cb(Bool(data=False))
+
+    assert len(node.pub_visible.messages) == 1
+    assert node.pub_visible.messages[0].data is False
+
+
 def test_camera_activation_resets_readiness_and_drops_buffered_frames():
     node = object.__new__(OpenCvCameraNode)
     node.runtime_enabled = False

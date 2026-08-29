@@ -27,6 +27,12 @@ def _bool(name):
 
 
 def generate_launch_description():
+    # Reserve one RPi core for the UART watchdog path. Camera/CV imports and
+    # the remaining ROS processes stay on the worker core set.
+    bridge_prefix = [
+        "taskset -c ", LaunchConfiguration("bridge_cpu_set")]
+    worker_prefix = [
+        "taskset -c ", LaunchConfiguration("worker_cpu_set")]
     wheelbase = _float("wheelbase")
     waiting_x = _float("waiting_x")
     waiting_y = _float("waiting_y")
@@ -108,6 +114,12 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "hardware_profile", default_value="robot-1",
             description="Physical chassis profile; independent of rear role"),
+        DeclareLaunchArgument(
+            "bridge_cpu_set", default_value="3",
+            description="RPi CPU set reserved for STM32 bridge"),
+        DeclareLaunchArgument(
+            "worker_cpu_set", default_value="0-2",
+            description="RPi CPU set for non-bridge ROS processes"),
         DeclareLaunchArgument("enable_serial", default_value="true"),
         DeclareLaunchArgument("require_serial", default_value="true"),
         DeclareLaunchArgument("serial_write_timeout_s", default_value="0.05"),
@@ -253,6 +265,7 @@ def generate_launch_description():
             package="cooperative_parking_robot",
             executable="opencv_camera",
             name="rear_marker_camera_node",
+            prefix=worker_prefix,
             condition=IfCondition(enable_rear_camera),
             parameters=[{
                 "camera_id": _int("rear_camera_id"),
@@ -284,6 +297,7 @@ def generate_launch_description():
             package="cooperative_parking_robot",
             executable="aruco_tracker",
             name="aruco_tracker_node",
+            prefix=worker_prefix,
             condition=IfCondition(enable_aruco),
             parameters=[id0_calibration, {
                 "image_topic": LaunchConfiguration("rear_camera_topic"),
@@ -305,6 +319,7 @@ def generate_launch_description():
             package="cooperative_parking_robot",
             executable="individual_move",
             name="rear_individual_move",
+            prefix=worker_prefix,
             parameters=[id0_calibration, {
                 "role": "rear",
                 "default_wheelbase": wheelbase,
@@ -320,6 +335,7 @@ def generate_launch_description():
             package="cooperative_parking_robot",
             executable="state_machine",
             name="rear_state_machine",
+            prefix=worker_prefix,
             parameters=[{
                 "role": "rear",
                 "approach_timeout_s": _float("approach_timeout_s"),
@@ -335,6 +351,7 @@ def generate_launch_description():
             package="cooperative_parking_robot",
             executable="stm32_bridge",
             name="rear_bridge",
+            prefix=bridge_prefix,
             parameters=[{
                 "role": "rear",
                 "hardware_profile": LaunchConfiguration("hardware_profile"),
@@ -358,6 +375,7 @@ def generate_launch_description():
             package="cooperative_parking_robot",
             executable="ultrasonic_edge",
             name="rear_ultrasonic",
+            prefix=worker_prefix,
             parameters=[{
                 "role": "rear",
                 "threshold_m": ultrasonic_threshold,
@@ -379,6 +397,7 @@ def generate_launch_description():
             package="cooperative_parking_robot",
             executable="pose_fusion",
             name="rear_pose_fusion",
+            prefix=worker_prefix,
             parameters=[{
                 "role": "rear",
                 "init_x": waiting_x,

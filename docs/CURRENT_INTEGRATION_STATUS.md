@@ -1,10 +1,34 @@
-# 현재 통합 상태 — 2026-08-29
+# 현재 통합 상태 — 2026-08-30
 
 이 문서는 지금 배포·시험할 통합 후보와 실기 허용 범위를 한 곳에서 요약한다.
 세부 실행 절차는 [실차 Runbook](REAL_ROBOT_DEPLOYMENT_RUNBOOK.md), 최종 안전
 판정은 [실차 준비도](REAL_WORLD_READINESS.md)를 따른다.
 
-## 기준
+## 2026-08-30 strict 복구 상태
+
+현재 통합 후보는 `ddad9ac`를 기준으로 다시 만든
+`recovery/ddad-strict-20260830`이며 기능 코드 기준점은 `a5e7290`이다. 상세 변경과
+실차 로그는 [ddad strict 복구·기동 부하 감사](change_logs/2026-08-30_ddad-strict-recovery-and-startup-audit.md)에
+기록했다.
+
+- Jetson TensorRT cam0/cam2 순차 cold-load: 실차 PASS
+- stationary target snapshot과 mission 중 YOLO unload/reload: 구현·회귀 PASS,
+  실제 `WAIT_LIFT` 전환 미검증
+- Front/Rear UART bridge-only 15초: 양쪽 PASS
+- 전체 production cold-start: 두 차례 FAIL
+- 현재 production stack: 모두 종료
+- 이번 복구 작업의 차량 이동: 없음
+
+전체 기동 중 RPi heartbeat gap, UART write timeout과 SSH 불안정이 재현됐으므로
+차량 하부 자동 진입과 grip/lift/운반은 모두 **NO-GO**다. 다음 시험은 Jetson 없이
+RPi 한 대씩 보조 노드를 하나씩 올리는 방식으로만 진행한다. 300ms watchdog을
+늘려 통과시키지 않는다.
+
+원격 Front/Rear는 Git HEAD `ddad9ac`에 파일 overlay를 배포한 상태라 controller
+`a5e7290`과 clean 동일-SHA 배포가 아니다. 다음 정식 실차 gate 전에 같은 SHA로
+재배포해야 한다.
+
+## 이전 2026-08-29 기준
 
 - 통합 감사 branch: `integration/unified-pregrip-20260829`
 - 소프트웨어 감사 기준: `c118de8`
@@ -20,11 +44,11 @@
 
 | 구분 | 판정 | 근거 |
 |---|---|---|
-| pregrip 소프트웨어 통합 | PASS | UART/heartbeat, ArUco, 진입·정렬, 정렬 후 정지, CCTV/UI 및 운용 회귀 통과 |
+| pregrip 소프트웨어 통합 | 회귀 PASS / 실기 보류 | 기존 회귀는 유지됐지만 현재 strict 전체 cold-start가 heartbeat FAULT로 차단됨 |
 | clean ROS 2 Humble build/import | PASS | 격리 workspace에서 package build와 install-only import 확인 |
-| Jetson CCTV 운용값 | PASS(정적) | 640x360 intrinsic/Homography, 현장 광축 지상점 우선, 5008 관제탑 기본 기동 확인 |
-| 현재 통합본 원격 배포 | 부분 완료 | Front `3f3ab73`, Rear `9586439` 격리 배포·수동시험 완료; Jetson과 세 장비 동일 SHA 미완료 |
-| 차량 하부 실기 모션 | **NO-GO** | 네 offset은 확인됐지만 자동 진입 미실행, 동일 SHA 배포와 단계별 실기 gate 미완료 |
+| Jetson CCTV 운용값 | PASS(부분 실기) | 두 TensorRT engine 순차 로드 성공; mission snapshot/unload 실차 전환은 미검증 |
+| 현재 통합본 원격 배포 | 임시 overlay | Front/Rear Git HEAD는 `ddad9ac`, 선택 파일은 `a5e7290` 내용; clean 동일 SHA 미완료 |
+| 차량 하부 실기 모션 | **NO-GO** | 전체 cold-start heartbeat/UART FAULT와 SSH 불안정이 남음 |
 | grip/lift/운반 | **범위 밖·NO-GO** | `stop_after_align` 뒤 기능이며 현재 감사에서 실차 검증하지 않음 |
 
 과거 `/home/robot/parkingbot` 또는

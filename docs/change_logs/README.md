@@ -18,6 +18,7 @@
 
 | 날짜 | 변경 내용 | 주요 영역 |
 |---|---|---|
+| 2026-08-30 | [ddad strict 복구·기동 부하 감사](./2026-08-30_ddad-strict-recovery-and-startup-audit.md) | Recovery / TensorRT / UART / Startup |
 | 2026-08-29 | [Rear 초음파-그리퍼 X offset 수동 보정](./2026-08-29_rear-ultrasonic-offset-calibration.md) | Rear / Ultrasonic / Calibration |
 | 2026-08-29 | [Front 초음파-그리퍼 X offset 수동 보정](./2026-08-29_front-ultrasonic-offset-calibration.md) | Front / Ultrasonic / Calibration |
 | 2026-08-29 | [통합·정렬 후 정지 시험 감사](./2026-08-29_unified-pregrip-update-audit.md) | Pregrip / CCTV / UART / Operations |

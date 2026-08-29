@@ -22,7 +22,8 @@ from parkingbot_ops import PRESENCE_TOPICS, TOPICS
 
 BOOL_KEYS = {
     "target_ready", "front_hw", "rear_hw", "front_marker",
-    "rear_marker", "id0_marker",
+    "rear_marker", "id0_marker", "front_aligned_hold",
+    "rear_aligned_hold",
 }
 PRESENCE_TYPES = {
     "front_odom": Odometry,

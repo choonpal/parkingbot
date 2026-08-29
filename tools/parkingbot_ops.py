@@ -40,6 +40,8 @@ TOPICS = {
     "merge": "/cctv/merge_status",
     "front_state": "/front/robot_state",
     "rear_state": "/rear/robot_state",
+    "front_aligned_hold": "/front/aligned_hold",
+    "rear_aligned_hold": "/rear/aligned_hold",
     "front_hw": "/front/hardware_ready",
     "rear_hw": "/rear/hardware_ready",
     "front_hw_status": "/front/hardware_status",
@@ -328,6 +330,7 @@ def launch_command(config, role):
             "left_sensor_to_gripper_x_m": config[f"{p}_LEFT_SENSOR_X"],
             "right_sensor_to_gripper_x_m": config[f"{p}_RIGHT_SENSOR_X"],
             "simultaneous_entry": "false",
+            "stop_after_align": config.get("STOP_AFTER_ALIGN", "false"),
             # 벤치 시험용 완화값. 실주행 전 0.25 로 되돌린다.
             "command_source_timeout_s": config.get(
                 "COMMAND_SOURCE_TIMEOUT_S", "0.25"),
@@ -526,6 +529,7 @@ def format_snapshot(data):
     for role in ("front", "rear"):
         lines.extend([
             role.upper(), f"State        {_shown(v[role + '_state'])}",
+            f"Aligned Hold {_shown(v[role + '_aligned_hold'])}",
             f"HW Ready     {_shown(v[role + '_hw'])}",
             f"Localization {_shown(v[role + '_loc'])}",
             f"Motion Fault {_shown(v[role + '_fault'])}",

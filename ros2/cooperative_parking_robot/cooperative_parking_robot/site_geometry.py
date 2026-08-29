@@ -13,12 +13,15 @@ class CameraGeometry:
     optical_center_height_m: float
 
 
-# 640x480 rectified calibration principal points projected through the
-# currently registered homographies. These are optical-axis/floor intersections,
-# not the physical vertical projection of the tilted camera housings.
+# 2026-08-28 replacement-camera 640x360 rectified calibration principal points
+# projected through the final, post-swap registered homographies. These are
+# optical-axis/floor intersections, not the physical vertical projection of
+# the tilted camera housings. Production launch parameters take precedence;
+# these values are only a fail-safe fallback for an otherwise unconfigured
+# direct launch.
 CAMERA_GEOMETRY = {
-    'cam0': CameraGeometry((2.463, 1.982), 2.610),
-    'cam2': CameraGeometry((1.831, 0.507), 2.610),
+    'cam0': CameraGeometry((2.319423, 2.315810), 2.610),
+    'cam2': CameraGeometry((1.891773, 1.296094), 2.610),
 }
 
 # Both overhead robot ArUco markers are centered on the robot base/rotation

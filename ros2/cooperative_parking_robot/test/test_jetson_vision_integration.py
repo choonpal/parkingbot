@@ -149,18 +149,29 @@ def test_dual_cctv_uses_runtime_per_camera_calibration_paths():
     assert "share, 'config', 'cctv2_camera_calibration.npz'" not in source
 
 
-def test_dual_cctv_provisional_camera_and_calibration_resolution_is_640x480():
+def test_dual_cctv_camera_and_calibration_resolution_is_verified_640x360():
     source = (ROOT / 'launch/cctv_server_dual.launch.py').read_text()
     assert "'camera_width_px', default_value='640'" in source
-    assert "'camera_height_px', default_value='480'" in source
+    assert "'camera_height_px', default_value='360'" in source
     assert "'calibration_width_px', default_value='640'" in source
-    assert "'calibration_height_px', default_value='480'" in source
+    assert "'calibration_height_px', default_value='360'" in source
     assert "'require_exact_camera_resolution', default_value='true'" in source
     assert source.count("'require_exact_resolution': _bool(") == 2
 
     rectify = (PKG / 'cctv_rectify_node.py').read_text()
     assert "declare_parameter('require_exact_resolution', False)" in rectify
     assert 'CCTV frame resolution mismatch; dropping frame' in rectify
+
+
+def test_dual_cctv_starts_read_only_control_tower_with_site_optics():
+    source = (ROOT / 'launch/cctv_server_dual.launch.py').read_text()
+    assert "'enable_control_tower_preview', default_value='true'" in source
+    assert "'control_tower_web_port', default_value='5008'" in source
+    assert "name='cctv_control_tower_preview_node'" in source
+    assert "executable='camera_preview'" in source
+    assert "'enable_yolo': False" in source
+    assert "'camera_optics_csv': ParameterValue([" in source
+    assert "'marker_height_m': _float('front_marker_height_m')" in source
 
 
 def test_dual_cctv_pins_logical_cameras_to_site_usb_ports():

@@ -222,5 +222,15 @@ def test_dedicated_launch_never_starts_a_camera_or_second_yolo():
     assert "'enable_yolo': False" in source
     assert "'detection_topics_csv'" in source
     assert "'calibration_height_px': 360" in source
+    assert "'camera_optics_csv': LaunchConfiguration('camera_optics_csv')" in source
+    assert "'marker_height_m': _float('marker_height_m')" in source
     assert "executable='opencv_camera'" not in source
     assert "executable='yolo_bev_map'" not in source
+
+
+def test_homography_alignment_uses_ceiling_control_tower_port():
+    tool = os.path.join(HERE, os.pardir, os.pardir, os.pardir,
+                        'tools', 'align_homography.py')
+    with open(tool, encoding='utf-8') as handle:
+        source = handle.read()
+    assert "DEFAULT_URL = 'http://127.0.0.1:5008/api/info'" in source

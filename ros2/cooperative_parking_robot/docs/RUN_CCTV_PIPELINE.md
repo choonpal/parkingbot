@@ -290,6 +290,10 @@ ros2 topic info /rear/cctv_pose --verbose | grep -c "Node name"
 
 ### 6-1. 웹 프리뷰 — 권장
 
+`cctv_server_dual.launch.py`와 `site_jetson.launch.py`는 기본적으로 이 관제탑을
+함께 실행한다(`enable_control_tower_preview:=true`). 이미 dual-CCTV stack이 떠
+있다면 아래 명령을 중복 실행하지 않는다. 관제탑을 별도로 껐을 때만 실행한다.
+
 ```bash
 ros2 launch cooperative_parking_robot cctv_detection_preview.launch.py
 ```
@@ -318,7 +322,8 @@ ros2 launch cooperative_parking_robot cctv_detection_preview.launch.py \
 보이는 것:
 
 - 두 카메라 실시간 + 격자 + 중심 십자
-- **ArUco 마커** — 변 편차, mm/px, world 좌표. 5% 미만이면 양호
+- **ArUco 마커** — 원근에 따른 변 길이 차이, mm/px, world 좌표. 변 길이 차이는
+  카메라 시점 진단값이며 주행 합격/실패 기준으로 사용하지 않는다.
 - **Production 차량 검출** — 실제 sensor envelope의 윤곽·중심·world 좌표
 - **검출 상태** — 토픽, sensor ID, 수신 Hz, 데이터 지연, sequence, H 상태,
   깨진 메시지와 순서가 뒤집힌 메시지 수
@@ -432,6 +437,6 @@ sudo fuser -v /dev/video0 /dev/video2    # 비어야 함
 ```
 [터미널 1] cctv_server_dual.launch.py     ← 닫지 말 것
 [터미널 2] 토픽 확인 (merge_status, parking/*)
-[터미널 3] camera_preview (5005) 또는 show_map_ascii
+[터미널 3] camera_preview (5008) 또는 show_map_ascii
 [터미널 4] tile_homography (5006)  — 기준점 등록할 때만
 ```

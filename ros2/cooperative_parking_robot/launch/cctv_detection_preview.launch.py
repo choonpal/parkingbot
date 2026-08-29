@@ -29,6 +29,9 @@ def generate_launch_description():
         DeclareLaunchArgument('web_host', default_value='0.0.0.0'),
         DeclareLaunchArgument('web_port', default_value='5008'),
         DeclareLaunchArgument('marker_size_m', default_value='0.24'),
+        DeclareLaunchArgument('camera_optics_csv', default_value=''),
+        DeclareLaunchArgument('marker_height_m', default_value='0.0'),
+        DeclareLaunchArgument('vehicle_detection_height_m', default_value='0.0'),
         DeclareLaunchArgument('stale_after_s', default_value='2.0'),
         DeclareLaunchArgument(
             'image_topics_csv',
@@ -56,6 +59,10 @@ def generate_launch_description():
                 'enable_aruco': True,
                 'aruco_dict': 'DICT_4X4_50',
                 'marker_size_m': _float('marker_size_m'),
+                'camera_optics_csv': LaunchConfiguration('camera_optics_csv'),
+                'marker_height_m': _float('marker_height_m'),
+                'vehicle_detection_height_m': _float(
+                    'vehicle_detection_height_m'),
                 'aruco_every_n': 3,
                 'enable_bev': True,
                 'layout_yaml': LaunchConfiguration('layout_yaml'),

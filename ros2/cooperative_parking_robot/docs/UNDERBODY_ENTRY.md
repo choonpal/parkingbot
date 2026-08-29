@@ -65,6 +65,11 @@ transport fault로 latch되며, 진단에는 실패 frame 종류·queue 대기·
 별도 `rear_camera_fps:=8.0`으로 제한한다. 전체 주차장 CCTV는 상시 활성이고,
 이 phase gate는 Rear 마커 카메라와 ArUco에만 적용된다.
 
+실차 RPi launch는 `bridge_cpu_set:=3`, `worker_cpu_set:=0-2`를 기본으로 사용한다.
+STM32 bridge의 heartbeat/UART thread를 별도 코어에 두어 다른 노드의 cold import와
+DDS discovery가 300 ms watchdog 경로를 선점하지 않게 한다. 실차 진단용
+`ros2 topic` 명령도 `taskset -c 0-2`를 앞에 붙여 bridge 코어를 침범하지 않는다.
+
 ## 정렬 후 정지 commissioning 모드
 
 차량 하부 진입만 검증할 때 Front와 Rear launch에

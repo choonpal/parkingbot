@@ -110,7 +110,7 @@ def test_delayed_correction_rewinds_then_replays_later_wheel_steps():
     assert result.quantization_s == pytest.approx(0.1)
 
 
-def test_measured_geometry_and_unknown_sloped_vehicle_height():
+def test_measured_geometry_and_vehicle_detection_height():
     assert CAMERA_GEOMETRY['cam0'].optical_axis_ground_m == pytest.approx(
         (2.319423, 2.315810))
     assert CAMERA_GEOMETRY['cam2'].optical_axis_ground_m == pytest.approx(
@@ -118,7 +118,7 @@ def test_measured_geometry_and_unknown_sloped_vehicle_height():
     assert CAMERA_GEOMETRY['cam0'].optical_center_height_m == pytest.approx(2.61)
     assert CAMERA_GEOMETRY['cam2'].optical_center_height_m == pytest.approx(2.61)
     assert ROBOT_MARKER_HEIGHT_M == pytest.approx(0.12)
-    assert VEHICLE_DETECTION_EFFECTIVE_HEIGHT_M is None
+    assert VEHICLE_DETECTION_EFFECTIVE_HEIGHT_M == pytest.approx(0.530)
 
 
 def test_production_wrappers_preserve_explicit_site_geometry():

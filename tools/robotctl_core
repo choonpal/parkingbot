@@ -16,7 +16,7 @@ import time
 from parkingbot_ops import (
     REQUIRED, ROLES, SESSION, Runner, create_run_dir, format_snapshot,
     conditional_config_errors, incident_snapshot, invalid_paths,
-    launch_command, load_env, missing_config,
+    launch_command, launch_file_check_command, load_env, missing_config,
     observer_argv, observer_helper_path, observer_prerequisite_errors,
     parse_observer_output,
     protocol_consistency_errors, protocol_source_check_command,
@@ -577,15 +577,18 @@ def doctor(args):
             blockers.append(f"{role} host unreachable")
             continue
         workspace = role_workspace(config, role)
+        repository = workspace + '/src/cooperative_parking_robot'
+        launch_file = ('cctv_server_dual.launch.py' if role == 'jetson'
+                       else role + '_robot.launch.py')
         checks = [
             ("command -v tmux >/dev/null", "tmux missing"),
             (f"test -f {shlex.quote(config['ROS_SETUP'])}", "ROS setup missing"),
             (f"test -f {shlex.quote(workspace + '/install/setup.bash')}", "workspace install missing"),
-            (f"test -f {shlex.quote(workspace + '/src/cooperative_parking_robot/launch/' + ('cctv_server_dual.launch.py' if role == 'jetson' else role + '_robot.launch.py'))}", "launch file missing"),
+            (launch_file_check_command(repository, launch_file),
+             "launch file missing"),
             (ros_prefix(config, role) + " && ros2 pkg prefix cooperative_parking_robot >/dev/null", "ROS package unavailable"),
             ("test \"$(timedatectl show -p NTPSynchronized --value 2>/dev/null)\" = yes", "clock not NTP synchronized"),
-            (protocol_source_check_command(
-                workspace + '/src/cooperative_parking_robot'),
+            (protocol_source_check_command(repository),
              "firmware/ROS protocol capability mismatch"),
         ]
         if role == "jetson":

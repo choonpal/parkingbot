@@ -148,12 +148,12 @@ def test_full_system_gates_only_rear_marker_camera_not_overview_cctv():
     assert "'capture_fps': _float('rear_camera_capture_fps')" in rear_block
 
 
-def test_real_robot_launches_reserve_one_core_for_each_uart_bridge():
+def test_real_robot_launches_keep_one_exclusive_core_and_bridge_spillover():
     front = (ROOT / 'launch/front_robot.launch.py').read_text()
     rear = (ROOT / 'launch/rear_robot.launch.py').read_text()
 
     for source in (front, rear):
-        assert '"bridge_cpu_set", default_value="3"' in source
+        assert '"bridge_cpu_set", default_value="2-3"' in source
         assert '"worker_cpu_set", default_value="0-2"' in source
         assert 'prefix=bridge_prefix' in source
     assert front.count('prefix=worker_prefix') == 5

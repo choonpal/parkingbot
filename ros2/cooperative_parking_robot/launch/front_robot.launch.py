@@ -24,9 +24,9 @@ def _bool(name):
 
 
 def generate_launch_description():
-    # The target Raspberry Pi 4 has four cores. Keep the watchdog-critical
-    # bridge off the worker cores so cold Python imports and DDS discovery
-    # cannot starve its 100 ms heartbeat producer.
+    # The target Raspberry Pi 4 has four cores. Core 3 remains bridge-only,
+    # while allowing core 2 prevents the bridge's DDS, executor and UART
+    # threads from contending on one CPU and starving the heartbeat writer.
     bridge_prefix = [
         "taskset -c ", LaunchConfiguration("bridge_cpu_set")]
     worker_prefix = [
@@ -106,7 +106,7 @@ def generate_launch_description():
             "hardware_profile", default_value="robot-2",
             description="Physical chassis profile; independent of front role"),
         DeclareLaunchArgument(
-            "bridge_cpu_set", default_value="3",
+            "bridge_cpu_set", default_value="2-3",
             description="RPi CPU set reserved for STM32 bridge"),
         DeclareLaunchArgument(
             "worker_cpu_set", default_value="0-2",

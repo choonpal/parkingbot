@@ -290,6 +290,23 @@ def test_stop_after_align_is_forwarded_to_both_robot_launches():
     assert "stop_after_align" not in ops.launch_command(config, "jetson")
 
 
+def test_serial_write_timeout_is_validated_and_forwarded_to_robot_launches():
+    config = valid_config()
+    config["SERIAL_WRITE_TIMEOUT_S"] = "0.10"
+
+    assert not ops.conditional_config_errors(config)
+    assert "serial_write_timeout_s:=0.10" in ops.launch_command(config, "front")
+    assert "serial_write_timeout_s:=0.10" in ops.launch_command(config, "rear")
+    assert "serial_write_timeout_s" not in ops.launch_command(config, "jetson")
+
+    config["SERIAL_WRITE_TIMEOUT_S"] = "0.11"
+    assert ops.conditional_config_errors(config) == [
+        "SERIAL_WRITE_TIMEOUT_S must be in [0.01, 0.10]"]
+    config["SERIAL_WRITE_TIMEOUT_S"] = "not-a-number"
+    assert ops.conditional_config_errors(config) == [
+        "SERIAL_WRITE_TIMEOUT_S must be a number in [0.01, 0.10]"]
+
+
 def test_local_ros_commands_always_source_underlay_and_control_overlay():
     config = valid_config()
     config.update({

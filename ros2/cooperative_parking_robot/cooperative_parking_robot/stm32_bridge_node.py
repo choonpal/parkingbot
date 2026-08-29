@@ -36,6 +36,8 @@ import threading
 import time
 
 import rclpy
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from geometry_msgs.msg import TwistStamped
 from nav_msgs.msg import Odometry
@@ -392,13 +394,30 @@ class Stm32BridgeNode(Node):
             String, f'/{self.role}/heartbeat_diagnostics', 10)
 
         # ===== 루프 =====
-        self.create_timer(0.02, self.read_serial)       # UART 수신
+        # Heartbeat 생성과 UART ACK 수신은 motion/telemetry 콜백 부하와
+        # 실행 슬롯을 공유하면 안 된다. STM32 watchdog은 300 ms이므로 일반
+        # 콜백이 길어질 때 SingleThreadedExecutor에서 heartbeat가 큐에 늦게
+        # 들어가는 것만으로도 안전 latch가 걸릴 수 있다. 같은 그룹 안에서는
+        # protocol 상태를 직렬화하고, 아래 main의 별도 executor worker가 이
+        # 그룹을 일반 콜백과 병렬로 처리한다.
+        self.serial_callback_group = MutuallyExclusiveCallbackGroup()
+        self.create_timer(
+            0.02, self.read_serial,
+            callback_group=self.serial_callback_group)  # UART 수신
         self.create_timer(0.02, self.send_velocity_loop)  # 속도 송신 50Hz (감쇠 포함)
-        self.create_timer(self.heartbeat_period, self.send_heartbeat)
-        self.create_timer(0.1, self.send_servo_attach)  # bounded startup retry
-        self.create_timer(0.05, self.startup_handshake_tick)
+        self.create_timer(
+            self.heartbeat_period, self.send_heartbeat,
+            callback_group=self.serial_callback_group)
+        self.create_timer(
+            0.1, self.send_servo_attach,
+            callback_group=self.serial_callback_group)  # bounded startup retry
+        self.create_timer(
+            0.05, self.startup_handshake_tick,
+            callback_group=self.serial_callback_group)
         self.create_timer(0.2, self.publish_hardware_state)
-        self.create_timer(0.5, self.serial_reconnect_tick)
+        self.create_timer(
+            0.5, self.serial_reconnect_tick,
+            callback_group=self.serial_callback_group)
         self.create_timer(0.1, self.publish_ultrasonic_phase_state)
         self.create_timer(1.0, self.publish_heartbeat_diagnostics)
 
@@ -1337,8 +1356,10 @@ class Stm32BridgeNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = Stm32BridgeNode()
+    executor = MultiThreadedExecutor(num_threads=2)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
@@ -1349,7 +1370,9 @@ def main(args=None):
         # 멈춘다. 그 전에 0 속도를 명시적으로 보내 관성 주행을 없앤다.
         # ESTOP 은 보내지 않는다. latch 되면 전원 재인가 전까지 못 푼다.
         node.shutdown_stop()
+        executor.remove_node(node)
         node.destroy_node()
+        executor.shutdown(timeout_sec=1.0)
         if rclpy.ok():
             rclpy.shutdown()
 

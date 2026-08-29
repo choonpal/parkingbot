@@ -24,13 +24,6 @@ def _bool(name):
 
 
 def generate_launch_description():
-    # The target Raspberry Pi 4 has four cores. Core 3 remains bridge-only,
-    # while allowing core 2 prevents the bridge's DDS, executor and UART
-    # threads from contending on one CPU and starving the heartbeat writer.
-    bridge_prefix = [
-        "taskset -c ", LaunchConfiguration("bridge_cpu_set")]
-    worker_prefix = [
-        "taskset -c ", LaunchConfiguration("worker_cpu_set")]
     wheelbase = _float("wheelbase")
     waiting_x = _float("waiting_x")
     waiting_y = _float("waiting_y")
@@ -105,12 +98,6 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "hardware_profile", default_value="robot-2",
             description="Physical chassis profile; independent of front role"),
-        DeclareLaunchArgument(
-            "bridge_cpu_set", default_value="2-3",
-            description="RPi CPU set reserved for STM32 bridge"),
-        DeclareLaunchArgument(
-            "worker_cpu_set", default_value="0-2",
-            description="RPi CPU set for non-bridge ROS processes"),
         DeclareLaunchArgument("enable_serial", default_value="true"),
         DeclareLaunchArgument("require_serial", default_value="true"),
         DeclareLaunchArgument("serial_write_timeout_s", default_value="0.05"),
@@ -225,7 +212,6 @@ def generate_launch_description():
             package="cooperative_parking_robot",
             executable="rigid_body_sync",
             name="rigid_body_sync_node",
-            prefix=worker_prefix,
             parameters=[id0_calibration, sync_config, {
                 "wheelbase": wheelbase,
                 "max_speed": 0.08,
@@ -249,7 +235,6 @@ def generate_launch_description():
             package="cooperative_parking_robot",
             executable="individual_move",
             name="front_individual_move",
-            prefix=worker_prefix,
             parameters=[id0_calibration, {
                 "role": "front",
                 "default_wheelbase": wheelbase,
@@ -265,7 +250,6 @@ def generate_launch_description():
             package="cooperative_parking_robot",
             executable="state_machine",
             name="front_state_machine",
-            prefix=worker_prefix,
             parameters=[{
                 "role": "front",
                 "approach_timeout_s": _float("approach_timeout_s"),
@@ -281,7 +265,6 @@ def generate_launch_description():
             package="cooperative_parking_robot",
             executable="stm32_bridge",
             name="front_bridge",
-            prefix=bridge_prefix,
             parameters=[{
                 "role": "front",
                 "hardware_profile": LaunchConfiguration("hardware_profile"),
@@ -305,7 +288,6 @@ def generate_launch_description():
             package="cooperative_parking_robot",
             executable="ultrasonic_edge",
             name="front_ultrasonic",
-            prefix=worker_prefix,
             parameters=[{
                 "role": "front",
                 "threshold_m": ultrasonic_threshold,
@@ -327,7 +309,6 @@ def generate_launch_description():
             package="cooperative_parking_robot",
             executable="pose_fusion",
             name="front_pose_fusion",
-            prefix=worker_prefix,
             parameters=[{
                 "role": "front",
                 "init_x": waiting_x,

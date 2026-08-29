@@ -7,10 +7,11 @@ ROS 2 Humble 협동 주차 로봇, Jetson 인지/UI, STM32F401RE 제어 펌웨�
 ## 문서
 
 - [현재 문서 안내](docs/README.md) — 실행 전에 먼저 확인
+- [현재 통합 상태](docs/CURRENT_INTEGRATION_STATUS.md) — 배포 기준과 실기 GO/NO-GO
 - [실차 탑재·실행 Runbook](docs/REAL_ROBOT_DEPLOYMENT_RUNBOOK.md) — 배포, 기동, UI, 복구
 - [실차 준비도](docs/REAL_WORLD_READINESS.md) — GO/NO-GO 판정
 - [Calibration pipeline](docs/pipeline.md) — 카메라, Homography, layout, preflight
-- [ROS 2 패키지](ros2/cooperative_parking_robot/README.md) — 노드 개요와 launch index
+- [ROS 2 패키지 문서](ros2/cooperative_parking_robot/docs/README.md) — 기능별 실행·시험 문서
 
 ## 구성
 
@@ -18,11 +19,12 @@ ROS 2 Humble 협동 주차 로봇, Jetson 인지/UI, STM32F401RE 제어 펌웨�
 - `stm32/parking_robot` — Front/Rear 공통 STM32CubeIDE 프로젝트
 - `docs` — 현재 운용 문서와 과거 설계 기록
 
-이 통합본의 STM32 기준은 `stm32/parking_robot`이다. 2026-08-25 기준
-Front(`robot-2`)는 ARM 링크·플래시, ROS bridge, 잭업 폐루프 3축 주행과
-무하중 바닥 저속 키보드 주행까지 확인했다. Rear(`robot-1`)는 교체 Nucleo의
-Rear 펌웨어 기록·읽기 검증과 정지 UART까지 확인했지만 RR 엔코더 신호 경로
-수리와 주행 검증이 남았다.
+이 통합본의 STM32 기준은 `stm32/parking_robot`이다. Front=`robot-2`,
+Rear=`robot-1`이며 역할별 firmware profile을 따로 빌드·플래시한다. 2026-08-29
+기준 pregrip 소프트웨어 통합과 clean build는 통과했지만, 현재 통합본은 아직 세
+현장 장비에 재배포하지 않았다. 초음파-그리퍼 X offset 네 값의 실측 근거도 없어
+차량 하부 자동 진입은 **NO-GO**다. 정확한 현재 판정은
+[현재 통합 상태](docs/CURRENT_INTEGRATION_STATUS.md)를 따른다.
 
 저장소 기본 branch 또는 검증된 release를 배포한다. 과거 실험 branch를 운용
 기준으로 사용하지 않는다. 두 로봇의 차량 하중 시험, 보호 지그, 물리 ESTOP,

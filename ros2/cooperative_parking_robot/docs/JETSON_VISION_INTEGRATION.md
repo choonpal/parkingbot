@@ -1,5 +1,10 @@
 # Jetson YOLO + ArUco 통합 검토
 
+> **과거 v1.6 검토 기록:** 아래 노드·1280x720 통과 기준은 초기 단일 CCTV
+> 통합 당시 내용이다. 현재 듀얼 CCTV 운용은 640x360이며
+> [CCTV 실행](RUN_CCTV_PIPELINE.md)과
+> [calibration pipeline](../../../docs/pipeline.md)을 따른다.
+
 ## 결론
 
 전달된 단독 스크립트는 카메라 인식과 Flask 화면 확인에는 유용하지만, 그 자체로는 ROS 2 맵·로봇 pose·경로 토픽을 발행하지 않는다. v1.6에서는 해당 기능을 ROS 파이프라인에 나눠 통합했다.

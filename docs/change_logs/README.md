@@ -18,6 +18,7 @@
 
 | 날짜 | 변경 내용 | 주요 영역 |
 |---|---|---|
+| 2026-08-29 | [통합·정렬 후 정지 시험 감사](./2026-08-29_unified-pregrip-update-audit.md) | Pregrip / CCTV / UART / Operations |
 | 2026-08-28 | [기능별 테스트·강체 쌍 실차시험 main 통합](./2026-08-28_feature-tests-and-rigid-pair-field-test.md) | Feature tests / ArUco / Rigid-pair |
 | 2026-08-28 | [Production startup heartbeat·freshness·operations 복구](./2026-08-28_production-startup-heartbeat-and-ops.md) | Firmware / ROS Freshness / Operations |
 | 2026-08-27 21:27 | [비전 기반 강체 이동: 측정 기하·카메라 handover·지연 보정](./2026-08-27_vision-rigid-handover-and-replay.md) | Vision / Localization / Rigid-body |

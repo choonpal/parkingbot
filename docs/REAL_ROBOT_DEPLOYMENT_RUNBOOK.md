@@ -3,7 +3,8 @@
 이 문서는 배포, 분산 기동, 7인치 UI와 장애 복구의 기준 절차다. Calibration,
 Homography와 preflight는 [pipeline](pipeline.md), 시험 단계와 최종 운용 판정은
 [실차 준비도](REAL_WORLD_READINESS.md)를 따른다. 전체 문서 관계는
-[문서 안내](README.md)에 정리돼 있다.
+[문서 안내](README.md)에 정리돼 있다. 2026-08-29 통합 후보의 배포 여부와 즉시
+차단 조건은 [현재 통합 상태](CURRENT_INTEGRATION_STATUS.md)를 먼저 확인한다.
 
 소프트웨어가 동작해도 하중 안전은 보장되지 않는다. 보호 지그, 물리 ESTOP,
 사람 감독과 실제 파지/하중 확인 수단 없이 차량을 들어 올리는 무인 운용은
@@ -15,6 +16,9 @@ Jetson과 Front/Rear Raspberry Pi는 Ubuntu 22.04, ROS 2 Humble, 같은
 `ROS_DOMAIN_ID`, 동기화된 NTP/chrony 시각과 신뢰 가능한 격리 LAN을 사용한다.
 저장소 기본 branch를 clone하거나 검증된 release/tag/commit을 명시한다. 과거
 `feature/exit-mission-integration` branch를 배포 기준으로 사용하지 않는다.
+디렉터리 이름이 같아도 설치본이 최신이라는 뜻은 아니다. 배포 전에 기준 SHA를
+정하고 Jetson·Front·Rear의 source와 install이 모두 그 SHA에서 나온 것인지
+확인한다.
 
 ```bash
 git clone git@github.com:choonpal/parkingbot.git ~/parkingbot
@@ -70,6 +74,8 @@ source ~/parkingbot_ws/install/setup.bash
 export ROS_DOMAIN_ID=42
 export ROS_LOCALHOST_ONLY=0
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+
+git -C ~/parkingbot rev-parse HEAD
 ```
 
 ## 2. STM32 플래시와 전기 안전
@@ -137,7 +143,7 @@ camera driver로 열고 `enable_rear_camera:=false`로 연결한다.
 `${HOME}/ov2710_calib_23mm_*.npz`이고, 로봇에서 실행할 때는 각 로봇
 사용자의 `$HOME`에 필요한 파일을 복사한다.
 
-- Rear `robot-1`: 흰색 OV2710, 1280x720 @ 12 fps,
+- Rear `robot-1`: 흰색 OV2710, 제어용 1280x720 @ 8 fps,
   `$HOME/ov2710_calib_23mm_white.npz` 배포·존재 확인 완료
 - Front `robot-2`: 검은색 OV2710, 640x480,
   원본 `ov2710_calib_23mm_black.npz` (현재 상대 pose 제어에는 미사용·미배포)
@@ -247,6 +253,10 @@ PC의 절대 colcon workspace 경로, stable device path 및 아래 launch에 �
 Rear=`robot@robot-1.local`을 사용한다.
 Rear가 외부 camera driver를 쓰면 현장에서 이미 검증한 정확한 실행 명령을
 `REAR_EXTERNAL_CAMERA_COMMAND`에 넣는다. 명령을 알 수 없으면 start는 차단된다.
+
+차량 하부 진입 후 정지 시험에서는 `STOP_AFTER_ALIGN=true`를 명시한다. 이 값은
+Front/Rear 양쪽에 `stop_after_align:=true`를 전달한다. `false`이면 정상 mission이
+LIFT 단계로 진행할 수 있으므로 이번 commissioning 시험에는 사용하지 않는다.
 
 ```bash
 robot_doctor
@@ -374,6 +384,8 @@ ros2 launch cooperative_parking_robot rear_robot.launch.py \
   lx:="${REAR_LX}" ly:="${REAR_LY}" \
   left_sensor_to_gripper_x_m:="${REAR_LEFT_SENSOR_X}" \
   right_sensor_to_gripper_x_m:="${REAR_RIGHT_SENSOR_X}" \
+  entry_side_offset_m:=0.50 \
+  stop_after_align:=true \
   simultaneous_entry:=false
 ```
 
@@ -391,6 +403,7 @@ ros2 launch cooperative_parking_robot rear_robot.launch.py \
 : "${FRONT_LY:?set measured Front ly}"
 : "${FRONT_LEFT_SENSOR_X:?set measured left sensor offset}"
 : "${FRONT_RIGHT_SENSOR_X:?set measured right sensor offset}"
+USE_ARUCO_DISTANCE="${USE_ARUCO_DISTANCE:-false}"
 
 ros2 launch cooperative_parking_robot front_robot.launch.py \
   serial_port:="${FRONT_SERIAL}" \
@@ -402,15 +415,18 @@ ros2 launch cooperative_parking_robot front_robot.launch.py \
   lx:="${FRONT_LX}" ly:="${FRONT_LY}" \
   left_sensor_to_gripper_x_m:="${FRONT_LEFT_SENSOR_X}" \
   right_sensor_to_gripper_x_m:="${FRONT_RIGHT_SENSOR_X}" \
-  use_aruco_distance:=true \
+  use_aruco_distance:="${USE_ARUCO_DISTANCE}" \
+  entry_side_offset_m:=0.50 \
+  stop_after_align:=true \
   simultaneous_entry:=false
 ```
 
 ID0 중심거리 offset은 `config/id0_calibration.yaml`에서 중앙 관리한다.
 현재 `0.570m` 값은 2026-08-27의 정렬 실측(중심간 0.785m, raw 약 0.215m)에
-근거하므로 production은 `use_aruco_distance=true`를 사용한다. 카메라 또는 ID0
-장착을 변경했다면 이 파일을 재측정하기 전까지 X correction을 비활성화하고,
-mission reference가 wheel X를 사용한다는 점을 확인한다.
+근거한다. 현재 카메라·ID0 장착에서 raw 중앙값을 다시 확인한 뒤에만
+`use_aruco_distance=true`를 사용한다. 장착을 변경했거나 재확인 전이면 `false`로
+두고 X correction을 비활성화하며, mission reference가 wheel X를 사용한다는 점을
+확인한다.
 
 ### 분산 장비 시계 동기화 확인
 
@@ -460,6 +476,19 @@ ros2 topic echo /fleet/state
 ros2 topic info /parking/map --verbose
 ```
 
+정렬 후 정지 시험의 마지막 판정은 다음을 별도 터미널에서 확인한다.
+
+```bash
+ros2 topic echo /front/aligned_hold
+ros2 topic echo /rear/aligned_hold
+ros2 topic echo /mission/commit
+ros2 topic echo /front/cmd_vel
+ros2 topic echo /rear/cmd_vel
+```
+
+양쪽 `aligned_hold=true`, 양쪽 명령과 실제 바퀴 0, LIFT commit 없음이 모두
+확인돼야 한다. 이 상태에는 자동 이탈이 없으므로 grip/lift 명령을 보내지 않는다.
+
 양쪽 `hardware_ready=true`, fresh sensor/localization, 단일 `/parking/map`
 publisher, 올바른 marker 역할, 등록된 layout, fault 없는 Fleet/UI를 확인한 뒤에만
 로봇을 받침대에서 내려 바닥 시험으로 넘어간다. 공통 전원이 이미 인가된 동안에는
@@ -472,6 +501,10 @@ Jetson에서 `http://127.0.0.1:5000/kiosk`를 연다.
 ```bash
 chromium-browser --kiosk --noerrdialogs http://127.0.0.1:5000/kiosk
 ```
+
+듀얼 CCTV·BEV·로봇 marker 상태는 같은 내부망에서
+`http://robot-desktop.local:5008/`로 확인한다. 5008은 주차장 전체 관제 화면이고,
+Rear의 ID0 전용 5005 화면과 다르다.
 
 - 입차: 차량번호, 4~64자 비밀번호와 `EMPTY` slot을 제출하고 Fleet 승인과 양쪽
   HOME 완료 후 `OCCUPIED` 전환을 확인한다.

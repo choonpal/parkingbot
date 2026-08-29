@@ -16,6 +16,12 @@ localization, 초음파 정렬, 결합 footprint A*, UI 승인과 SQLite Registr
 - 보호 지그 저하중 park/retrieve: 모든 interlock과 단계 gate 통과 후 조건부
 - 사람 없는 무인 차량 인양·운반: **현재 NO-GO**
 
+2026-08-29 통합 후보는 소프트웨어 감사와 clean build를 통과했지만 아직 현장 세
+장비에 재배포하지 않았다. 또한 Front/Rear 좌우
+`sensor_to_gripper_x` 네 값이 모두 `0.0`인 이유를 입증할 실측 기록이 없다.
+따라서 현재는 정적 점검 준비까지만 가능하며 차량 하부 자동 진입도 **NO-GO**다.
+상세 기준은 [현재 통합 상태](CURRENT_INTEGRATION_STATUS.md)에 있다.
+
 현재 로봇은 메인 전원이 RPi/카메라와 모터 계통에 함께 인가되며 motor rail만
 독립적으로 켜고 끌 수 없다. 그러므로 정적 인지/UART 시험도 바닥에서 수행하지
 않고, 모든 바퀴를 견고하게 띄운 상태에서 격리 ROS domain과 perception-only
@@ -44,6 +50,7 @@ localization, 초음파 정렬, 결합 footprint A*, UI 승인과 SQLite Registr
 - `enable_serial`, `require_serial`, `require_hardware_ready`,
   `require_ultrasonic_for_ready`가 실차 안전값이 아님
 - `use_aruco_distance=true`인데 중심간 거리와 offset을 실측하지 않음
+- 좌우 ultrasonic-to-gripper X offset이 미측정이거나 임시 `0.0`임
 - 물리 ESTOP, fuse, 공통 GND 또는 HC-SR04 5 V level protection이 없음
 - 단일 메인 전원 상태에서 바퀴를 띄우지 않거나, 격리 ROS domain·구동 노드
   미실행·`cmd_vel` publisher 0개를 확인하지 않고 정적 통전 시험을 시작함

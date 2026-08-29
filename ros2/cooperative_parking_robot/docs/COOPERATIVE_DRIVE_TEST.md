@@ -36,7 +36,7 @@ ros2 launch cooperative_parking_robot cooperative_drive_test_front.launch.py \
 ```
 
 robot-1 Rear에서는 흰색 OV2710의 안정 `by-path`를 넣어 실행한다.
-기본 운용값은 `1280x720 @ 12 fps`이며, ID0의 검은 정사각형 한 변은
+기본 운용값은 `1280x720 @ 8 fps`이며, ID0의 검은 정사각형 한 변은
 `0.10 m`이다.
 
 ```bash

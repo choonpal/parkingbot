@@ -8,6 +8,7 @@
 
 | 문서 | 역할 |
 |---|---|
+| [현재 통합 상태](CURRENT_INTEGRATION_STATUS.md) | 현재 branch·배포 상태·시험 범위·즉시 차단 조건 |
 | [실차 탑재·실행 Runbook](REAL_ROBOT_DEPLOYMENT_RUNBOOK.md) | 설치, 분산 기동, UI, 복구의 기준 절차 |
 | [실차 준비도](REAL_WORLD_READINESS.md) | 현재 검증 범위와 GO/NO-GO |
 | [배포 Pipeline](pipeline.md) | calibration, Homography, preflight 흐름 |
@@ -17,8 +18,8 @@
 | [ADR](adr/) | 설계 결정과 변경 이유 |
 | [변경 기록](change_logs/) | 구현 변경, 검증 결과, 실차 재확인 항목 |
 
-ROS 패키지의 노드·launch 개요는
-[cooperative_parking_robot README](../ros2/cooperative_parking_robot/README.md)를
+ROS 패키지의 기능별 실행·시험 문서는
+[cooperative_parking_robot 문서 안내](../ros2/cooperative_parking_robot/docs/README.md)를
 본다. 듀얼 CCTV의 타일 등록 절차는
 [Homography 도구 README](../dual_tile_homography_tool/README.md)가 기준이다.
 

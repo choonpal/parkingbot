@@ -1,6 +1,14 @@
 # 천장 카메라 보정 적용
 
-## 전달받은 파일
+> **현재 기준 (2026-08-29):** 교체된 cam0/cam2는 각각의 현장 runtime NPZ와
+> rectified Homography를 사용하며 모두 640x360 기준이다. 직접 dual launch도
+> camera와 calibration 기본 frame이 640x360이다. 아래 “전달받은 파일”과
+> “임시 640x480” 수치는 과거 asset 기록이며 현재 장비에 사용하지 않는다.
+> 생성·검증 절차는 [calibration pipeline](../../../docs/pipeline.md), 현재 asset
+> 감사값은 [통합 감사](../../../docs/change_logs/2026-08-29_unified-pregrip-update-audit.md)를
+> 따른다.
+
+## 과거 전달받은 파일
 
 `calibration_data.npz`는 다음 키를 포함한다.
 
@@ -22,7 +30,7 @@ dist = [0.03678515, 0.05353067, -0.00274540, 0.00510393, -0.07254668]
 
 패키지에는 `config/cctv_camera_calibration.npz`로 정규화해 넣었으며 원본 키와 표준 키를 모두 보존했다.
 
-## 듀얼 CCTV 임시 640×480 보정값
+## 과거 듀얼 CCTV 임시 640×480 보정값
 
 2026-08-14 전달본에서 다음 카메라별 파일을 가져왔다.
 
@@ -33,8 +41,8 @@ config/cctv2_camera_calibration.npz
 
 두 파일은 서로 다른 intrinsic이며 `mtx/dist` 키를 사용한다. principal point가
 각각 약 `(340,238)`, `(327,256)`이므로 이번 단계에서는 **640×480 보정값**으로
-취급한다. `cctv_server_dual.launch.py`의 영상 및 calibration 기본 해상도도
-640×480으로 맞췄다.
+취급했다. 당시 `cctv_server_dual.launch.py`의 영상 및 calibration 기본 해상도도
+640×480이었다. 이 기본값은 현재 640x360으로 교체됐다.
 
 이 파일은 파이프라인 연결과 초기 실증을 위한 provisional asset이다. 실제 장착한
 cam0/cam2가 이 보정을 생성한 카메라라는 보장은 없으므로 최종 정밀 주행 전에는
@@ -77,7 +85,7 @@ YOLO와 상판 ArUco는 반드시 같은 `/cctv/image_rect`를 사용한다.
 4. 그 좌표로 `homography_rectified.npy`를 생성한다.
 5. YOLO와 상판 마커 노드 모두 같은 파일을 사용한다.
 
-## 해상도 확인
+## 과거 단일 전달본 해상도 확인
 
 이 NPZ에는 캘리브레이션 영상 크기가 없다. `(cx≈664, cy≈359)` 때문에 1280×720 가능성이 높아 보이지만 확정할 수 없다.
 

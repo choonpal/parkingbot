@@ -1,6 +1,6 @@
 # 확인된 문제 기록
 
-최종 갱신: 2026-08-26
+최종 갱신: 2026-08-29
 
 실제 관측되거나 전체 테스트에서 재현된 문제만 기록한다. 추측은 해결 완료로
 표시하지 않는다.
@@ -53,8 +53,10 @@
   pose yaw 불안정일 가능성이 높지만 아직 단정하지 않는다.
 - 안전 상태: FAULT 뒤 수동 제어권을 해제했으며 현재 IDLE, 양쪽 명령 0이다.
   확인 전 5° 안전 제한을 완화하거나 반복 ARM하지 않는다.
-- 남은 조치: yaw 시계열과 마커 corner를 함께 기록해 실제 회전과 pose ambiguity를
-  구분하고, 연속성 검증을 추가한 뒤 정지·짧은 주행 순서로 재시험한다.
+- 소프트웨어 조치: pose jump plausibility 검사, 3-sample median, bounded zero-hold와
+  3회 정상 관측 뒤 복구를 통합했다. 관련 회귀는 통과했다.
+- 남은 조치: 최신 통합본을 배포한 뒤 yaw 시계열과 marker corner를 함께 기록해
+  실제 회전과 pose ambiguity를 구분하고, 정지·짧은 주행 순서로 재시험한다.
 
 ### Front bridge의 `STALE_STAMP` 수동 명령 거부
 
@@ -67,16 +69,16 @@
 - 남은 확인: 더 긴 분산 주행에서도 재현되지 않는지 확인해야 한다. 짧은 1회
   무재현만으로 해결 완료로 보지 않는다.
 
+## 해결됨
+
 ### robot-1 ROS 노드의 Ctrl+C 종료 예외
 
-- 심각도: 낮음 — 주행 정지에는 영향 없지만 진단 프로세스가 실패 코드로 종료됨
-- 재현: 두 bridge 실기 진단에 이어 이번 launch의 bridge·ArUco·재시도 camera도
-  종료 중 `rcl_shutdown already called on the given context` 예외 발생
-- 원인: Humble 기본 SIGINT 처리가 context를 먼저 종료한 뒤 main이
-  `rclpy.shutdown()`을 다시 호출한다. robot-2 실험 배포본에는 `rclpy.ok()` 보호가
-  있지만 현재 main/robot-1에는 아직 없다.
-
-## 해결됨
+- 최초 원인: Humble 기본 SIGINT가 context를 먼저 종료한 뒤 bridge·ArUco·camera
+  main이 `rclpy.shutdown()`을 다시 호출했다.
+- 조치: 현장에 사용한 bridge, ArUco tracker, camera와 keyboard-follow 종료 경로에
+  `rclpy.ok()` 보호를 통합했다.
+- 검증: 종료 보호 회귀와 통합 package 전체 테스트를 통과했다. 최신 통합본의 현장
+  재배포 뒤에도 process exit code와 tmux 잔존 여부를 다시 확인한다.
 
 ### Rear 추종 launch의 카메라·미리보기 기동 불일치
 

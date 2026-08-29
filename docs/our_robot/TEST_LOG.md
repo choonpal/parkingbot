@@ -1,6 +1,6 @@
 # 주차로봇 벤치 시험 기록
 
-최종 정리: 2026-08-26
+최종 정리: 2026-08-29
 
 이 문서는 날짜별 실측값과 문제 해결 과정을 보관하는 참고 기록이다. 최종 핀·전압·안전 한계는 `ELECTRICAL_WIRING.md`, 시스템 설계는 `SYSTEM_HANDOFF.md`를 우선한다.
 
@@ -101,3 +101,21 @@
   `aruco_distance_offset_m=0.570m`로 정했다.
 - 이 값은 카메라·마커 장착 위치 보정이며 로봇 외곽 길이 `0.565m`와 다른 상수다.
   다음 정면 배치 때 여러 프레임의 중앙값이 21.5cm 부근인지 재확인한다.
+
+## 2026-08-28~29 강체 쌍과 pregrip 통합
+
+- 기존 실차 강체 쌍 시험에서 `W/S` 전후진과 정지를 확인했다. 정렬 기준 중심거리
+  약 `78.50cm`, 좌우 잔차 약 `0.05cm`, 정지 yaw 잔차 `0.37~0.80°`를 기록했다.
+- `A/D`, `Q/E`가 반대로 움직인 결과를 반영해 부호를 수정했지만 수정 뒤 실차
+  재시험은 하지 않았다. 이후 W/A/S/D pair heading hold, 연속 gap correction,
+  ArUco pose jump plausibility와 3-sample 복구를 통합했다.
+- 차량 하부 진입 뒤 grip 직전에 멈추는 `stop_after_align`을 추가했다. 양쪽
+  `aligned_hold=true`와 0속도를 유지하고 LIFT ready/commit을 차단한다.
+- 교체된 천장 CCTV asset을 640x360 기준으로 대조해 직접 launch 기본값과 현장
+  광축 지상점 우선순위를 수정했고, 5008 듀얼 CCTV 관제탑을 기본 기동하도록 했다.
+- 통합 소스를 우선 import한 회귀에서 ROS package 전체 `760 passed, 1 skipped`,
+  clean ROS 2 Humble build와 install-only import를 확인했다. 이 수치는 당시 감사
+  기록이며 실기 통과를 대신하지 않는다.
+- 이번 최신 통합본은 로봇과 Jetson에 재배포하거나 모션 실행하지 않았다. 현장
+  설정의 좌우 ultrasonic-to-gripper X offset 네 값이 모두 `0.0`이고 실측 근거가
+  없어 차량 하부 자동 진입은 NO-GO로 남겼다.

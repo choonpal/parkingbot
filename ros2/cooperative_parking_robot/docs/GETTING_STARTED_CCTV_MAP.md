@@ -2,6 +2,12 @@
 
 작성 2026-08-14 · 대상 v1.11 · 선행 지식 불필요
 
+> **과거 onboarding 기록:** 이 문서의 640x480 asset, 숫자 camera ID, 미구현
+> 항목과 파일 목록은 v1.11 당시 설명이다. 현재 배포·보정 명령으로 사용하지 않는다.
+> 현재 절차는 [패키지 문서 안내](README.md), [CCTV 실행](RUN_CCTV_PIPELINE.md),
+> [calibration pipeline](../../../docs/pipeline.md)을 따른다. 현재 천장 CCTV 기준은
+> 640x360이며 안정적인 `/dev/v4l/by-path/...`를 사용한다.
+
 이 문서 하나로 다음을 할 수 있게 하는 것이 목표다.
 
 1. **오늘 당장** — 실제 주차장 없이, 카메라 2대만으로 RViz에 맵이 뜨는 것까지
@@ -752,10 +758,11 @@ source ~/ros2_ws/install/setup.bash
 
 | 문서 | 내용 |
 |---|---|
+| `README.md` | 현재 package 문서와 역사 기록 구분 |
+| `RUN_CCTV_PIPELINE.md` | 현재 듀얼 CCTV·5008 관제탑 실행 |
+| `../../../docs/pipeline.md` | 현재 calibration·Homography·layout 절차 |
+| `../../../docs/REAL_ROBOT_DEPLOYMENT_RUNBOOK.md` | 젯슨·Front·Rear 배포·기동 |
 | `DUAL_CCTV_MERGE_20260812.md` | 카메라 2대 병합의 설계 근거와 전체 변경 내역 |
 | `CCTV_CALIBRATION.md` | 캘리브레이션 원칙 |
 | `BEV_SLOT_REGISTRATION_AND_PARKING.md` | 주차면 등록과 점유 판정 |
-| `localization_design.md` | 마커 체계(ID0/ID10/ID11)와 EKF |
-| `HUMBLE_DEPLOYMENT.md` | 젯슨·Front·Rear 3대 장비 배포 |
-| `system_spec.md` | 전체 시스템 사양 |
-| `MASTER_PLAN.md` | 로드맵, 출차 설계 |
+| `localization_design.md` | localization 설계의 역사와 안전 배경 |

@@ -22,4 +22,5 @@ jobs:
             ros2/cooperative_parking_robot/test/test_relative_sync_filter.py \
             ros2/cooperative_parking_robot/test/test_rigid_body_p0_policy.py \
             ros2/cooperative_parking_robot/test/test_dual_cctv_merge.py \
-            ros2/cooperative_parking_robot/test/test_v9_scanin_complete.py
+            ros2/cooperative_parking_robot/test/test_v9_scanin_complete.py \
+            ros2/cooperative_parking_robot/test/test_encoder_relative_predictor.py

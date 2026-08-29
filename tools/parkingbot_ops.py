@@ -206,6 +206,13 @@ def conditional_config_errors(config: dict[str, str]) -> list[str]:
     if internal == "false" and not config.get(
             "REAR_EXTERNAL_CAMERA_COMMAND", "").strip():
         return ["REAR_EXTERNAL_CAMERA_COMMAND is required for the external camera"]
+    serial_write_timeout = config.get("SERIAL_WRITE_TIMEOUT_S", "0.05")
+    try:
+        serial_write_timeout_value = float(serial_write_timeout)
+    except ValueError:
+        return ["SERIAL_WRITE_TIMEOUT_S must be a number in [0.01, 0.10]"]
+    if not 0.01 <= serial_write_timeout_value <= 0.10:
+        return ["SERIAL_WRITE_TIMEOUT_S must be in [0.01, 0.10]"]
     return []
 
 
@@ -431,6 +438,8 @@ def launch_command(config, role):
             "serial_port": config[f"{p}_SERIAL"], "enable_serial": "true",
             "require_serial": "true", "require_hardware_ready": "true",
             "require_ultrasonic_for_ready": "true", "wheelbase": config["WHEELBASE"],
+            "serial_write_timeout_s": config.get(
+                "SERIAL_WRITE_TIMEOUT_S", "0.05"),
             "wheel_radius": config[f"{p}_WHEEL_RADIUS"],
             "encoder_ppr": config[f"{p}_ENCODER_PPR"],
             "lx": config[f"{p}_LX"], "ly": config[f"{p}_LY"],

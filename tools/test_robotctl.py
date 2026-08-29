@@ -80,6 +80,35 @@ def test_external_rear_camera_requires_an_authoritative_start_command():
     assert ops.conditional_config_errors(config)
 
 
+def test_internal_rear_camera_prefers_persistent_device_path():
+    config = valid_config()
+    config.update({
+        "REAR_ENABLE_INTERNAL_CAMERA": "true",
+        "REAR_CAMERA_DEVICE": "/dev/v4l/by-id/site-rear-camera",
+        "REAR_CAMERA_ID": "7",
+        "REAR_EXTERNAL_CAMERA_COMMAND": "",
+    })
+
+    assert not ops.conditional_config_errors(config)
+    command = ops.launch_command(config, "rear")
+    assert "rear_camera_device:=/dev/v4l/by-id/site-rear-camera" in command
+    assert "rear_camera_id:=" not in command
+
+
+def test_internal_rear_camera_allows_numeric_fallback_only_when_configured():
+    config = valid_config()
+    config.update({
+        "REAR_ENABLE_INTERNAL_CAMERA": "true",
+        "REAR_CAMERA_DEVICE": "",
+        "REAR_CAMERA_ID": "",
+        "REAR_EXTERNAL_CAMERA_COMMAND": "",
+    })
+    assert ops.conditional_config_errors(config)
+    config["REAR_CAMERA_ID"] = "0"
+    assert not ops.conditional_config_errors(config)
+    assert "rear_camera_id:=0" in ops.launch_command(config, "rear")
+
+
 def test_remote_ssh_is_batch_and_fail_fast():
     argv = ops.remote_argv("rear.example", "true")
     assert argv[:2] == ["ssh", "-o"]

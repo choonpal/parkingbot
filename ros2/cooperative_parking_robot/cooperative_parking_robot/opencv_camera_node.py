@@ -49,6 +49,10 @@ class OpenCvCameraNode(Node):
         self.declare_parameter('width', 1280)
         self.declare_parameter('height', 720)
         self.declare_parameter('fps', 30.0)
+        # Capture cadence/format can differ from the ROS publish cadence.
+        # Zero preserves the legacy behavior of using ``fps`` for capture.
+        self.declare_parameter('capture_fps', 0.0)
+        self.declare_parameter('v4l2_fourcc', '')
         self.declare_parameter('buffer_size', 1)
         self.declare_parameter('require_camera', True)
         self.declare_parameter('reopen_interval_s', 2.0)
@@ -78,6 +82,10 @@ class OpenCvCameraNode(Node):
         self.width = int(self.get_parameter('width').value)
         self.height = int(self.get_parameter('height').value)
         self.fps = float(self.get_parameter('fps').value)
+        self.capture_fps = float(
+            self.get_parameter('capture_fps').value)
+        self.v4l2_fourcc = str(
+            self.get_parameter('v4l2_fourcc').value).strip().upper()
         self.preview_width = int(
             self.get_parameter('preview_width').value)
         self.preview_height = int(
@@ -105,6 +113,10 @@ class OpenCvCameraNode(Node):
             raise ValueError('camera width/height must be positive')
         if self.fps <= 0.0:
             raise ValueError('camera fps must be positive')
+        if self.capture_fps < 0.0:
+            raise ValueError('capture_fps must be non-negative')
+        if self.v4l2_fourcc and len(self.v4l2_fourcc) != 4:
+            raise ValueError('v4l2_fourcc must be empty or exactly 4 chars')
         if self.preview_topic and (
                 self.preview_width <= 0 or self.preview_height <= 0 or
                 self.preview_width > self.width or
@@ -193,9 +205,14 @@ class OpenCvCameraNode(Node):
             source = f'camera_id={self.camera_source}'
 
         if self.capture is not None:
+            if self.v4l2_fourcc and not self.pipeline:
+                self.capture.set(
+                    cv2.CAP_PROP_FOURCC,
+                    cv2.VideoWriter_fourcc(*self.v4l2_fourcc))
             self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
             self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-            self.capture.set(cv2.CAP_PROP_FPS, self.fps)
+            requested_capture_fps = self.capture_fps or self.fps
+            self.capture.set(cv2.CAP_PROP_FPS, requested_capture_fps)
             self.capture.set(cv2.CAP_PROP_BUFFERSIZE, self.buffer_size)
 
         if self.capture is None or not self.capture.isOpened():

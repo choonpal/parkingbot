@@ -30,6 +30,7 @@ ABSOLUTE_PATH_KEYS = (
     "JETSON_WORKSPACE", "FRONT_WORKSPACE", "REAR_WORKSPACE",
     "CONTROL_WORKSPACE", "ROS_SETUP", "CAM0_DEVICE", "CAM2_DEVICE",
     "MODEL_PATH", "FRONT_SERIAL", "REAR_SERIAL", "REAR_CALIB",
+    "REAR_CAMERA_DEVICE",
 )
 
 TOPICS = {
@@ -163,6 +164,7 @@ def load_env(path: Path) -> dict[str, str]:
     values.setdefault("OBSERVER_PYTHON", "/usr/bin/python3")
     values.setdefault("REAR_CAMERA_TOPIC", "/rear/marker_camera/image")
     values.setdefault("REAR_ENABLE_INTERNAL_CAMERA", "false")
+    values.setdefault("REAR_CAMERA_DEVICE", "")
     return values
 
 
@@ -179,8 +181,12 @@ def conditional_config_errors(config: dict[str, str]) -> list[str]:
     internal = config.get("REAR_ENABLE_INTERNAL_CAMERA", "false").lower()
     if internal not in ("true", "false"):
         return ["REAR_ENABLE_INTERNAL_CAMERA must be true or false"]
-    if internal == "true" and not config.get("REAR_CAMERA_ID", "").strip():
-        return ["REAR_CAMERA_ID is required for the internal camera"]
+    if (internal == "true" and
+            not config.get("REAR_CAMERA_DEVICE", "").strip() and
+            not config.get("REAR_CAMERA_ID", "").strip()):
+        return [
+            "REAR_CAMERA_DEVICE or REAR_CAMERA_ID is required for the "
+            "internal camera"]
     if internal == "false" and not config.get(
             "REAR_EXTERNAL_CAMERA_COMMAND", "").strip():
         return ["REAR_EXTERNAL_CAMERA_COMMAND is required for the external camera"]
@@ -430,7 +436,12 @@ def launch_command(config, role):
                 "camera_calib": config["REAR_CALIB"],
             })
             if config["REAR_ENABLE_INTERNAL_CAMERA"].lower() == "true":
-                args["rear_camera_id"] = config["REAR_CAMERA_ID"]
+                camera_device = config.get(
+                    "REAR_CAMERA_DEVICE", "").strip()
+                if camera_device:
+                    args["rear_camera_device"] = camera_device
+                else:
+                    args["rear_camera_id"] = config["REAR_CAMERA_ID"]
             launch = "rear_robot.launch.py"
     rendered = " ".join(f"{key}:={q(value)}" for key, value in args.items())
     return f"ros2 launch cooperative_parking_robot {launch} {rendered}"

@@ -141,11 +141,20 @@ def generate_launch_description():
             "rear_camera_id", default_value="0",
             description="rear 전면 USB 카메라 V4L2 index"),
         DeclareLaunchArgument(
+            "rear_camera_device", default_value="",
+            description="권장: rear 카메라 /dev/v4l/by-id persistent path"),
+        DeclareLaunchArgument(
             "rear_camera_gst", default_value="",
             description="비우면 V4L2, 채우면 GStreamer 파이프라인 사용"),
         DeclareLaunchArgument("rear_camera_width", default_value="1280"),
         DeclareLaunchArgument("rear_camera_height", default_value="720"),
         DeclareLaunchArgument("rear_camera_fps", default_value="8.0"),
+        DeclareLaunchArgument(
+            "rear_camera_capture_fps", default_value="30.0",
+            description="V4L2 acquisition rate; ROS output stays rear_camera_fps"),
+        DeclareLaunchArgument(
+            "rear_camera_fourcc", default_value="MJPG",
+            description="Rear V4L2 pixel format (empty leaves backend default)"),
         DeclareLaunchArgument("rear_camera_standby_fps", default_value="1.0"),
         DeclareLaunchArgument(
             "rear_camera_activation_drop_frames", default_value="2"),
@@ -247,12 +256,17 @@ def generate_launch_description():
             condition=IfCondition(enable_rear_camera),
             parameters=[{
                 "camera_id": _int("rear_camera_id"),
+                "camera_device": LaunchConfiguration(
+                    "rear_camera_device"),
                 "gstreamer_pipeline": LaunchConfiguration("rear_camera_gst"),
                 "output_topic": LaunchConfiguration("rear_camera_topic"),
                 "frame_id": "rear_marker_camera",
                 "width": _int("rear_camera_width"),
                 "height": _int("rear_camera_height"),
                 "fps": _float("rear_camera_fps"),
+                "capture_fps": _float("rear_camera_capture_fps"),
+                "v4l2_fourcc": LaunchConfiguration(
+                    "rear_camera_fourcc"),
                 "buffer_size": 1,
                 "require_camera": True,
                 "runtime_enable_topic": "/rear/relative_vision_enable",

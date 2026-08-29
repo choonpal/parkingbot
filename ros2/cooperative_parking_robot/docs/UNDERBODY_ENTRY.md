@@ -57,6 +57,14 @@ Rear launch는 카메라와 ArUco의 무거운 cold import를 먼저 끝낸 뒤 
 transport fault로 latch되며, 진단에는 실패 frame 종류·queue 대기·deadline
 지연·pending 깊이를 포함한다.
 
+실차 카메라는 숫자 index보다 `rear_camera_device:=/dev/v4l/by-id/...-video-index0`
+를 사용한다. `rear_camera_device`가 비어 있을 때만 `rear_camera_id`가 fallback이
+되며, 순간적인 숫자 장치 순서를 코드에 고정하지 않는다.
+현재 Rear UVC는 MJPEG 1280x720@30만 안정적으로 협상되므로 장치 입력은
+`rear_camera_fourcc:=MJPG rear_camera_capture_fps:=30.0`으로 열고, ROS 처리율은
+별도 `rear_camera_fps:=8.0`으로 제한한다. 전체 주차장 CCTV는 상시 활성이고,
+이 phase gate는 Rear 마커 카메라와 ArUco에만 적용된다.
+
 ## 정렬 후 정지 commissioning 모드
 
 차량 하부 진입만 검증할 때 Front와 Rear launch에

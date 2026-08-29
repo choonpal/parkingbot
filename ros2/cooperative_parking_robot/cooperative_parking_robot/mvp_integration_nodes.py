@@ -464,12 +464,11 @@ class HomeAwareIndividualMoveNode(move_module.IndividualMoveNode):
                     self.centerline_speed, goal_yaw=staging_yaw):
                 self.stop()
                 self.set_phase('READY_TO_SCAN')
-                if not self.approach_sent:
-                    self.pub_approach_done.publish(Bool(data=True))
-                    self.approach_sent = True
+                self.publish_approach_ready_if_observed()
             return
         if self.phase == 'READY_TO_SCAN':
             self.stop()
+            self.publish_approach_ready_if_observed()
 
     def run_return(self):
         if self.phase == 'WAIT_PEER_RETURN':

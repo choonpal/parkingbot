@@ -116,6 +116,23 @@ class UartTxScheduler:
                          for item in queue)
             return count
 
+    def pending_snapshot(self):
+        """Return bounded queue-depth diagnostics without exposing internals."""
+        with self._condition:
+            by_kind = {}
+            items = list(self._emergency) + list(self._slots.values())
+            for queue in self._queues.values():
+                items.extend(queue)
+            for item in items:
+                by_kind[item.kind] = by_kind.get(item.kind, 0) + 1
+            return {
+                'total': len(items),
+                'emergency': len(self._emergency),
+                'slots': len(self._slots),
+                'queued': sum(len(queue) for queue in self._queues.values()),
+                'by_kind': by_kind,
+            }
+
     def stop(self, timeout=1.0, *, drain=True):
         with self._condition:
             self._stopping = True

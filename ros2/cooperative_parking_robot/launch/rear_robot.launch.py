@@ -110,6 +110,8 @@ def generate_launch_description():
             description="Physical chassis profile; independent of rear role"),
         DeclareLaunchArgument("enable_serial", default_value="true"),
         DeclareLaunchArgument("require_serial", default_value="true"),
+        DeclareLaunchArgument("serial_write_timeout_s", default_value="0.05"),
+        DeclareLaunchArgument("velocity_tx_rate_hz", default_value="20.0"),
         DeclareLaunchArgument(
             "require_hardware_ready", default_value="true"),
         DeclareLaunchArgument(
@@ -144,6 +146,9 @@ def generate_launch_description():
         DeclareLaunchArgument("rear_camera_width", default_value="1280"),
         DeclareLaunchArgument("rear_camera_height", default_value="720"),
         DeclareLaunchArgument("rear_camera_fps", default_value="8.0"),
+        DeclareLaunchArgument("rear_camera_standby_fps", default_value="1.0"),
+        DeclareLaunchArgument(
+            "rear_camera_activation_drop_frames", default_value="2"),
         DeclareLaunchArgument(
             "camera_calib",
             default_value=str(
@@ -233,9 +238,9 @@ def generate_launch_description():
         # P0-1: ID0 관측용 rear 전면 카메라 발행자.
         # 이 노드가 없으면 /sync/relative_pose가 영원히 발행되지 않아
         # WAIT_PEER_STAGED에서 ALIGN_TIMEOUT -> FAULT가 확정적으로 발생한다.
-        # Start the serial bridge immediately and stagger cold-start imports so
-        # the 300 ms STM32 heartbeat watchdog remains serviced during launch.
-        TimerAction(period=20.0, actions=[Node(
+        # Pre-open the UVC device before the bridge session begins, but keep it
+        # at a 1 Hz drain-only standby until Rear reaches READY_TO_SCAN.
+        Node(
             package="cooperative_parking_robot",
             executable="opencv_camera",
             name="rear_marker_camera_node",
@@ -250,10 +255,18 @@ def generate_launch_description():
                 "fps": _float("rear_camera_fps"),
                 "buffer_size": 1,
                 "require_camera": True,
+                "runtime_enable_topic": "/rear/relative_vision_enable",
+                "runtime_ready_topic": "/rear/marker_camera_ready",
+                "start_enabled": False,
+                "standby_fps": _float("rear_camera_standby_fps"),
+                "activation_drop_frames": _int(
+                    "rear_camera_activation_drop_frames"),
             }],
-            output="screen")]),
+            output="screen"),
 
-        TimerAction(period=24.0, actions=[Node(
+        # Complete the heavy OpenCV/ArUco imports before opening the 300 ms
+        # heartbeat session. Disabled ArUco does no per-frame CV work.
+        TimerAction(period=3.0, actions=[Node(
             package="cooperative_parking_robot",
             executable="aruco_tracker",
             name="aruco_tracker_node",
@@ -268,6 +281,9 @@ def generate_launch_description():
                 "gray_gain": gray_gain,
                 "min_marker_distance_rate": aruco_min_marker_distance_rate,
                 "allow_uncalibrated": allow_uncalibrated,
+                "runtime_enable_topic": "/rear/relative_vision_enable",
+                "runtime_ready_topic": "/rear/relative_vision_ready",
+                "start_enabled": False,
             }],
             output="screen")]),
 
@@ -286,7 +302,7 @@ def generate_launch_description():
             }],
             output="screen")]),
 
-        TimerAction(period=4.0, actions=[Node(
+        TimerAction(period=10.0, actions=[Node(
             package="cooperative_parking_robot",
             executable="state_machine",
             name="rear_state_machine",
@@ -301,7 +317,7 @@ def generate_launch_description():
             }],
             output="screen")]),
 
-        Node(
+        TimerAction(period=8.0, actions=[Node(
             package="cooperative_parking_robot",
             executable="stm32_bridge",
             name="rear_bridge",
@@ -318,10 +334,13 @@ def generate_launch_description():
                 "ly": ly,
                 "ultrasonic_frame_timeout_s": ultrasonic_timeout,
                 "require_ultrasonic_for_ready": require_ultrasonic,
+                "serial_write_timeout_s": _float(
+                    "serial_write_timeout_s"),
+                "velocity_tx_rate_hz": _float("velocity_tx_rate_hz"),
             }],
-            output="screen"),
+            output="screen")]),
 
-        TimerAction(period=8.0, actions=[Node(
+        TimerAction(period=12.0, actions=[Node(
             package="cooperative_parking_robot",
             executable="ultrasonic_edge",
             name="rear_ultrasonic",
@@ -342,7 +361,7 @@ def generate_launch_description():
             }],
             output="screen")]),
 
-        TimerAction(period=12.0, actions=[Node(
+        TimerAction(period=14.0, actions=[Node(
             package="cooperative_parking_robot",
             executable="pose_fusion",
             name="rear_pose_fusion",

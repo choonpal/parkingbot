@@ -59,6 +59,16 @@ from cooperative_parking_robot.vehicle_entry import (
 from cooperative_parking_robot.freshness import StampGate, stamp_to_ns
 
 
+# Rear owns the ID0 camera and keeps it active only while either robot can be
+# below the vehicle or while final relative alignment is being held.
+REAR_RELATIVE_VISION_PHASES = frozenset({
+    "READY_TO_SCAN", "PRE_ALIGN", "WAIT_ULTRASONIC_READY", "PREALIGNED",
+    "SCAN_IN", "RETREAT", "CENTER_AXLE", "ALIGNED",
+    "WAIT_PEER_RETURN", "WAIT_EXIT_ODOM", "EXIT_UNDERBODY",
+    "WAIT_PEER_EXIT_CLEAR",
+})
+
+
 class IndividualMoveNode(Node):
     def __init__(self, **kwargs):
         super().__init__("individual_move_node", **kwargs)
@@ -277,6 +287,7 @@ class IndividualMoveNode(Node):
         self.relative_yaw = None
         self.relative_receipt_time = None
         self.relative_marker_visible = False
+        self.relative_vision_ready = False
         self.top_marker_visible = False
         self.top_visibility_received = False
         self.top_marker_receipt_time = None
@@ -338,6 +349,10 @@ class IndividualMoveNode(Node):
         self.create_subscription(
             Bool, "/sync/marker_visible", self.relative_marker_cb,
             SENSOR_LATEST_QOS)
+        if not self.is_front:
+            self.create_subscription(
+                Bool, "/rear/relative_vision_ready",
+                self.relative_vision_ready_cb, STATE_LATEST_QOS)
         self.create_subscription(
             Bool, f"/{self.role}/cctv_marker_visible", self.top_marker_cb,
             SENSOR_LATEST_QOS)
@@ -368,6 +383,11 @@ class IndividualMoveNode(Node):
             PoseStamped, f"/{self.role}/active_target_pose", 10)
         self.pub_ultrasonic_enable = self.create_publisher(
             Bool, f"/{self.role}/ultrasonic_enable", 10)
+        self.pub_relative_vision_enable = None
+        if not self.is_front:
+            self.pub_relative_vision_enable = self.create_publisher(
+                Bool, "/rear/relative_vision_enable", STATE_LATEST_QOS)
+            self.pub_relative_vision_enable.publish(Bool(data=False))
 
         self.create_timer(0.05, self.move_loop)
         self.create_timer(0.5, self.publish_phase)
@@ -730,6 +750,9 @@ class IndividualMoveNode(Node):
     def relative_marker_cb(self, msg):
         self.relative_marker_visible = bool(msg.data)
 
+    def relative_vision_ready_cb(self, msg):
+        self.relative_vision_ready = bool(msg.data)
+
     def top_marker_cb(self, msg):
         now = time.monotonic()
         self.top_marker_visible = bool(msg.data)
@@ -761,6 +784,40 @@ class IndividualMoveNode(Node):
             "PREALIGNED",
             "SCAN_IN", "RETREAT",
             "CENTER_AXLE", "ALIGNED")
+
+    def relative_vision_required(self, phase=None):
+        return (not self.is_front and
+                (self.phase if phase is None else phase) in
+                REAR_RELATIVE_VISION_PHASES)
+
+    def publish_relative_vision_request(self):
+        if self.pub_relative_vision_enable is None:
+            return
+        enabled = self.relative_vision_required()
+        self.pub_relative_vision_enable.publish(Bool(data=enabled))
+        if not enabled:
+            # Never let a previous mission's latched readiness/pose reopen a
+            # later motion gate while the perception pipeline is in standby.
+            self.relative_vision_ready = False
+            self.relative_marker_visible = False
+            self.relative_receipt_time = None
+            self.relative_x = None
+            self.relative_y = None
+            self.relative_yaw = None
+
+    def relative_vision_observation_ready(self):
+        return (self.is_front or
+                (self.relative_vision_ready and self.relative_is_fresh()))
+
+    def publish_approach_ready_if_observed(self):
+        if self.approach_sent:
+            return True
+        if not self.relative_vision_observation_ready():
+            self.stop()
+            return False
+        self.pub_approach_done.publish(Bool(data=True))
+        self.approach_sent = True
+        return True
 
     def update_visual_fallback(self):
         """Prefer top pose outside and ID0 inside, then bound encoder fallback."""
@@ -855,11 +912,13 @@ class IndividualMoveNode(Node):
                 f"[{self.role}] motion {self.phase} -> {phase}")
         self.phase = phase
         self.phase_enter_time = time.monotonic()
+        self.publish_relative_vision_request()
         self.publish_phase()
 
     def publish_phase(self):
         self.pub_phase.publish(String(data=self.phase))
         self.publish_active_target()
+        self.publish_relative_vision_request()
         # Coordination Bool topics are volatile. Repeating READY avoids a
         # startup/state-transition race where the peer resets after the first
         # one-shot message.
@@ -1118,12 +1177,11 @@ class IndividualMoveNode(Node):
             if self.advance_route(self.centerline_speed, goal_yaw=yaw):
                 self.stop()
                 self.set_phase("READY_TO_SCAN")
-                if not self.approach_sent:
-                    self.pub_approach_done.publish(Bool(data=True))
-                    self.approach_sent = True
+                self.publish_approach_ready_if_observed()
             return
         if self.phase == "READY_TO_SCAN":
             self.stop()
+            self.publish_approach_ready_if_observed()
 
     def run_align(self):
         if self.active_target is None:

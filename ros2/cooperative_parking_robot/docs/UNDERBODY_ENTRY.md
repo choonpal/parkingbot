@@ -1,6 +1,6 @@
 # 목표 차량 하부 진입·이탈 설계
 
-이 문서는 실차용 v8의 `individual_move`, `ultrasonic_edge`,
+이 문서는 실차용 `individual_move`, `ultrasonic_edge`,
 `state_machine` 사이 계약을 설명한다.
 
 ## 좌표계와 진입 방식
@@ -26,6 +26,36 @@ queue로 직접 이동한다. 시작점이 차량 뒤 보호경계 밖이 아니
   두 번째 축 선택) → CENTER_AXLE → ALIGNED`. Rear는
   `WAIT_FRONT_ALIGNED → SCAN_IN(첫 축 선택) → CENTER_AXLE → ALIGNED`.
 - RETURN: `EXIT_UNDERBODY → EXIT_TO_SIDE → RETURN_HOME → RETURNED`
+
+## 단계별 센서 활성화와 heartbeat
+
+안전·상태·pose 노드와 STM32 bridge는 로봇 runtime 동안 계속 동작한다.
+특히 STM32 heartbeat는 ROS timer가 아니라 bridge 내부 전용 producer가 100 ms
+주기로 단일 UART writer에 넣는다. STM32의 heartbeat watchdog 300 ms와 command
+watchdog 250 ms는 변경하지 않는다. 속도 상태 프레임은 기본 20 Hz이며 오래된
+프레임을 쌓지 않고 최신 한 개만 유지한다.
+
+계산량과 장치 부하는 다음처럼 phase에 맞춰 제한한다.
+
+- 초음파: 기존과 같이 `PRE_ALIGN` 직전에 켜고 진입·차축 중심 맞춤이 끝나면 끈다.
+- Rear ID0 카메라: 프로세스 시작 때 장치를 열어 두되 대기 중에는 기본 1 Hz로
+  프레임만 버려 UVC를 예열한다. 활성화 전에는 영상 토픽을 발행하지 않는다.
+- Rear ArUco: 대기 중에는 수신 영상을 처리하지 않는다. Rear가
+  `READY_TO_SCAN`에 들어가면 `/rear/relative_vision_enable=true`로 카메라와
+  ArUco를 함께 활성화한다.
+- `approach_done`은 `/rear/relative_vision_ready=true`와 현재 ID0 pose/가시성이
+  모두 확인된 뒤에만 발행한다. 준비 실패나 마커 부재는 시간 제한 뒤
+  fail-closed로 끝나며 영상 없이 진입하지 않는다.
+- `ALIGNED` 유지와 차량 하부 이탈까지 ID0를 사용하고, `EXIT_TO_SIDE`부터 다시
+  standby로 내린다. Front 노드는 enable 토픽을 발행하지 않으며 Rear 이동
+  노드 하나만 이 수명주기를 소유한다.
+
+Rear launch는 카메라와 ArUco의 무거운 cold import를 먼저 끝낸 뒤 bridge를
+시작한다. 조정 가능한 기본값은 `rear_camera_standby_fps=1.0`,
+`rear_camera_activation_drop_frames=2`, `velocity_tx_rate_hz=20.0`,
+`serial_write_timeout_s=0.05`이다. write timeout이나 partial write는 여전히 즉시
+transport fault로 latch되며, 진단에는 실패 frame 종류·queue 대기·deadline
+지연·pending 깊이를 포함한다.
 
 ## 정렬 후 정지 commissioning 모드
 
@@ -94,6 +124,9 @@ ros2 bag record \
   /front/robot_state /rear/robot_state \
   /front/motion_phase /rear/motion_phase \
   /front/motion_fault /rear/motion_fault \
+  /rear/relative_vision_enable /rear/marker_camera_ready \
+  /rear/relative_vision_ready /sync/marker_visible /sync/relative_pose \
+  /front/heartbeat_diagnostics /rear/heartbeat_diagnostics \
   /front/odom /rear/odom \
   /front/cmd_vel /rear/cmd_vel \
   /front/ultrasonic_left /front/ultrasonic_right \

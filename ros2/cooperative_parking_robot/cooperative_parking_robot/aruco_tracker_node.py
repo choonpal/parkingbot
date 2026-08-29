@@ -34,6 +34,7 @@ from cooperative_parking_robot.aruco_utils import (
     normalize_angle,
     relative_yaw_from_rotation,
 )
+from cooperative_parking_robot.latest_qos import STATE_LATEST_QOS
 
 try:
     import cv2
@@ -66,6 +67,10 @@ class ArucoTrackerNode(Node):
         # 0.05 default can suppress the real marker as a near-duplicate of
         # that outer quadrilateral at 720p.
         self.declare_parameter('min_marker_distance_rate', 0.02)
+        # Empty enable topic keeps standalone calibration launches always-on.
+        self.declare_parameter('runtime_enable_topic', '')
+        self.declare_parameter('runtime_ready_topic', '')
+        self.declare_parameter('start_enabled', True)
 
         self.marker_id = self.get_parameter('marker_id').value
         self.marker_size = self.get_parameter('marker_size_m').value
@@ -98,6 +103,15 @@ class ArucoTrackerNode(Node):
 
         # ===== 구독/발행 =====
         self.image_topic = str(self.get_parameter('image_topic').value)
+        self.runtime_enable_topic = str(
+            self.get_parameter('runtime_enable_topic').value).strip()
+        self.runtime_ready_topic = str(
+            self.get_parameter('runtime_ready_topic').value).strip()
+        self.runtime_gated = bool(self.runtime_enable_topic)
+        self.runtime_enabled = (
+            bool(self.get_parameter('start_enabled').value)
+            if self.runtime_gated else True)
+        self.runtime_ready = False
         if not self.image_topic:
             raise ValueError('image_topic must not be empty')
         self.create_subscription(Image, self.image_topic,
@@ -106,12 +120,42 @@ class ArucoTrackerNode(Node):
             PoseStamped, '/sync/relative_pose', qos_profile_sensor_data)
         self.pub_visible = self.create_publisher(
             Bool, '/sync/marker_visible', qos_profile_sensor_data)
+        self.pub_runtime_ready = None
+        if self.runtime_ready_topic:
+            self.pub_runtime_ready = self.create_publisher(
+                Bool, self.runtime_ready_topic, STATE_LATEST_QOS)
+        if self.runtime_gated:
+            self.create_subscription(
+                Bool, self.runtime_enable_topic, self.runtime_enable_cb,
+                STATE_LATEST_QOS)
 
         self.last_visible = False
+        self._set_runtime_ready(False, force=True)
+        if not self.runtime_enabled:
+            self.pub_visible.publish(Bool(data=False))
         self.get_logger().info(
             f'aruco_tracker_node 시작 | image={self.image_topic} | '
             f'aligned_offset_y={self.lateral_offset:+.4f}m '
             f'yaw={math.degrees(self.yaw_offset):+.3f}deg')
+
+    def _set_runtime_ready(self, ready, *, force=False):
+        ready = bool(ready)
+        changed = ready != self.runtime_ready
+        self.runtime_ready = ready
+        if self.pub_runtime_ready is not None and (changed or force):
+            self.pub_runtime_ready.publish(Bool(data=ready))
+
+    def runtime_enable_cb(self, msg):
+        enabled = bool(msg.data)
+        if enabled == self.runtime_enabled:
+            return
+        self.runtime_enabled = enabled
+        self._set_runtime_ready(False)
+        if not enabled:
+            self.pub_visible.publish(Bool(data=False))
+            self.last_visible = False
+        self.get_logger().info(
+            f'ArUco runtime {"enabled" if enabled else "standby"}')
 
     def _load_calib(self):
         cf = str(self.get_parameter('camera_calib').value)
@@ -185,6 +229,8 @@ class ArucoTrackerNode(Node):
                 'min_marker_distance_rate').value))
 
     def image_cb(self, msg):
+        if not self.runtime_enabled:
+            return
         frame = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
         self._match_calibration_resolution(msg.width, msg.height)
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -239,11 +285,22 @@ class ArucoTrackerNode(Node):
         vis = Bool()
         vis.data = visible
         self.pub_visible.publish(vis)
+        # Ready means the activated pipeline has processed a current frame;
+        # marker_visible separately supplies the fail-closed observation gate.
+        self._set_runtime_ready(True)
 
         if visible != self.last_visible:
             self.get_logger().info(
                 '마커 인식' if visible else '마커 놓침 — 엔코더 의존')
             self.last_visible = visible
+
+    def destroy_node(self):
+        self._set_runtime_ready(False)
+        try:
+            self.pub_visible.publish(Bool(data=False))
+        except Exception:
+            pass
+        return super().destroy_node()
 
 
 def main(args=None):

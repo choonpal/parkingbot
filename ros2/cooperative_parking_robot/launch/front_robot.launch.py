@@ -100,6 +100,8 @@ def generate_launch_description():
             description="Physical chassis profile; independent of front role"),
         DeclareLaunchArgument("enable_serial", default_value="true"),
         DeclareLaunchArgument("require_serial", default_value="true"),
+        DeclareLaunchArgument("serial_write_timeout_s", default_value="0.05"),
+        DeclareLaunchArgument("velocity_tx_rate_hz", default_value="20.0"),
         DeclareLaunchArgument(
             "require_hardware_ready", default_value="true"),
         DeclareLaunchArgument(
@@ -276,6 +278,9 @@ def generate_launch_description():
                 "ly": ly,
                 "ultrasonic_frame_timeout_s": ultrasonic_timeout,
                 "require_ultrasonic_for_ready": require_ultrasonic,
+                "serial_write_timeout_s": _float(
+                    "serial_write_timeout_s"),
+                "velocity_tx_rate_hz": _float("velocity_tx_rate_hz"),
             }],
             output="screen"),
 

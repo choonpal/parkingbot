@@ -1,6 +1,7 @@
 """Deterministic phase-scoped ultrasonic lifecycle regressions."""
 
 from pathlib import Path
+import threading
 from types import SimpleNamespace
 
 from cooperative_parking_robot.individual_move_node import IndividualMoveNode
@@ -61,6 +62,7 @@ def test_startup_hardware_ready_does_not_require_ultrasonic():
     node.hello_acknowledged = True
     node.last_heartbeat_ack_time = 10.0
     node.heartbeat_ack_timeout = 0.30
+    node.heartbeat_lock = threading.RLock()
     node.zero_command_acknowledged = True
     node.servo_attached = True
     node.estop_latched = False

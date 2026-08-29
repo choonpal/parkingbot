@@ -27,8 +27,9 @@ def _bool(name):
 
 
 def generate_launch_description():
-    # Reserve one RPi core for the UART watchdog path. Camera/CV imports and
-    # the remaining ROS processes stay on the worker core set.
+    # Keep core 3 exclusive to the bridge, but allow bridge-internal DDS,
+    # executor and UART threads to spill onto core 2. Pinning all of them to a
+    # single CPU causes write deadlines to expire under production ROS load.
     bridge_prefix = [
         "taskset -c ", LaunchConfiguration("bridge_cpu_set")]
     worker_prefix = [
@@ -115,7 +116,7 @@ def generate_launch_description():
             "hardware_profile", default_value="robot-1",
             description="Physical chassis profile; independent of rear role"),
         DeclareLaunchArgument(
-            "bridge_cpu_set", default_value="3",
+            "bridge_cpu_set", default_value="2-3",
             description="RPi CPU set reserved for STM32 bridge"),
         DeclareLaunchArgument(
             "worker_cpu_set", default_value="0-2",

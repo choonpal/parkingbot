@@ -119,3 +119,18 @@
 - 이번 최신 통합본은 로봇과 Jetson에 재배포하거나 모션 실행하지 않았다. 현장
   설정의 좌우 ultrasonic-to-gripper X offset 네 값이 모두 `0.0`이고 실측 근거가
   없어 차량 하부 자동 진입은 NO-GO로 남겼다.
+
+## 2026-08-29 Front 초음파-그리퍼 X offset 수동 왕복
+
+- Front `robot-2`에 `main` `3f3ab73`을 격리 배포하고 domain 142에서 bridge,
+  Front keyboard teleop와 bag recorder만 실행했다. 자동 FSM, Rear, grip/lift는
+  실행하지 않았다.
+- 사용자가 뒷차축과 앞차축에 각각 정렬하고 완전히 통과한 뒤 후진했다. 전진/후진
+  초음파 중심 반복 차이는 최대 약 8mm였다.
+- 0.10m threshold의 센서 기반 wheelbase는 Left `0.77388m`, Right `0.77622m`였고,
+  0.08~0.12m sweep은 `0.77085~0.78094m`였다.
+- 육안 정렬 정지점과 양방향 센서 중심을 평균한 offset은 Left 약 `-0.002m`,
+  Right 약 `-0.005m`였다. 현장 정렬 오차 약 ±0.02m보다 작으므로 Front 좌·우
+  production 값은 모두 `0.0m`로 결정했다.
+- Rear 두 센서에는 이 값을 복사하지 않으며 Rear 자체 확인 전까지 자동 진입은
+  NO-GO다. 상세 수치와 bag SHA는 변경 기록의 Front offset 보정 문서에 보존했다.

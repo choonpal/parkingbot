@@ -272,6 +272,11 @@ class Stm32BridgeNode(Node):
         self.heartbeat_lock = threading.RLock()
         self.heartbeat_thread_stop = threading.Event()
         self.heartbeat_thread = None
+        # UART ACK/telemetry consumption must not wait behind ROS/DDS callback
+        # work. Otherwise an ACK can already be in the kernel buffer while the
+        # independent producer incorrectly reaches its 300 ms timeout.
+        self.serial_reader_thread_stop = threading.Event()
+        self.serial_reader_thread = None
         self.heartbeat_stats = {
             'tx_count': 0, 'ack_count': 0, 'lost_count': 0,
             'stale_ack_count': 0, 'duplicate_ack_count': 0,
@@ -346,7 +351,6 @@ class Stm32BridgeNode(Node):
         elif require_serial:
             raise RuntimeError('pyserial is required when require_serial=true')
         self.tx_scheduler.start()
-        self._start_heartbeat_producer()
 
         # ===== 구독 =====
         self.create_subscription(
@@ -405,9 +409,6 @@ class Stm32BridgeNode(Node):
         # 의해 100 ms deadline이 밀리지 않게 한다. 실제 write는 기존 단일
         # UART scheduler thread만 수행한다.
         self.serial_callback_group = MutuallyExclusiveCallbackGroup()
-        self.create_timer(
-            0.02, self.read_serial,
-            callback_group=self.serial_callback_group)  # UART 수신
         self.create_timer(0.02, self.send_velocity_loop)  # 속도 송신 50Hz (감쇠 포함)
         self.create_timer(
             0.1, self.send_servo_attach,
@@ -424,6 +425,8 @@ class Stm32BridgeNode(Node):
 
         # DTR reset 여부와 관계없이 HELLO가 Linux communication session의
         # 유일한 경계다. HB/V/servo는 matching HELLO ACK 전에는 보내지 않는다.
+        self._start_serial_reader()
+        self._start_heartbeat_producer()
         self.send_hello()
 
         self.get_logger().info(
@@ -752,6 +755,39 @@ class Stm32BridgeNode(Node):
             target=self._heartbeat_producer_loop,
             name=f'{self.role}-heartbeat-producer', daemon=True)
         self.heartbeat_thread.start()
+
+    def _start_serial_reader(self):
+        """Consume non-blocking UART input independently of ROS callbacks."""
+        if (self.serial_reader_thread is not None and
+                self.serial_reader_thread.is_alive()):
+            return
+        self.serial_reader_thread_stop.clear()
+        self.serial_reader_thread = threading.Thread(
+            target=self._serial_reader_loop,
+            name=f'{self.role}-uart-reader', daemon=True)
+        self.serial_reader_thread.start()
+
+    def _stop_serial_reader(self, timeout=1.0):
+        stop_event = getattr(self, 'serial_reader_thread_stop', None)
+        if stop_event is not None:
+            stop_event.set()
+        thread = getattr(self, 'serial_reader_thread', None)
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout)
+        self.serial_reader_thread = None
+
+    def _serial_reader_loop(self):
+        """Poll at 100 Hz; serial itself remains non-blocking (timeout=0)."""
+        next_tick = time.monotonic()
+        while not self.serial_reader_thread_stop.is_set():
+            self.read_serial()
+            next_tick += 0.01
+            now = time.monotonic()
+            if next_tick <= now:
+                next_tick = now + 0.01
+            if self.serial_reader_thread_stop.wait(
+                    max(0.0, next_tick - now)):
+                return
 
     def _stop_heartbeat_producer(self, timeout=1.0):
         stop_event = getattr(self, 'heartbeat_thread_stop', None)
@@ -1388,6 +1424,7 @@ class Stm32BridgeNode(Node):
 
     def destroy_node(self):
         self._stop_heartbeat_producer()
+        self._stop_serial_reader()
         if self.ser:
             serial_handle = self.ser
             if not self.estop_latched:

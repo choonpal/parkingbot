@@ -527,6 +527,9 @@ def test_heartbeat_producer_is_independent_of_ros_callback_execution():
     assert 'target=self._heartbeat_producer_loop' in bridge_source
     assert "name=f'{self.role}-heartbeat-producer'" in bridge_source
     assert 'send_heartbeat(force=True, scheduled_due=next_tick)' in bridge_source
+    assert 'target=self._serial_reader_loop' in bridge_source
+    assert "name=f'{self.role}-uart-reader'" in bridge_source
+    assert 'self.create_timer(\n            0.02, self.read_serial' not in bridge_source
     assert 'self.heartbeat_period, self.send_heartbeat,' not in bridge_source
     assert 'callback_group=self.serial_callback_group' in bridge_source
     assert 'SingleThreadedExecutor()' in bridge_source

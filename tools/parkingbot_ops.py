@@ -30,6 +30,7 @@ ABSOLUTE_PATH_KEYS = (
     "JETSON_WORKSPACE", "FRONT_WORKSPACE", "REAR_WORKSPACE",
     "CONTROL_WORKSPACE", "ROS_SETUP", "CAM0_DEVICE", "CAM2_DEVICE",
     "MODEL_PATH", "FRONT_SERIAL", "REAR_SERIAL", "REAR_CALIB",
+    "REAR_CAMERA_DEVICE",
 )
 
 TOPICS = {
@@ -168,6 +169,7 @@ def load_env(path: Path) -> dict[str, str]:
     values.setdefault("OBSERVER_PYTHON", "/usr/bin/python3")
     values.setdefault("REAR_CAMERA_TOPIC", "/rear/marker_camera/image")
     values.setdefault("REAR_ENABLE_INTERNAL_CAMERA", "false")
+    values.setdefault("REAR_CAMERA_DEVICE", "")
     return values
 
 
@@ -436,6 +438,8 @@ def launch_command(config, role):
             })
             if config["REAR_ENABLE_INTERNAL_CAMERA"].lower() == "true":
                 args["rear_camera_id"] = config["REAR_CAMERA_ID"]
+                if config.get("REAR_CAMERA_DEVICE", "").strip():
+                    args["rear_camera_device"] = config["REAR_CAMERA_DEVICE"]
             launch = "rear_robot.launch.py"
     rendered = " ".join(f"{key}:={q(value)}" for key, value in args.items())
     return f"ros2 launch cooperative_parking_robot {launch} {rendered}"

@@ -139,6 +139,9 @@ def generate_launch_description():
             "rear_camera_id", default_value="0",
             description="rear 전면 USB 카메라 V4L2 index"),
         DeclareLaunchArgument(
+            "rear_camera_device", default_value="",
+            description="rear camera persistent /dev/v4l/by-id path"),
+        DeclareLaunchArgument(
             "rear_camera_gst", default_value="",
             description="비우면 V4L2, 채우면 GStreamer 파이프라인 사용"),
         DeclareLaunchArgument("rear_camera_width", default_value="1280"),
@@ -241,6 +244,7 @@ def generate_launch_description():
             name="rear_marker_camera_node",
             condition=IfCondition(enable_rear_camera),
             parameters=[{
+                "camera_device": LaunchConfiguration("rear_camera_device"),
                 "camera_id": _int("rear_camera_id"),
                 "gstreamer_pipeline": LaunchConfiguration("rear_camera_gst"),
                 "output_topic": LaunchConfiguration("rear_camera_topic"),

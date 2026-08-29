@@ -261,6 +261,19 @@ def test_stop_after_align_is_forwarded_to_both_robot_launches():
     assert "stop_after_align" not in ops.launch_command(config, "jetson")
 
 
+def test_internal_rear_camera_prefers_persistent_device_path():
+    config = valid_config()
+    config.update({
+        "REAR_ENABLE_INTERNAL_CAMERA": "true",
+        "REAR_CAMERA_ID": "0",
+        "REAR_CAMERA_DEVICE": "/dev/v4l/by-id/rear-camera",
+    })
+
+    command = ops.launch_command(config, "rear")
+    assert "rear_camera_id:=0" in command
+    assert "rear_camera_device:=/dev/v4l/by-id/rear-camera" in command
+
+
 def test_local_ros_commands_always_source_underlay_and_control_overlay():
     config = valid_config()
     config.update({

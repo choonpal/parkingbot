@@ -84,6 +84,15 @@ def normalize_planning_validation_mode(value):
     return mode
 
 
+def select_planning_dimensions(configured_length, configured_width,
+                               measured_length, measured_width,
+                               measured_valid, use_measured):
+    """Keep measurement telemetry separate from planning authority."""
+    if bool(use_measured) and bool(measured_valid):
+        return float(measured_length), float(measured_width)
+    return float(configured_length), float(configured_width)
+
+
 class FleetManagerNode(Node):
     def __init__(self):
         super().__init__('fleet_manager_node')
@@ -110,6 +119,8 @@ class FleetManagerNode(Node):
         # 차량 외곽은 아직 실측 전 placeholder이며 config에서 교체한다.
         self.declare_parameter('default_vehicle_length_m', 0.90)
         self.declare_parameter('default_vehicle_width_m', 0.62)
+        self.declare_parameter(
+            'use_measured_vehicle_dimensions_for_planning', False)
         self.declare_parameter('source_vehicle_fallback_mask_m', 0.90)
         self.declare_parameter('footprint_safety_margin_m', 0.06)
         self.declare_parameter('unknown_is_occupied', True)
@@ -182,10 +193,17 @@ class FleetManagerNode(Node):
             self.get_parameter('minimum_inter_robot_gap_m').value)
         self.current_wheelbase = float(
             self.get_parameter('default_wheelbase_m').value)
-        self.vehicle_length = float(
+        self.configured_vehicle_length = float(
             self.get_parameter('default_vehicle_length_m').value)
-        self.vehicle_width = float(
+        self.configured_vehicle_width = float(
             self.get_parameter('default_vehicle_width_m').value)
+        self.vehicle_length = self.configured_vehicle_length
+        self.vehicle_width = self.configured_vehicle_width
+        self.measured_vehicle_length = None
+        self.measured_vehicle_width = None
+        self.use_measured_vehicle_dimensions_for_planning = bool(
+            self.get_parameter(
+                'use_measured_vehicle_dimensions_for_planning').value)
         self.source_vehicle_fallback_mask = float(
             self.get_parameter('source_vehicle_fallback_mask_m').value)
         self.footprint_margin = float(
@@ -1018,14 +1036,20 @@ class FleetManagerNode(Node):
             validate_wheelbase_clearance(
                 wheelbase, self.robot_length,
                 self.minimum_inter_robot_gap)
-            vehicle_length = self._optional_dimension(
+            measured_length = self._optional_dimension(
                 payload,
                 ('vehicle_length_m', 'length_m', 'vehicle_length'),
-                self.vehicle_length)
-            vehicle_width = self._optional_dimension(
+                self.configured_vehicle_length)
+            measured_width = self._optional_dimension(
                 payload,
                 ('vehicle_width_m', 'width_m', 'vehicle_width'),
-                self.vehicle_width)
+                self.configured_vehicle_width)
+            measured_valid = bool(payload.get('dimension_valid', False))
+            vehicle_length, vehicle_width = select_planning_dimensions(
+                self.configured_vehicle_length,
+                self.configured_vehicle_width,
+                measured_length, measured_width, measured_valid,
+                self.use_measured_vehicle_dimensions_for_planning)
             footprint = compute_loaded_footprint(
                 wheelbase,
                 self.robot_length,
@@ -1055,11 +1079,13 @@ class FleetManagerNode(Node):
         self.current_wheelbase = wheelbase
         self.vehicle_length = vehicle_length
         self.vehicle_width = vehicle_width
+        self.measured_vehicle_length = measured_length
+        self.measured_vehicle_width = measured_width
         self.active_vehicle_spec = {
             'wheelbase': wheelbase,
-            'vehicle_length_m': vehicle_length,
-            'vehicle_width_m': vehicle_width,
-            'dimension_valid': bool(payload.get('dimension_valid', False)),
+            'vehicle_length_m': measured_length,
+            'vehicle_width_m': measured_width,
+            'dimension_valid': measured_valid,
         }
         self.loaded_footprint = footprint
         self.planner.set_footprint(
@@ -1193,8 +1219,13 @@ class FleetManagerNode(Node):
     def _apply_active_vehicle_spec(self):
         spec = self.active_vehicle_spec
         self.current_wheelbase = float(spec['wheelbase'])
-        self.vehicle_length = float(spec['vehicle_length_m'])
-        self.vehicle_width = float(spec['vehicle_width_m'])
+        self.measured_vehicle_length = float(spec['vehicle_length_m'])
+        self.measured_vehicle_width = float(spec['vehicle_width_m'])
+        self.vehicle_length, self.vehicle_width = select_planning_dimensions(
+            self.configured_vehicle_length, self.configured_vehicle_width,
+            self.measured_vehicle_length, self.measured_vehicle_width,
+            spec.get('dimension_valid', False),
+            self.use_measured_vehicle_dimensions_for_planning)
         self.vehicle_center_offset_body = [0.0, 0.0]
         self.loaded_footprint = compute_loaded_footprint(
             self.current_wheelbase,

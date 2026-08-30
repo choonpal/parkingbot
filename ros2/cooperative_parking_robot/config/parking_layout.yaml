@@ -69,6 +69,7 @@ fleet_manager_node:
     default_wheelbase_m: 0.785000
     default_vehicle_length_m: 0.900000
     default_vehicle_width_m: 0.620000
+    use_measured_vehicle_dimensions_for_planning: false
     footprint_safety_margin_m: 0.060000
     slot_fit_longitudinal_margin_m: 0.060000
     slot_fit_lateral_margin_m: 0.060000

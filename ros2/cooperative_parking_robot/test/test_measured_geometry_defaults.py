@@ -8,6 +8,9 @@ from cooperative_parking_robot.vehicle_entry import (
     ROBOT_LENGTH_M,
     inter_robot_gap,
 )
+from cooperative_parking_robot.fleet_manager_node import (
+    select_planning_dimensions,
+)
 
 
 def test_measured_wheelbase_leaves_22cm_robot_gap():
@@ -19,3 +22,14 @@ def test_measured_wheelbase_leaves_22cm_robot_gap():
         0.220,
         abs_tol=1e-12,
     )
+
+
+def test_measured_dimensions_require_explicit_planning_policy_and_validity():
+    configured = (0.90, 0.62)
+    measured = (1.20, 0.50)
+    assert select_planning_dimensions(
+        *configured, *measured, True, False) == configured
+    assert select_planning_dimensions(
+        *configured, *measured, False, True) == configured
+    assert select_planning_dimensions(
+        *configured, *measured, True, True) == measured

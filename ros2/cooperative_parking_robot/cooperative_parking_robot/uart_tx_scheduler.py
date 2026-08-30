@@ -52,7 +52,7 @@ class UartTxScheduler:
 
     def start(self):
         with self._condition:
-            if self._thread is not None:
+            if self._thread is not None and self._thread.is_alive():
                 return
             self._stopping = False
             self._thread = threading.Thread(
@@ -129,30 +129,37 @@ class UartTxScheduler:
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout)
         with self._condition:
-            self._thread = None
+            if thread is None or not thread.is_alive():
+                self._thread = None
 
     def _run(self):
-        while True:
-            item = self.pop_next()
-            if item is None:
-                with self._condition:
-                    if self._stopping:
-                        return
-                    self._condition.wait(timeout=0.05)
-                continue
-            serial_handle = self._serial_getter()
-            started = self._clock()
-            error = None
-            written = 0
-            try:
-                if serial_handle is None:
-                    raise OSError('serial disconnected')
-                written = serial_handle.write(item.payload)
-                if written != len(item.payload):
-                    raise OSError(
-                        f'partial UART write {written}/{len(item.payload)}')
-            except Exception as exc:  # reported on the common result path
-                error = exc
-            finished = self._clock()
-            if self._on_result is not None:
-                self._on_result(item, started, finished - started, error)
+        current = threading.current_thread()
+        try:
+            while True:
+                item = self.pop_next()
+                if item is None:
+                    with self._condition:
+                        if self._stopping:
+                            return
+                        self._condition.wait(timeout=0.05)
+                    continue
+                serial_handle = self._serial_getter()
+                started = self._clock()
+                error = None
+                written = 0
+                try:
+                    if serial_handle is None:
+                        raise OSError('serial disconnected')
+                    written = serial_handle.write(item.payload)
+                    if written != len(item.payload):
+                        raise OSError(
+                            f'partial UART write {written}/{len(item.payload)}')
+                except Exception as exc:  # reported on common result path
+                    error = exc
+                finished = self._clock()
+                if self._on_result is not None:
+                    self._on_result(item, started, finished - started, error)
+        finally:
+            with self._condition:
+                if self._thread is current:
+                    self._thread = None

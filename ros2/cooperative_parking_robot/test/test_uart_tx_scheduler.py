@@ -1,6 +1,7 @@
 """Deterministic tests for bounded UART scheduling (no ROS or sleeps)."""
 
 from pathlib import Path
+import threading
 
 from cooperative_parking_robot.uart_tx_scheduler import (
     P0_EMERGENCY,
@@ -68,6 +69,33 @@ def test_latest_velocity_wins_without_backlog():
     assert tx.pending_count('velocity') == 1
     assert tx.pop_next().payload == b'19'
     assert tx.pop_next() is None
+
+
+def test_writer_cannot_restart_until_self_stopped_worker_has_exited():
+    callback_entered = threading.Event()
+    callback_release = threading.Event()
+    serial = type('Serial', (), {'write': lambda _self, data: len(data)})()
+    holder = {}
+
+    def on_result(*_args):
+        holder['scheduler'].stop(drain=False)
+        callback_entered.set()
+        assert callback_release.wait(1.0)
+
+    tx = UartTxScheduler(lambda: serial, on_result=on_result)
+    holder['scheduler'] = tx
+    tx.start()
+    original = tx._thread
+    tx.enqueue(b'hb', kind='heartbeat', priority=P1_REALTIME)
+    assert callback_entered.wait(1.0)
+    tx.start()
+    assert tx._thread is original
+    callback_release.set()
+    original.join(1.0)
+    assert not original.is_alive()
+    tx.start()
+    assert tx._thread is not original
+    tx.stop(drain=False)
 
 
 def test_servo_attach_and_hello_are_deduplicated():

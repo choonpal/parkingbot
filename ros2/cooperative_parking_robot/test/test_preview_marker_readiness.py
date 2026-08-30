@@ -9,7 +9,8 @@ import pytest
 
 SOURCE = (Path(__file__).resolve().parents[1]
           / 'cooperative_parking_robot' / 'camera_preview_node.py')
-FUNCTIONS = {'marker_metrics', 'marker_readiness'}
+FUNCTIONS = {
+    'marker_metrics', 'marker_readiness', 'production_pose_readiness'}
 
 
 def _load_functions():
@@ -25,6 +26,7 @@ def _load_functions():
 NS = _load_functions()
 marker_metrics = NS['marker_metrics']
 marker_readiness = NS['marker_readiness']
+production_pose_readiness = NS['production_pose_readiness']
 
 
 def _stable_marker(**overrides):
@@ -99,7 +101,27 @@ def test_non_driving_marker_id_is_labelled_as_reference_only():
     assert result['drive_ready'] is None
 
 
+def test_production_pose_status_does_not_depend_on_preview_detector():
+    result = production_pose_readiness(
+        'front', True, True, True, '/front/cctv_pose')
+    assert result['drive_ready'] is True
+    assert result['drive_status'] == 'CCTV pose 입력 정상'
+    assert '프리뷰' not in result['drive_reason']
+
+
+def test_visible_without_fresh_production_pose_is_unknown():
+    result = production_pose_readiness(
+        'rear', True, True, False, '/rear/cctv_pose')
+    assert result['drive_ready'] is None
+    assert result['drive_class'] == 'warn'
+    assert '/rear/cctv_pose' in result['drive_reason']
+
+
 def test_preview_subscribes_to_actual_role_visibility_topics():
     source = SOURCE.read_text(encoding='utf-8')
     assert "f'/{role}/cctv_marker_visible'" in source
     assert 'production_marker_visible_cb' in source
+    assert "f'/{role}/cctv_pose'" in source
+    assert 'production_marker_pose_cb' in source
+    assert 'preview_aruco_enabled' in source
+    assert '프리뷰 중복 ArUco 꺼짐' in source

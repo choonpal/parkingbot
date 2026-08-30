@@ -380,6 +380,7 @@ function renderTower(info){
   const y = info.yolo || {};
   const g = info.guidance || {};
   const rp = info.relative_pose || {};
+  const driveMarkers = info.drive_markers || [];
   const roles = Object.keys(g.robots || {});
 
   // ---- 상태 타일 ----
@@ -490,13 +491,19 @@ function renderTower(info){
   const ko = {front:'Front', rear:'Rear'};
   ['front','rear'].forEach(role => {
     const p = (g.robots || {})[role];
-    kv += '<div class="k">' + (ko[role] || role) + ' 마커</div><div class="v">'
+    const marker = driveMarkers.find(m => m.role === role) || {};
+    const markerId = marker.id === undefined ? '' : ' ID' + marker.id;
+    const statusClass = marker.class || 'warn';
+    kv += '<div class="k">' + (ko[role] || role) + markerId
+       + ' (Production)</div><div class="v">'
        + (p ? p[0].toFixed(2) + ', ' + p[1].toFixed(2) + ' m'
-            : '<span class="err">미검출</span>') + '</div>';
+              + (marker.pose ? ' · ' + marker.pose.yaw_deg.toFixed(1) + '°' : '')
+            : '<span class="' + statusClass + '">'
+              + esc(marker.status || '수신 대기') + '</span>') + '</div>';
   });
   if(rp.configured){
-    kv += '<div class="k">Rear→Front</div><div class="v">'
-       + (rp.fresh && rp.visible !== false
+    kv += '<div class="k">ID0 Rear→Front</div><div class="v">'
+       + (rp.fresh && rp.visible === true
           ? (rp.forward_m * 100).toFixed(1) + ' cm · 좌우 '
             + (rp.lateral_m * 100).toFixed(1) + ' cm · '
             + rp.yaw_deg.toFixed(1) + '°'
@@ -532,7 +539,7 @@ async function tick(){
     const el = document.getElementById('meta'+i); if(!el) return;
     const img = document.getElementById('img'+i);
     renderDetectionSource(i, c);
-    renderMarkers(i, c.markers || []);
+    renderMarkers(i, c.markers || [], info.preview_aruco_enabled === true);
     renderDetections(i, c.detections || []);
     if(!c.alive){
       el.innerHTML = '<span class="err">수신 없음</span> · ' + esc(c.topic);
@@ -850,9 +857,16 @@ function renderDriveGate(markers){
   const allReady = markers.every(m => m.drive_ready === true);
   const anyBlocked = markers.some(m => m.drive_ready === false);
   box.className = 'badge ' + (allReady ? 'good' : anyBlocked ? 'bad' : '');
-  box.title = markers.map(m => `${m.role} ID${m.id}: ${m.reason}`).join('\n');
+  box.title = markers.map(m => {
+    const p = m.pose;
+    const pose = p ? ` @ ${p.x_m.toFixed(2)},${p.y_m.toFixed(2)}m `
+      + `${p.yaw_deg.toFixed(1)}°` : '';
+    return `${m.role} ID${m.id}${pose}: ${m.reason}`;
+  }).join('\n');
   box.textContent = 'CCTV 주행 입력 · ' + markers.map(m =>
-    `${m.role} ID${m.id} ${m.status}`).join(' · ');
+    `${m.role} ID${m.id} ${m.status}`
+      + (m.pose ? ` (${m.pose.x_m.toFixed(2)}, ${m.pose.y_m.toFixed(2)}m)` : '')
+  ).join(' · ');
 }
 
 function renderDetectionSource(i, c){
@@ -931,11 +945,14 @@ function renderDetections(i, dets){
     + 'map 좌표를 영상에 역투영한 값입니다.</div>';
 }
 
-function renderMarkers(i, markers){
+function renderMarkers(i, markers, previewEnabled){
   const box = document.getElementById('mk'+i);
   if(!box) return;
+  if(!previewEnabled){ box.innerHTML =
+    '<div class="meta" style="margin-top:8px">프리뷰 중복 ArUco 꺼짐 · '
+    + '실제 ID2/ID1 상태는 위 Production CCTV 주행 입력 기준</div>'; return; }
   if(!markers.length){ box.innerHTML =
-    '<div class="meta" style="margin-top:8px">ArUco 미검출</div>'; return; }
+    '<div class="meta" style="margin-top:8px">프리뷰 ArUco 미검출</div>'; return; }
   box.innerHTML = '<table><tr><th>ID/역할</th><th>중심 px</th><th>World (m)</th>'
     + '<th>최소 변</th><th>최근 검출</th><th>경계 여유</th>'
     + '<th title="카메라 원근 투영으로 커질 수 있으며 주행 불량 기준이 아닙니다">원근 편차*</th>'
@@ -1356,6 +1373,44 @@ def marker_readiness(marker, role='', production_visible=None,
     }
 
 
+def production_pose_readiness(role, visible, visibility_fresh, pose_fresh,
+                              pose_topic):
+    """Summarize the authoritative role pose without preview detections."""
+    if not visibility_fresh:
+        return {
+            'drive_status': 'Production 미수신',
+            'drive_class': 'warn',
+            'drive_ready': None,
+            'drive_reason': (
+                f'/{role}/cctv_marker_visible fresh 값이 없음'),
+        }
+    if visible is not True:
+        return {
+            'drive_status': 'CCTV pose 입력 중단',
+            'drive_class': 'err',
+            'drive_ready': False,
+            'drive_reason': (
+                'Production marker_visible=false — 현재 절대 pose를 '
+                '주행에 공급하지 않음'),
+        }
+    if not pose_fresh:
+        return {
+            'drive_status': 'CCTV pose 수신 대기',
+            'drive_class': 'warn',
+            'drive_ready': None,
+            'drive_reason': (
+                f'Production marker_visible=true이지만 {pose_topic}의 '
+                'fresh map pose가 없음'),
+        }
+    return {
+        'drive_status': 'CCTV pose 입력 정상',
+        'drive_class': 'ok',
+        'drive_ready': True,
+        'drive_reason': (
+            f'Production marker_visible=true · {pose_topic} fresh'),
+    }
+
+
 # 구역 사각형 색 (BGR). 카메라 순서대로 돌려 쓴다.
 REGION_COLOURS = [(255, 220, 90), (90, 120, 255), (120, 255, 120)]
 
@@ -1611,6 +1666,32 @@ def relative_pose_metrics(msg):
     return {
         'forward_m': values[0],
         'lateral_m': values[1],
+        'yaw_deg': math.degrees(yaw),
+        'frame_id': str(msg.header.frame_id),
+    }
+
+
+def map_pose_metrics(msg):
+    """Return a validated planar map pose for a production robot marker."""
+    position = msg.pose.position
+    orientation = msg.pose.orientation
+    values = (
+        float(position.x), float(position.y), float(orientation.x),
+        float(orientation.y), float(orientation.z), float(orientation.w),
+    )
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError('map pose contains non-finite values')
+    qx, qy, qz, qw = values[2:]
+    norm = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw)
+    if norm <= 1e-9:
+        raise ValueError('map pose quaternion norm must be positive')
+    qx, qy, qz, qw = (value / norm for value in (qx, qy, qz, qw))
+    yaw = math.atan2(
+        2.0 * (qw * qz + qx * qy),
+        1.0 - 2.0 * (qy * qy + qz * qz))
+    return {
+        'x_m': values[0],
+        'y_m': values[1],
         'yaw_deg': math.degrees(yaw),
         'frame_id': str(msg.header.frame_id),
     }
@@ -1973,16 +2054,24 @@ class CameraPreviewNode(Node):
                 'topic': f'/{role}/cctv_marker_visible',
                 'visible': None,
                 'wall': 0.0,
+                'pose_topic': f'/{role}/cctv_pose',
+                'pose': None,
+                'pose_wall': 0.0,
             }
             for role in self.robot_marker_ids
         }
         self._production_marker_subscriptions = []
         for role, runtime in self.production_marker_visibility.items():
-            subscription = self.create_subscription(
+            visible_subscription = self.create_subscription(
                 Bool, runtime['topic'],
                 lambda msg, r=role: self.production_marker_visible_cb(r, msg),
                 SENSOR_LATEST_QOS)
-            self._production_marker_subscriptions.append(subscription)
+            pose_subscription = self.create_subscription(
+                PoseStamped, runtime['pose_topic'],
+                lambda msg, r=role: self.production_marker_pose_cb(r, msg),
+                SENSOR_LATEST_QOS)
+            self._production_marker_subscriptions.extend(
+                (visible_subscription, pose_subscription))
         self._mask_shape = None
         self.relative_pose_topic = str(
             self.get_parameter('relative_pose_topic').value).strip()
@@ -2140,6 +2229,28 @@ class CameraPreviewNode(Node):
                 return
             runtime['visible'] = bool(msg.data)
             runtime['wall'] = time.monotonic()
+
+    def production_marker_pose_cb(self, role, msg):
+        """Store the exact map pose selected by the production marker node."""
+        if msg.header.frame_id != 'map':
+            self.get_logger().warn(
+                f'[{role}] Production CCTV pose frame 무시: '
+                f'{msg.header.frame_id!r}',
+                throttle_duration_sec=5.0)
+            return
+        try:
+            metrics = map_pose_metrics(msg)
+        except ValueError as exc:
+            self.get_logger().warn(
+                f'[{role}] Production CCTV pose 무시: {exc}',
+                throttle_duration_sec=5.0)
+            return
+        with self._lock:
+            runtime = self.production_marker_visibility.get(role)
+            if runtime is None:
+                return
+            runtime['pose'] = metrics
+            runtime['pose_wall'] = time.monotonic()
 
     def image_cb(self, state, msg):
         try:
@@ -2402,26 +2513,34 @@ class CameraPreviewNode(Node):
                 for marker in camera.get('markers') or []:
                     if int(marker.get('id', -1)) == int(marker_id):
                         sightings.append((camera['label'], marker))
-            representative = None
-            if sightings:
-                representative = max(
-                    (marker for _, marker in sightings),
-                    key=lambda marker: float(marker.get('area_px') or 0.0))
             runtime = self.production_marker_visibility[role]
             age = (None if runtime['wall'] <= 0.0
                    else max(0.0, now - runtime['wall']))
             fresh = (age is not None and
                      age <= self.production_marker_visible_stale_s)
             visible = runtime['visible'] if fresh else None
-            assessment = marker_readiness(
-                representative, role, visible, fresh)
+            pose_age = (None if runtime['pose_wall'] <= 0.0
+                        else max(0.0, now - runtime['pose_wall']))
+            pose_fresh = (
+                runtime['pose'] is not None and pose_age is not None and
+                pose_age <= self.robot_marker_stale_s)
+            assessment = production_pose_readiness(
+                role, visible, fresh, pose_fresh, runtime['pose_topic'])
+            pose_usable = bool(pose_fresh and visible is True)
+            pose = dict(runtime['pose']) if pose_usable else None
             rows.append({
                 'role': role,
                 'id': int(marker_id),
                 'topic': runtime['topic'],
+                'pose_topic': runtime['pose_topic'],
                 'production_fresh': bool(fresh),
                 'production_visible': visible,
                 'production_age_s': None if age is None else round(age, 3),
+                'pose_fresh': bool(pose_fresh),
+                'pose_usable': pose_usable,
+                'pose_age_s': (None if pose_age is None
+                               else round(pose_age, 3)),
+                'pose': pose,
                 'seen_cameras': [label for label, _ in sightings],
                 'status': assessment['drive_status'],
                 'class': assessment['drive_class'],
@@ -2945,25 +3064,31 @@ class CameraPreviewNode(Node):
     #   출차(retrieve) : 대기영역(차를 내려놓는 곳)으로
     # ------------------------------------------------------------------
     def _robot_marker_world(self, now):
-        """역할별 로봇 마커의 map 좌표. 최근에 본 것만 쓴다."""
-        wanted = {marker_id: role
-                  for role, marker_id in self.robot_marker_ids.items()}
+        """Return fresh production map poses, never the preview detector."""
         with self._lock:
-            snapshot = [(state.get('markers') or [],
-                         state.get('marker_wall', 0.0))
-                        for state in self.cameras]
+            snapshot = {
+                role: {
+                    'visible': runtime.get('visible'),
+                    'visible_wall': runtime.get('wall', 0.0),
+                    'pose': (None if runtime.get('pose') is None
+                             else dict(runtime['pose'])),
+                    'pose_wall': runtime.get('pose_wall', 0.0),
+                }
+                for role, runtime in self.production_marker_visibility.items()
+            }
         found = {}
-        for markers, wall in snapshot:
-            if wall <= 0.0 or (now - wall) > self.robot_marker_stale_s:
+        for role, runtime in snapshot.items():
+            visible_wall = float(runtime['visible_wall'])
+            pose_wall = float(runtime['pose_wall'])
+            if (runtime['visible'] is not True or visible_wall <= 0.0 or
+                    now - visible_wall >
+                    self.production_marker_visible_stale_s):
                 continue
-            for marker in markers:
-                role = wanted.get(marker.get('id'))
-                world = marker.get('world')
-                if role is None or world is None:
-                    continue
-                # 같은 마커가 두 카메라에 보이면 먼저 잡힌 쪽을 쓴다.
-                # 평균을 내면 두 호모그래피 오차가 섞여 오히려 나빠진다.
-                found.setdefault(role, (float(world[0]), float(world[1])))
+            pose = runtime['pose']
+            if (pose is None or pose_wall <= 0.0 or
+                    now - pose_wall > self.robot_marker_stale_s):
+                continue
+            found[role] = (float(pose['x_m']), float(pose['y_m']))
         return found
 
     def _slot_centroid(self, slot_id):
@@ -3025,6 +3150,7 @@ class CameraPreviewNode(Node):
         info = {
             'mission': mission,
             'forced': bool(self.guidance_forced_mission),
+            'robot_source': 'production_cctv_pose',
             'robots': {role: list(point) for role, point in robots.items()},
             'from': None, 'to': None, 'goal': '',
             'distance_m': None, 'heading_deg': None, 'reason': '',
@@ -3033,7 +3159,9 @@ class CameraPreviewNode(Node):
             info['reason'] = '미션 없음 (fleet 대기 중)'
             return info
         if not robots:
-            info['reason'] = f'로봇 마커 미검출 (ID {sorted(self.robot_marker_ids.values())})'
+            info['reason'] = (
+                'Production 로봇 pose 대기 '
+                f'(ID {sorted(self.robot_marker_ids.values())})')
             return info
         if len(robots) == 2:
             (ax, ay), (bx, by) = robots['front'], robots['rear']
@@ -3936,6 +4064,7 @@ class CameraPreviewNode(Node):
                 detection_error = self.yolo_error
             return jsonify({
                 'cameras': payload,
+                'preview_aruco_enabled': bool(self.enable_aruco),
                 'grid_step_px': self.grid_step,
                 'marker_size_m': self.marker_size_m,
                 'shared_marker_ids': shared,

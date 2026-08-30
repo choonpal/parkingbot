@@ -79,6 +79,7 @@ def _preview(mission='', markers=None, marker_wall=NOW,
     preview.waiting = waiting
     preview.robot_marker_ids = {'front': 2, 'rear': 1}
     preview.robot_marker_stale_s = 2.0
+    preview.production_marker_visible_stale_s = 1.0
     preview.guidance_forced_mission = ''
     preview._mission_type = mission
     preview._destination_slot_id = ''
@@ -87,8 +88,23 @@ def _preview(mission='', markers=None, marker_wall=NOW,
         slot_id: {'observed': True, 'occupied': slot_id not in empty}
         for slot_id, _ in preview.slots
     }
-    preview.cameras = [{'label': 'cctv0',
-                        'markers': list(markers or []),
+    markers_by_id = {marker.get('id'): marker for marker in (markers or [])}
+    preview.production_marker_visibility = {}
+    for role, marker_id in preview.robot_marker_ids.items():
+        marker = markers_by_id.get(marker_id)
+        world = None if marker is None else marker.get('world')
+        preview.production_marker_visibility[role] = {
+            'visible': marker is not None,
+            'wall': marker_wall,
+            'pose': (None if world is None else {
+                'x_m': world[0], 'y_m': world[1], 'yaw_deg': 0.0,
+                'frame_id': 'map',
+            }),
+            'pose_wall': marker_wall if world is not None else 0.0,
+        }
+    # A local preview detector may still have these rows, but guidance must
+    # use only the production pose/visible contract above.
+    preview.cameras = [{'label': 'cctv0', 'markers': list(markers or []),
                         'marker_wall': marker_wall}]
     return preview
 
@@ -139,6 +155,12 @@ def test_unrelated_marker_ids_are_ignored():
 def test_marker_without_world_coordinate_is_ignored():
     preview = _preview(markers=[{'id': 2, 'world': None}])
     assert preview._robot_marker_world(NOW) == {}
+
+
+def test_preview_detection_cannot_override_production_visibility():
+    preview = _preview(markers=BOTH)
+    preview.production_marker_visibility['front']['visible'] = False
+    assert preview._robot_marker_world(NOW) == {'rear': (2.0, 0.5)}
 
 
 # ------------------------------------------------------------------ 입차
@@ -211,7 +233,8 @@ def test_no_marker_means_no_arrow():
     preview = _preview(mission=PARK, markers=[])
     guidance = preview._guidance(NOW)
     assert guidance['from'] is None
-    assert '마커' in guidance['reason']
+    assert 'Production' in guidance['reason']
+    assert 'pose' in guidance['reason']
 
 
 def test_no_mission_means_no_arrow():

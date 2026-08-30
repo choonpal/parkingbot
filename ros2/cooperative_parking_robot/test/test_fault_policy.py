@@ -17,15 +17,24 @@ def test_required_fault_matrix_classification():
         assert policy.manual_reset_required is False
 
 
-def test_only_explicit_physical_conditions_request_hard_estop():
+def test_only_explicit_latched_conditions_request_hard_estop():
     for reason in ('ESTOP', 'ERR,ESTOP_LATCHED',
-                   'ERR,WHEEL_DIR_MISMATCH',
-                   'SYNC,LATERAL_ERROR_FATAL +41mm'):
+                   'ERR,WHEEL_DIR_MISMATCH'):
         policy = classify_fault(reason)
         assert policy.classification is FaultClass.EMERGENCY
         assert policy.motion_stop_required
         assert policy.estop_required
         assert policy.manual_reset_required
+
+
+def test_lateral_payload_limit_stops_motion_without_estop_latch():
+    policy = classify_fault('SYNC,LATERAL_ERROR_FATAL +41mm')
+    assert policy.classification is FaultClass.RECOVERABLE
+    assert policy.motion_stop_required
+    assert policy.mission_abort_required
+    assert policy.reconnect_allowed
+    assert policy.estop_required is False
+    assert policy.manual_reset_required is False
 
 
 def test_distance_yaw_and_visual_degradation_do_not_stop_or_abort():

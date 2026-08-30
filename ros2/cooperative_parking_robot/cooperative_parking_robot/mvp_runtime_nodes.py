@@ -187,7 +187,12 @@ class MvpIndividualMoveNode(BaseIndividualMoveNode):
 
     def update_visual_fallback(self):
         """Permit bounded odom+ultrasonic entry while the underbody hides ID0."""
-        if not self.underbody_visual_required():
+        # The base controller owns the stricter overhead-marker fallback on
+        # the exterior staging leg.  Keep the longer odom+ultrasonic fallback
+        # limited to the underbody phases where camera occlusion is expected.
+        if self.phase == 'TO_REAR_STAGING':
+            return super().update_visual_fallback()
+        if not self.bounded_visual_fallback_required():
             self.relative_lost_since = None
             self.motion_speed_scale = 1.0
             return True

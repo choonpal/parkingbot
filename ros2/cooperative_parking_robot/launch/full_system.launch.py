@@ -102,6 +102,8 @@ def generate_launch_description():
             description='진단 YOLO/ArUco/FPS overlay 및 annotated topic 활성'),
         DeclareLaunchArgument('enable_serial', default_value='false'),
         DeclareLaunchArgument('require_serial', default_value='false'),
+        DeclareLaunchArgument(
+            'serial_write_timeout_s', default_value='0.05'),
         DeclareLaunchArgument('require_hardware_ready', default_value='false'),
         DeclareLaunchArgument(
             'require_ultrasonic_for_ready', default_value='false'),
@@ -530,6 +532,8 @@ def generate_launch_description():
                 'hardware_profile': LaunchConfiguration(
                     'front_hardware_profile'),
                 'serial_port': LaunchConfiguration('front_serial_port'),
+                'serial_write_timeout_s': _float(
+                    'serial_write_timeout_s'),
                 'enable_serial': _bool('enable_serial'),
                 'require_serial': _bool('require_serial'),
                 'require_ultrasonic_for_ready': _bool(
@@ -595,6 +599,8 @@ def generate_launch_description():
                 'hardware_profile': LaunchConfiguration(
                     'rear_hardware_profile'),
                 'serial_port': LaunchConfiguration('rear_serial_port'),
+                'serial_write_timeout_s': _float(
+                    'serial_write_timeout_s'),
                 'enable_serial': _bool('enable_serial'),
                 'require_serial': _bool('require_serial'),
                 'require_ultrasonic_for_ready': _bool(

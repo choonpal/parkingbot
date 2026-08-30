@@ -1,6 +1,10 @@
 from cooperative_parking_robot.mvp_runtime_nodes import (
+    MvpIndividualMoveNode,
     minimum_entry_side_offset,
     rigid_drive_owns_command,
+)
+from cooperative_parking_robot.mvp_integration_nodes import (
+    HomeAwareIndividualMoveNode,
 )
 
 
@@ -34,3 +38,20 @@ def test_estop_never_grants_rigid_command_ownership():
         rear_ready=True,
         estop=True,
     )
+
+
+def test_mvp_approach_uses_base_bounded_visual_fallback(monkeypatch):
+    """The production wrapper must follow the renamed base safety method."""
+    node = object.__new__(MvpIndividualMoveNode)
+    node.phase = 'TO_REAR_STAGING'
+    calls = []
+
+    def base_fallback(_node):
+        calls.append('base')
+        return False
+
+    monkeypatch.setattr(
+        HomeAwareIndividualMoveNode, 'update_visual_fallback', base_fallback)
+
+    assert not node.update_visual_fallback()
+    assert calls == ['base']

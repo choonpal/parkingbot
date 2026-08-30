@@ -124,6 +124,7 @@ class Stm32BridgeNode(Node):
         # 이 구간에 framed 명령이 겹치면 부분 frame/legacy byte가 RX queue를
         # 오염시킬 수 있으므로 입력을 비운 뒤에만 첫 HELLO를 보낸다.
         self.declare_parameter('serial_startup_settle_s', 0.50)
+        self.declare_parameter('serial_write_timeout_s', 0.05)
         self.declare_parameter('enable_serial', True)
         self.declare_parameter('require_serial', False)
         # BOM의 100 mm 메카넘 휠 기준 명목 반경. 실물 유효반경은 실측 후 갱신.
@@ -248,8 +249,12 @@ class Stm32BridgeNode(Node):
                 f'serial_baud must match firmware ({UART_BAUD_RATE})')
         self.serial_startup_settle = float(
             self.get_parameter('serial_startup_settle_s').value)
+        self.serial_write_timeout = float(
+            self.get_parameter('serial_write_timeout_s').value)
         if not 0.0 <= self.serial_startup_settle <= 5.0:
             raise ValueError('serial_startup_settle_s must be in [0,5]')
+        if not 0.01 <= self.serial_write_timeout <= 0.10:
+            raise ValueError('serial_write_timeout_s must be in [0.01,0.10]')
         self.ultrasonic_min_range = float(
             self.get_parameter('ultrasonic_min_range_m').value)
         self.ultrasonic_max_range = float(
@@ -402,7 +407,7 @@ class Stm32BridgeNode(Node):
                     self.serial_port,
                     self.serial_baud,
                     timeout=0.0,
-                    write_timeout=0.05,
+                    write_timeout=self.serial_write_timeout,
                     exclusive=True)
                 handle.reset_input_buffer()
                 self._prepare_serial_session(handle)
@@ -1576,7 +1581,7 @@ class Stm32BridgeNode(Node):
         try:
             handle = serial.Serial(
                 self.serial_port, self.serial_baud, timeout=0.0,
-                write_timeout=0.05, exclusive=True)
+                write_timeout=self.serial_write_timeout, exclusive=True)
             handle.reset_input_buffer()
         except Exception as exc:
             self.get_logger().warn(

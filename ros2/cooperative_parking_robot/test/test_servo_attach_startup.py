@@ -668,6 +668,19 @@ def test_serial_port_is_opened_exclusively():
     assert 'exclusive=True' in text
 
 
+def test_configured_serial_write_timeout_is_used_for_open_and_reconnect():
+    text = Path(bridge_module.__file__).read_text(encoding='utf-8')
+    assert "declare_parameter('serial_write_timeout_s', 0.05)" in text
+    assert text.count('write_timeout=self.serial_write_timeout') == 2
+    assert 'write_timeout=0.05' not in text
+
+    root = Path(bridge_module.__file__).resolve().parents[1]
+    for name in ('front_robot.launch.py', 'rear_robot.launch.py'):
+        launch = (root / 'launch' / name).read_text(encoding='utf-8')
+        assert '"serial_write_timeout_s", default_value="0.05"' in launch
+        assert '"serial_write_timeout_s": _float(' in launch
+
+
 def test_heartbeat_producer_is_independent_of_ros_callback_execution():
     bridge_source = Path(bridge_module.__file__).read_text(encoding='utf-8')
     mvp_source = Path(

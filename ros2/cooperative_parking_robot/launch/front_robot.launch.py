@@ -101,6 +101,8 @@ def generate_launch_description():
         DeclareLaunchArgument("enable_serial", default_value="true"),
         DeclareLaunchArgument("require_serial", default_value="true"),
         DeclareLaunchArgument(
+            "serial_write_timeout_s", default_value="0.05"),
+        DeclareLaunchArgument(
             "require_hardware_ready", default_value="true"),
         DeclareLaunchArgument(
             "require_ultrasonic_for_ready", default_value="false"),
@@ -270,6 +272,8 @@ def generate_launch_description():
                 "hardware_profile": LaunchConfiguration("hardware_profile"),
                 "serial_port": LaunchConfiguration("serial_port"),
                 "serial_baud": 115200,
+                "serial_write_timeout_s": _float(
+                    "serial_write_timeout_s"),
                 "enable_serial": enable_serial,
                 "require_serial": require_serial,
                 "wheel_radius": wheel_radius,

@@ -48,9 +48,13 @@ def valid_config():
     config.update({"ROS_SETUP": "/opt/ros/humble/setup.bash",
                    "ROS_LOCALHOST_ONLY": "0",
                    "RMW_IMPLEMENTATION": "rmw_fastrtps_cpp",
+                   "CAM0_DEVICE": "/dev/v4l/by-id/cam0",
+                   "CAM2_DEVICE": "/dev/v4l/by-id/cam2",
                    "REAR_ENABLE_INTERNAL_CAMERA": "false",
                    "REAR_EXTERNAL_CAMERA_COMMAND": "ros2 run camera driver",
-                   "REAR_CAMERA_TOPIC": "/rear/marker_camera/image"})
+                   "REAR_CAMERA_TOPIC": "/rear/marker_camera/image",
+                   "REAR_CAMERA_ID": "0",
+                   "REAR_CAMERA_DEVICE": ""})
     return config
 
 
@@ -78,6 +82,23 @@ def test_external_rear_camera_requires_an_authoritative_start_command():
     config = valid_config()
     config["REAR_EXTERNAL_CAMERA_COMMAND"] = ""
     assert ops.conditional_config_errors(config)
+
+
+def test_camera_configuration_requires_persistent_host_local_paths():
+    config = valid_config()
+    config["CAM0_DEVICE"] = "/dev/video0"
+    errors = ops.conditional_config_errors(config)
+    assert "CAM0_DEVICE must use a /dev/v4l/by-id path" in errors
+
+    config = valid_config()
+    config["CAM2_DEVICE"] = config["CAM0_DEVICE"]
+    assert "CAM0_DEVICE and CAM2_DEVICE must be different" in (
+        ops.conditional_config_errors(config))
+
+    config = valid_config()
+    config["REAR_ENABLE_INTERNAL_CAMERA"] = "true"
+    assert "REAR_CAMERA_DEVICE is required for the internal camera" in (
+        ops.conditional_config_errors(config))
 
 
 def test_remote_ssh_is_batch_and_fail_fast():
@@ -272,6 +293,31 @@ def test_internal_rear_camera_prefers_persistent_device_path():
     command = ops.launch_command(config, "rear")
     assert "rear_camera_id:=0" in command
     assert "rear_camera_device:=/dev/v4l/by-id/rear-camera" in command
+
+
+def test_runtime_ownership_check_uses_selected_workspace_and_role_module():
+    config = valid_config()
+    config.update({
+        "FRONT_WORKSPACE": "/srv/parkingbot_active",
+        "ROS_SETUP": "/opt/ros/humble/setup.bash",
+        "ROS_DOMAIN_ID": "42",
+    })
+    command = ops.runtime_ownership_check_command(config, "front")
+    assert "source /srv/parkingbot_active/install/setup.bash" in command
+    assert "stm32_bridge_node" in command
+    assert "get_package_prefix" in command
+    assert "/srv/parkingbot_active" in command
+
+
+def test_source_and_revision_checks_support_both_workspace_layouts():
+    source = ops.package_source_check_command(
+        "/srv/parkingbot_active", "front_robot.launch.py")
+    assert "/srv/parkingbot_active/ros2/cooperative_parking_robot" in source
+    assert "/srv/parkingbot_active/src/cooperative_parking_robot" in source
+
+    revision = ops.workspace_revision_command("/srv/parkingbot_active")
+    assert "/srv/parkingbot_active/.parkingbot_revision" in revision
+    assert "git -C" in revision
 
 
 def test_local_ros_commands_always_source_underlay_and_control_overlay():

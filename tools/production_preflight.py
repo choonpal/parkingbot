@@ -6,11 +6,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import re
-import shlex
 import subprocess
 
 from parkingbot_ops import (
     ROLES, local_ros_argv, remote_run, role_host, role_workspace,
+    workspace_revision_command,
 )
 
 ID0_YAW_HELPER = Path(__file__).resolve().with_name("id0_yaw_preflight.py")
@@ -39,23 +39,32 @@ def evaluate_revisions(controller_head: str, remote_heads: dict[str, str]):
     return errors
 
 
+def local_workspace_revision(workspace) -> str:
+    root = Path(workspace)
+    for repository in (
+            root, root / "src/cooperative_parking_robot",
+            root / "ros2/cooperative_parking_robot"):
+        result = subprocess.run(
+            ["git", "-C", str(repository), "rev-parse", "HEAD"],
+            text=True, capture_output=True)
+        if result.returncode == 0 and SHA_PATTERN.fullmatch(
+                result.stdout.strip()):
+            return result.stdout.strip()
+    marker = root / ".parkingbot_revision"
+    if marker.is_file():
+        return marker.read_text(encoding="utf-8").splitlines()[0].strip()
+    return ""
+
+
 def revision_status(config, runner, *, controller_head: str | None = None):
     if controller_head is None:
-        control_package = (
-            Path(config["CONTROL_WORKSPACE"]) / "src/cooperative_parking_robot")
-        result = subprocess.run(
-            ["git", "-C", str(control_package), "rev-parse", "HEAD"],
-            text=True, capture_output=True)
-        controller_head = (
-            result.stdout.strip() if result.returncode == 0 else "")
+        controller_head = local_workspace_revision(config["CONTROL_WORKSPACE"])
 
     remote_heads = {}
     for role in ROLES:
-        package_dir = (
-            role_workspace(config, role) + "/src/cooperative_parking_robot")
         result = remote_run(
             runner, role_host(config, role),
-            f"git -C {shlex.quote(package_dir)} rev-parse HEAD", timeout=7)
+            workspace_revision_command(role_workspace(config, role)), timeout=7)
         remote_heads[role] = (
             result.stdout.strip() if result.returncode == 0 else "")
 

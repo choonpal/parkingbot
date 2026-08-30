@@ -132,11 +132,16 @@ def protocol_source_check_command(repository_root) -> str:
     monorepo_package = shlex.quote(
         repository + "/ros2/cooperative_parking_robot/"
         "cooperative_parking_robot")
+    workspace_package = shlex.quote(
+        repository + "/src/cooperative_parking_robot/"
+        "cooperative_parking_robot")
     legacy_package = shlex.quote(
         repository + "/cooperative_parking_robot")
     return (
         f"if test -f {monorepo_package}/uart_protocol.py; then "
-        f"package={monorepo_package}; else package={legacy_package}; fi && "
+        f"package={monorepo_package}; "
+        f"elif test -f {workspace_package}/uart_protocol.py; then "
+        f"package={workspace_package}; else package={legacy_package}; fi && "
         f"grep -Eq 'PROTOCOL_VERSION[[:space:]]*=[[:space:]]*"
         f"{EXPECTED_UART_PROTOCOL_VERSION}' \"$package/uart_protocol.py\" && "
         f"grep -Eq 'UART_BAUD_RATE[[:space:]]*=[[:space:]]*"
@@ -170,6 +175,7 @@ def load_env(path: Path) -> dict[str, str]:
     values.setdefault("REAR_CAMERA_TOPIC", "/rear/marker_camera/image")
     values.setdefault("REAR_ENABLE_INTERNAL_CAMERA", "false")
     values.setdefault("REAR_CAMERA_DEVICE", "")
+    values.setdefault("REAR_CAMERA_ID", "0")
     return values
 
 
@@ -183,15 +189,29 @@ def invalid_paths(config: dict[str, str]) -> list[str]:
 
 
 def conditional_config_errors(config: dict[str, str]) -> list[str]:
+    errors = []
+    for key in ("CAM0_DEVICE", "CAM2_DEVICE"):
+        value = config.get(key, "").strip()
+        if value and not value.startswith("/dev/v4l/by-id/"):
+            errors.append(f"{key} must use a /dev/v4l/by-id path")
+    if (config.get("CAM0_DEVICE", "").strip() and
+            config.get("CAM0_DEVICE") == config.get("CAM2_DEVICE")):
+        errors.append("CAM0_DEVICE and CAM2_DEVICE must be different")
+
     internal = config.get("REAR_ENABLE_INTERNAL_CAMERA", "false").lower()
     if internal not in ("true", "false"):
-        return ["REAR_ENABLE_INTERNAL_CAMERA must be true or false"]
-    if internal == "true" and not config.get("REAR_CAMERA_ID", "").strip():
-        return ["REAR_CAMERA_ID is required for the internal camera"]
+        errors.append("REAR_ENABLE_INTERNAL_CAMERA must be true or false")
+        return errors
+    rear_device = config.get("REAR_CAMERA_DEVICE", "").strip()
+    if internal == "true" and not rear_device:
+        errors.append("REAR_CAMERA_DEVICE is required for the internal camera")
+    elif internal == "true" and not rear_device.startswith("/dev/v4l/by-id/"):
+        errors.append("REAR_CAMERA_DEVICE must use a /dev/v4l/by-id path")
     if internal == "false" and not config.get(
             "REAR_EXTERNAL_CAMERA_COMMAND", "").strip():
-        return ["REAR_EXTERNAL_CAMERA_COMMAND is required for the external camera"]
-    return []
+        errors.append(
+            "REAR_EXTERNAL_CAMERA_COMMAND is required for the external camera")
+    return errors
 
 
 class Runner:
@@ -270,6 +290,38 @@ def role_workspace(config, role):
     return config[f"{role.upper()}_WORKSPACE"]
 
 
+def workspace_revision_command(workspace):
+    """Read a Git HEAD or the immutable marker of a package-only deployment."""
+    root = str(workspace)
+    candidates = (
+        root,
+        root + "/src/cooperative_parking_robot",
+        root + "/ros2/cooperative_parking_robot",
+    )
+    probes = " ".join(shlex.quote(candidate) for candidate in candidates)
+    marker = shlex.quote(root + "/.parkingbot_revision")
+    return (
+        f"revision=''; for repository in {probes}; do "
+        "revision=$(git -C \"$repository\" rev-parse HEAD 2>/dev/null) && "
+        "test -n \"$revision\" && break; revision=''; done; "
+        f"if test -z \"$revision\" && test -f {marker}; then "
+        f"revision=$(head -n 1 {marker}); fi; "
+        "test -n \"$revision\" && printf '%s\\n' \"$revision\"")
+
+
+def package_source_check_command(workspace, launch_file):
+    """Check both supported source layouts without trusting a directory name."""
+    root = str(workspace)
+    candidates = (
+        root + "/ros2/cooperative_parking_robot",
+        root + "/src/cooperative_parking_robot",
+    )
+    tests = " || ".join(
+        f"test -f {shlex.quote(path + '/launch/' + launch_file)}"
+        for path in candidates)
+    return f"({tests})"
+
+
 def ros_environment_prefix(config, workspace):
     return (
         f"source {shlex.quote(config['ROS_SETUP'])} && "
@@ -281,6 +333,27 @@ def ros_environment_prefix(config, workspace):
 
 def ros_prefix(config, role):
     return ros_environment_prefix(config, role_workspace(config, role))
+
+
+def runtime_ownership_check_command(config, role):
+    """Fail if ROS or Python resolves outside the selected role workspace."""
+    workspace = role_workspace(config, role)
+    module = ("opencv_camera_node" if role == "jetson"
+              else "stm32_bridge_node")
+    code = (
+        "from pathlib import Path;"
+        "from ament_index_python.packages import get_package_prefix;"
+        f"import cooperative_parking_robot.{module} as module;"
+        f"root=Path({workspace!r}).resolve();"
+        "paths=(Path(module.__file__).resolve(),"
+        "Path(get_package_prefix('cooperative_parking_robot')).resolve());"
+        "print('workspace='+str(root));"
+        "print('module='+str(paths[0]));"
+        "print('prefix='+str(paths[1]));"
+        "raise SystemExit(0 if all(p == root or root in p.parents "
+        "for p in paths) else 42)")
+    return ros_prefix(config, role) + " && " + shlex.join(
+        ["/usr/bin/python3", "-c", code])
 
 
 def local_ros_prefix(config):

@@ -148,6 +148,30 @@ Rear 복사 중 패키지 루트에 잘못 놓였던 두 임시 파일은 실행
 /tmp/parkingbot-deploy-stray-a5e7290-rear_robot.launch.py
 ```
 
+### Camera 및 workspace 경로 재감사
+
+2026-08-30 후속 감사에서 `/dev`를 제한된 실행 환경 안에서 확인하면 Jetson
+카메라가 없는 것처럼 보이는 false negative가 재현됐다. 실제 host에서 다시
+확인한 결과 CAM0 C922, CAM2 C920, Front/Rear 각 Sonix camera는 정상이며 장비별
+영구 경로는 `REAL_ROBOT_DEPLOYMENT_RUNBOOK.md`에 고정했다. 같은 Sonix by-id가
+Front와 Rear에 모두 존재하므로 camera path는 host와 분리해서 기록하면 안 된다.
+
+또한 설정은 `parkingbot_main_0a52285`를 가리키지만 일부 workspace는 Git 저장소가
+아니고 strict 파일이 선택적으로 overlay되어, 디렉터리 이름·Git revision·실행
+Python 파일이 일치하지 않는 상태였다. 다음의 작은 fail-closed 조치를 추가했다.
+
+- 운영 설정은 host-local `parkingbot_active` symlink만 사용
+- package-only 배포는 `.parkingbot_revision`으로 배포 SHA 기록
+- `robot_doctor`와 start 전 preflight에서 ROS package prefix와 Python module의
+  realpath가 선택 workspace 아래인지 확인
+- CAM0/CAM2와 내부 Rear camera는 `/dev/v4l/by-id`만 허용하고 Rear camera는
+  Rear 호스트에서 존재 여부 확인
+- 설치된 `robotctl_core`는 `CONTROL_WORKSPACE`를 우선해 저장소를 찾고 예전
+  `~/parkingbot`을 우연히 선택하지 않음
+
+이 조치는 device나 workspace를 자동 추측하지 않는다. 명시한 active target과
+host-local persistent path가 맞는지만 빠르게 검증한다.
+
 ## 다음 작업과 운용 제한
 
 전체 `robotctl start`를 반복하지 않는다. 특히 SSH가 불안정해지는 상태에서 세

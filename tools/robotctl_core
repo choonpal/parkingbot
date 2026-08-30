@@ -18,17 +18,19 @@ from parkingbot_ops import (
     conditional_config_errors, incident_snapshot, invalid_paths,
     launch_command, load_env, missing_config,
     observer_argv, observer_helper_path, observer_prerequisite_errors,
+    package_source_check_command,
     parse_observer_output,
     protocol_consistency_errors, protocol_source_check_command,
     remote_argv, remote_run, role_host, role_workspace, ros_prefix, run_root,
-    snapshot, stack_process_status,
+    runtime_ownership_check_command, snapshot, stack_process_status,
+    workspace_revision_command,
 )
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_CONFIG = Path("~/.config/parkingbot/production_hosts.env").expanduser()
 
 
-def repo_root():
+def repo_root(config=None):
     """저장소 루트를 찾는다.
 
     ``install_robot_commands.sh`` 는 이 스크립트를 ``~/.local/bin`` 으로
@@ -39,22 +41,22 @@ def repo_root():
     override = os.environ.get("PARKINGBOT_REPO")
     if override:
         return Path(override).expanduser()
-    # 저장소 안에서 직접 실행한 경우
-    if (HERE.parent / "ros2" / "cooperative_parking_robot").is_dir():
-        return HERE.parent
-    for candidate in (Path("~/parkingbot").expanduser(),
-                      Path.home() / "parkingbot"):
+    candidates = []
+    if config and config.get("CONTROL_WORKSPACE"):
+        candidates.append(Path(config["CONTROL_WORKSPACE"]).expanduser())
+    candidates.extend((Path.cwd(), HERE.parent,
+                       Path("~/parkingbot_active").expanduser(),
+                       Path("~/parkingbot").expanduser()))
+    for candidate in candidates:
         if (candidate / "ros2" / "cooperative_parking_robot").is_dir():
-            return candidate
+            return candidate.resolve()
     # 못 찾으면 예전 동작을 유지한다. 오류 메시지가 경로를 알려준다.
     return HERE.parent
 
 
 def deployed_repository(config, role):
     """Return the source repository used for a role's runtime install."""
-    if role == "jetson" and role_host(config, role) == "local":
-        return str(repo_root())
-    return role_workspace(config, role) + '/src/cooperative_parking_robot'
+    return role_workspace(config, role)
 
 
 def config_path(args):
@@ -133,9 +135,7 @@ def manifest(config, role, launch):
     workspace = role_workspace(config, role)
     return (
         "date --iso-8601=seconds; hostname; "
-        f"git -C {shlex.quote(workspace + '/src/cooperative_parking_robot')} branch --show-current; "
-        f"git -C {shlex.quote(workspace + '/src/cooperative_parking_robot')} rev-parse HEAD; "
-        f"git -C {shlex.quote(workspace + '/src/cooperative_parking_robot')} status --short; "
+        f"printf 'revision='; {workspace_revision_command(workspace)}; "
         f"printf 'ROS_DOMAIN_ID=%s\\nRMW_IMPLEMENTATION=%s\\nlaunch=%s\\nworkspace=%s\\n' "
         f"{shlex.quote(config['ROS_DOMAIN_ID'])} {shlex.quote(config['RMW_IMPLEMENTATION'])} "
         f"{shlex.quote(launch)} {shlex.quote(workspace)}")
@@ -256,9 +256,9 @@ def start(args):
     print(
         f"[OBSERVER OK] local ROS prerequisites "
         f"({config.get('OBSERVER_PYTHON', '/usr/bin/python3')})")
-    for warning in tool_installation_warnings(repo_root()):
+    for warning in tool_installation_warnings(repo_root(config)):
         print(f"[WARN] {warning}; rerun tools/install_robot_commands.sh")
-    protocol_errors = protocol_consistency_errors(repo_root())
+    protocol_errors = protocol_consistency_errors(repo_root(config))
     if protocol_errors:
         for error in protocol_errors:
             print(f"[FAIL] protocol consistency: {error}")
@@ -288,15 +288,25 @@ def start(args):
                 f"[FAIL] {role.title()} firmware/ROS protocol capability "
                 "mismatch")
             return 1
+        ownership_check = remote_run(
+            runner, role_host(config, role),
+            runtime_ownership_check_command(config, role), timeout=25)
+        if ownership_check.returncode:
+            detail = (ownership_check.stdout or ownership_check.stderr).strip()
+            print(
+                f"[FAIL] {role.title()} runtime escapes selected workspace"
+                + (f"\n{detail}" if detail else ""))
+            return 1
     run_dir = create_run_dir()
     run_id = run_dir.name
     processes = {}
-    head = subprocess.run(["git", "rev-parse", "HEAD"], text=True, capture_output=True).stdout.strip()
+    head = subprocess.run(
+        ["git", "-C", str(repo_root(config)), "rev-parse", "HEAD"],
+        text=True, capture_output=True).stdout.strip()
     for role in ROLES:
         remote_head = remote_run(
             runner, role_host(config, role),
-            f"git -C {shlex.quote(deployed_repository(config, role))} "
-            "rev-parse HEAD",
+            workspace_revision_command(role_workspace(config, role)),
             timeout=7).stdout.strip()
         if remote_head and head and remote_head != head:
             print(f"[WARN] {role.title()} code revision differs\n  Controller: {head}\n  {role.title()}: {remote_head}")
@@ -569,10 +579,10 @@ def doctor(args):
         for error in observer_prerequisite_errors(config, runner=runner))
     blockers.extend(
         f"control tooling: {warning}"
-        for warning in tool_installation_warnings(repo_root()))
+        for warning in tool_installation_warnings(repo_root(config)))
     blockers.extend(
         f"control: protocol consistency: {error}"
-        for error in protocol_consistency_errors(repo_root()))
+        for error in protocol_consistency_errors(repo_root(config)))
     if shutil.which("tmux") is None:
         blockers.append("control: tmux missing")
     if not Path(config["ROS_SETUP"]).is_file():
@@ -588,11 +598,15 @@ def doctor(args):
             ("command -v tmux >/dev/null", "tmux missing"),
             (f"test -f {shlex.quote(config['ROS_SETUP'])}", "ROS setup missing"),
             (f"test -f {shlex.quote(workspace + '/install/setup.bash')}", "workspace install missing"),
-            (f"test -f {shlex.quote(workspace + '/src/cooperative_parking_robot/launch/' + ('cctv_server_dual.launch.py' if role == 'jetson' else role + '_robot.launch.py'))}", "launch file missing"),
-            (ros_prefix(config, role) + " && ros2 pkg prefix cooperative_parking_robot >/dev/null", "ROS package unavailable"),
+            (package_source_check_command(
+                workspace, ('cctv_server_dual.launch.py' if role == 'jetson'
+                            else role + '_robot.launch.py')),
+             "launch file missing"),
+            (runtime_ownership_check_command(config, role),
+             "runtime import/prefix escapes selected workspace"),
             ("test \"$(timedatectl show -p NTPSynchronized --value 2>/dev/null)\" = yes", "clock not NTP synchronized"),
             (protocol_source_check_command(
-                workspace + '/src/cooperative_parking_robot'),
+                workspace),
              "firmware/ROS protocol capability mismatch"),
         ]
         if role == "jetson":
@@ -608,6 +622,10 @@ def doctor(args):
             checks.append((f"test -e {shlex.quote(config[role.upper() + '_SERIAL'])}", "STM32 serial missing"))
             if role == "rear":
                 checks.append((f"test -f {shlex.quote(config['REAR_CALIB'])}", "Rear calibration missing"))
+                if config["REAR_ENABLE_INTERNAL_CAMERA"].lower() == "true":
+                    checks.append((
+                        f"test -e {shlex.quote(config['REAR_CAMERA_DEVICE'])}",
+                        "Rear camera device missing on Rear host"))
         for command, reason in checks:
             result = remote_run(runner, role_host(config, role), command, timeout=25)
             if result.returncode:

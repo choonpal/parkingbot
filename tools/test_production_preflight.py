@@ -33,6 +33,11 @@ def test_missing_revision_blocks_start():
     assert "front: git HEAD unavailable" in errors
 
 
+def test_package_only_workspace_revision_marker_is_supported(tmp_path):
+    (tmp_path / ".parkingbot_revision").write_text(VALID_SHA + "\n")
+    assert production_gate.local_workspace_revision(tmp_path) == VALID_SHA
+
+
 def test_circular_wrap_is_not_reported_as_yaw_jump():
     samples = [
         math.radians(value)

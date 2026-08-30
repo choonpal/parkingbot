@@ -239,6 +239,71 @@ Homography와 등록 layout이 준비되기 전에는 motion을 허용하지 않
 
 ### Production operation commands
 
+#### Verified host-local camera map (2026-08-30)
+
+카메라 경로는 **호스트 이름과 `/dev/v4l/by-id`를 한 쌍으로** 기록한다.
+`/dev/videoN`은 재연결이나 재부팅 뒤 번호가 바뀔 수 있으므로 운영 설정에 쓰지
+않는다. `video-index0`은 영상 capture endpoint이고 `video-index1`은 사용하지
+않는다.
+
+| 역할/호스트 | 실물 | 운영 경로 | 2026-08-30 해석 결과 |
+|---|---|---|---|
+| Jetson (`local`, hostname `robot-desktop`) CAM0 | Logitech C922, USB `046d:085c` | `/dev/v4l/by-id/usb-046d_C922_Pro_Stream_Webcam_8B999F6F-video-index0` | `/dev/video2` |
+| Jetson CAM2 | Logitech C920, USB `046d:08e5` | `/dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920-video-index0` | `/dev/video0` |
+| Rear (`rear`, `robot-1.local`) ID0 camera | Sonix/OV2710 Autodarts, USB `0c45:6230` | `/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._Autodarts_DIY_Cam_SN0001-video-index0` | `/dev/video0` |
+| Front (`front`, `robot-2.local`), 현재 production 미사용 | Sonix/OV2710 Autodarts, USB `0c45:6230` | `/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._Autodarts_DIY_Cam_SN0001-video-index0` | `/dev/video0` |
+
+Front와 Rear의 Sonix 문자열이 같은 것은 두 카메라가 **서로 다른 호스트**에 있기
+때문에 허용된다. 따라서 Sonix 경로만 보고 장비를 판단하면 안 된다. Rear launch의
+경로는 반드시 Rear 호스트에서 검사한다.
+
+장비 inventory는 실제 호스트 shell에서 아래처럼 확인한다. 제한된 container나
+agent sandbox의 `/dev`는 host device가 보이지 않아 false negative를 낼 수 있으므로
+그 결과만으로 "카메라 없음"을 결론 내리지 않는다.
+
+```bash
+hostname
+v4l2-ctl --list-devices
+find /dev/v4l/by-id -maxdepth 1 -type l -printf '%f -> %l\n' | sort
+```
+
+`robot_doctor`는 Jetson의 CAM0/CAM2와 Rear 내부 카메라를 각각 해당 role의
+호스트에서 검사한다. 설정의 CAM0/CAM2 및 내부 Rear camera가
+`/dev/v4l/by-id/`가 아니면 host 접속 전부터 차단한다.
+
+#### Active workspace and install ownership contract
+
+운영 설정에는 역사적인 디렉터리나 commit 이름을 직접 넣지 않고 다음 고정
+진입점만 사용한다.
+
+```text
+Jetson/control: ${HOME}/parkingbot_active
+Front/Rear:     /home/robot/parkingbot_active   (각 호스트의 로컬 경로)
+```
+
+실제 release workspace를 build한 뒤에만 이 symlink의 target을 바꾼다. Git
+checkout이 아닌 package-only 배포에는 workspace 루트의
+`.parkingbot_revision` 첫 줄에 배포한 40자리 Git SHA를 기록한다. 지원하는 소스
+layout은 저장소형 `<workspace>/ros2/cooperative_parking_robot`와 표준 colcon형
+`<workspace>/src/cooperative_parking_robot` 두 가지뿐이다.
+
+`robot_doctor`, `robot_start`, `robot_restart`는 선택된 workspace의
+`install/setup.bash`를 source한 다음 아래 두 실제 경로가 모두 그 workspace
+안인지 검사한다.
+
+- `ros2 pkg prefix cooperative_parking_robot`
+- role 핵심 Python module (`opencv_camera_node` 또는 `stm32_bridge_node`)
+
+둘 중 하나라도 예전 overlay나 다른 install을 가리키면 기동 전에 차단된다.
+운영 명령 설치도 active checkout에서 수행한다.
+
+```bash
+cd ${HOME}/parkingbot_active
+bash tools/install_robot_commands.sh
+readlink -f ${HOME}/parkingbot_active
+robot_doctor
+```
+
 긴 launch 명령을 매번 입력하지 않도록 중앙 운용 PC에 다음 명령을 설치한다.
 
 ```bash

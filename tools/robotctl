@@ -85,7 +85,7 @@ def run_core(
         repository_cwd: bool = False) -> int:
     cwd = None
     if repository_cwd:
-        cwd = Path(config["CONTROL_WORKSPACE"]) / "src/cooperative_parking_robot"
+        cwd = Path(config["CONTROL_WORKSPACE"])
     return subprocess.run(core_argv(argv), cwd=cwd).returncode
 
 

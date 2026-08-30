@@ -439,6 +439,7 @@ def generate_launch_description():
                 'entry_side_offset_m': 0.60,
                 'exit_distance_m': 0.50,
                 'substate_timeout_s': 60.0,
+                'wait_front_staged_timeout_s': 90.0,
                 'cctv_marker_timeout_s': _float(
                     'cctv_marker_timeout_s'),
                 'relative_lateral_tolerance_m': _float(
@@ -480,6 +481,7 @@ def generate_launch_description():
                 'entry_side_offset_m': 0.60,
                 'exit_distance_m': 0.50,
                 'substate_timeout_s': 60.0,
+                'wait_front_staged_timeout_s': 90.0,
                 'cctv_marker_timeout_s': _float(
                     'cctv_marker_timeout_s'),
                 'relative_lateral_tolerance_m': _float(

@@ -320,6 +320,29 @@ marker overlay를 자체 detector의 빈 `markers[]`에서 계산해 "마커 미
 UI는 detector를 다시 켜지 말고 production pose/visible 토픽으로 ID2/ID1을
 그리며 ID0 상태를 별도 표시해야 한다.
 
+### 진단 observer를 끈 staging 실차 재시험
+
+전체 stack 기동 직후 startup observer가 살아 있는 동안 Front/Rear에서
+UART/heartbeat 오류가 반복됐고, observer 종료 후에는 35초 동안 통신 fault가
+0건이었다. Rear camera를 별도로 재기동하며 DDS participant가 합류했을 때 양쪽에
+짧은 통신 오류가 한 번 발생했지만 DISARMED 상태에서 자동 복구됐고, camera가
+안정된 뒤 추가 32초 동안 fault는 없었다. 따라서 전체 진단 observer의 반복
+join/leave는 RPi 부하를 키우는 요인이며 주행 중 상시 실행 대상이 아니다.
+
+이 상태에서 PARK를 한 번 승인하자 Front는 약 2.13m staging 경로를 약 67초 동안
+주행했고 UART write/heartbeat failure는 0건이었다. Rear는 정지 상태로
+`WAIT_FRONT_STAGED`를 기다리다가 기존 공통 60초 제한으로 fault가 났고, Front는
+그로부터 약 7.2초 뒤 `READY_TO_SCAN`에 도착했다. 즉 이번 중단의 직접 원인은
+주행 통신이 아니라 0.035m/s 저속 경로보다 짧은 coordination timeout이었다.
+
+수정 정책은 다음과 같다.
+
+- `WAIT_FRONT_STAGED`에만 90초 제한을 적용하고 다른 substate는 기존 60초 유지
+- startup observer는 readiness에 필요한 7개 토픽만 구독
+- 전체 DDS state monitor는 기본 비활성화하고 정지 진단에서만
+  `AUTO_STATE_MONITOR=true`로 명시적 사용
+- 주행 중에는 반복 snapshot 대신 기존 Kiosk/Control Tower UI 사용
+
 ## 다음 작업과 운용 제한
 
 전체 `robotctl start`를 반복하지 않는다. 특히 SSH가 불안정해지는 상태에서 세

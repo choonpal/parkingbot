@@ -353,14 +353,16 @@ LIFT 단계로 진행할 수 있으므로 이번 commissioning 시험에는 사�
 ```bash
 robot_doctor
 robot_start
-robot_state --watch
+robot_state
 ```
 
 `robot_start`는 원격 process를 띄우기 전에 로컬 `ROS_SETUP`, snapshot helper,
 `OBSERVER_PYTHON`(기본 `/usr/bin/python3`)의 `rclpy`/표준 message/RMW 로딩을
 검증한다. Snapshot observer는 custom message를 사용하지 않으므로 control
 workspace overlay에 의존하지 않고 ROS underlay만 source한다. Graph 대기 중에는
-하나의 observer/DDS participant를 유지하며 process, observer, readiness 실패를
+하나의 observer/DDS participant를 유지하되, readiness에 필요한 fleet/state,
+merge, ID0 marker, 양쪽 hardware status만 구독한다. odometry, map stream 등 전체
+진단 토픽은 기동 gate에서 구독하지 않는다. Process, observer, readiness 실패는
 서로 다른 상태로 출력한다. `[OBSERVER FAIL]`이면 원격 hardware보다 출력된 로컬
 Python/ROS/RMW 원인을 먼저 수정하고, `[PROCESS EXITED]`이면 해당
 `robot_logs <role>`을 확인한다.
@@ -369,6 +371,13 @@ Python/ROS/RMW 원인을 먼저 수정하고, `[PROCESS EXITED]`이면 해당
 `parkingbot-production` tmux session을 만들고, 이 절의 기존 production launch
 argument를 그대로 사용한다. PARK request는 자동 발행하지 않는다. 기동 후
 Jetson의 `http://JETSON_HOST:5000/kiosk`에서 PARK를 승인한다.
+
+`AUTO_STATE_MONITOR`의 기본값은 `false`다. 전체 토픽 snapshot을 반복하는
+`robotctl monitor`와 `robot_state --watch`는 DDS participant와 구독자를 계속
+재생성하므로 주행 중 사용하지 않는다. 주행 상태는 이미 떠 있는 Kiosk/Control
+Tower UI에서 확인하고, `robot_state` 단발 확인은 mission 전 정지 상태에서만
+실행한다. `AUTO_STATE_MONITOR=true`는 바퀴를 띄운 정지 진단에서만 명시적으로
+사용한다.
 
 ```bash
 robot_state

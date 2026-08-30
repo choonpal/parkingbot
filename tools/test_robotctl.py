@@ -205,8 +205,24 @@ def test_startup_completion_ignores_non_startup_diagnostic_topics():
     received = set(ops.STARTUP_REQUIRED_TOPIC_KEYS)
     assert ops.observer_complete(received, "startup") is True
     assert ops.observer_complete(received, "full") is False
+    assert set(ops.observer_topic_keys("startup")) == received
+    assert "front_odom" not in ops.observer_topic_keys("startup")
+    assert "map_stream" not in ops.observer_topic_keys("startup")
     received.remove("rear_hw")
     assert ops.observer_complete(received, "startup") is False
+
+
+def test_automatic_dds_state_monitor_is_opt_in_and_validated():
+    config = valid_config()
+    assert ops.automatic_state_monitor_enabled(config) is False
+
+    config["AUTO_STATE_MONITOR"] = "true"
+    assert ops.automatic_state_monitor_enabled(config) is True
+    assert ops.conditional_config_errors(config) == []
+
+    config["AUTO_STATE_MONITOR"] = "sometimes"
+    assert ops.conditional_config_errors(config) == [
+        "AUTO_STATE_MONITOR must be true or false"]
 
 
 def test_status_format_uses_real_safety_fields():

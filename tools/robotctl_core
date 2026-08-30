@@ -15,7 +15,8 @@ import time
 
 from parkingbot_ops import (
     REQUIRED, ROLES, SESSION, Runner, create_run_dir, format_snapshot,
-    conditional_config_errors, incident_snapshot, invalid_paths,
+    automatic_state_monitor_enabled, conditional_config_errors,
+    incident_snapshot, invalid_paths,
     launch_command, load_env, missing_config,
     observer_argv, observer_helper_path, observer_prerequisite_errors,
     package_source_check_command,
@@ -451,13 +452,18 @@ def start(args):
             incident_metadata(None, reason, data))
         print("Startup graph incomplete; processes remain available for robot_logs.")
         return 1
-    print("[START] State/log monitor")
-    monitor_cmd = (
-        f"{shlex.quote(str(Path(__file__).resolve()))} --config "
-        f"{shlex.quote(str(config_path(args)))} monitor")
-    subprocess.run([
-        "tmux", "new-session", "-d", "-s", SESSION + "-monitor",
-        monitor_cmd], check=False)
+    if automatic_state_monitor_enabled(config):
+        print("[START] State/log monitor (explicitly enabled)")
+        monitor_cmd = (
+            f"{shlex.quote(str(Path(__file__).resolve()))} --config "
+            f"{shlex.quote(str(config_path(args)))} monitor")
+        subprocess.run([
+            "tmux", "new-session", "-d", "-s", SESSION + "-monitor",
+            monitor_cmd], check=False)
+    else:
+        print(
+            "[SKIP] automatic DDS state monitor disabled; "
+            "use the existing operator UI during motion")
     print("\nSystem started. Safety readiness remains visible in robot_state.")
     print("Run:\n  robot_state\n  robot_logs\n  robot_stop")
     return 0

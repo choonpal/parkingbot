@@ -84,6 +84,8 @@ def generate_launch_description():
         "lateral_deviation_n": _int("lateral_deviation_n"),
         "max_scan_retry": _int("max_scan_retry"),
         "substate_timeout_s": _float("substate_timeout_s"),
+        "wait_front_staged_timeout_s": _float(
+            "wait_front_staged_timeout_s"),
         "target_timeout_s": _float("target_timeout_s"),
         "cctv_marker_timeout_s": _float("cctv_marker_timeout_s"),
         "relative_lateral_tolerance_m": _float(
@@ -182,6 +184,8 @@ def generate_launch_description():
         DeclareLaunchArgument("lateral_sign", default_value="1.0"),
         DeclareLaunchArgument(
             "substate_timeout_s", default_value="60.0"),
+        DeclareLaunchArgument(
+            "wait_front_staged_timeout_s", default_value="90.0"),
         DeclareLaunchArgument(
             "target_timeout_s", default_value="2.0"),
         DeclareLaunchArgument("cctv_marker_timeout_s", default_value="0.50"),

@@ -71,6 +71,20 @@ EXPECTED_UART_PROTOCOL_VERSION = 2
 EXPECTED_UART_BAUD_RATE = 115200
 
 
+def observer_topic_keys(mode: str) -> tuple[str, ...]:
+    """Return only the subscriptions needed by an observer mode."""
+    if mode == "startup":
+        return STARTUP_REQUIRED_TOPIC_KEYS
+    if mode == "full":
+        return (*TOPICS, *PRESENCE_TOPICS)
+    raise ValueError(f"unsupported observer mode: {mode}")
+
+
+def automatic_state_monitor_enabled(config: dict[str, str]) -> bool:
+    """Keep the DDS-heavy runtime observer opt-in on production robots."""
+    return config.get("AUTO_STATE_MONITOR", "false").strip().lower() == "true"
+
+
 def protocol_consistency_errors(repository_root) -> list[str]:
     """Verify that firmware, encoder API and bridge require one protocol."""
     root = Path(repository_root)
@@ -191,6 +205,9 @@ def invalid_paths(config: dict[str, str]) -> list[str]:
 
 def conditional_config_errors(config: dict[str, str]) -> list[str]:
     errors = []
+    auto_monitor = config.get("AUTO_STATE_MONITOR", "false").strip().lower()
+    if auto_monitor not in ("true", "false"):
+        errors.append("AUTO_STATE_MONITOR must be true or false")
     for key in ("CAM0_DEVICE", "CAM2_DEVICE"):
         value = config.get(key, "").strip()
         if value and not value.startswith("/dev/v4l/by-id/"):

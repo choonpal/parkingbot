@@ -18,7 +18,7 @@ from rclpy.qos import (
 from std_msgs.msg import Bool, String
 
 from parkingbot_ops import (
-    observer_complete, PRESENCE_TOPICS, TOPICS,
+    observer_complete, observer_topic_keys, PRESENCE_TOPICS, TOPICS,
 )
 
 
@@ -46,13 +46,16 @@ def qos(*, transient=False):
 
 
 class SnapshotNode(Node):
-    def __init__(self):
+    def __init__(self, mode):
         super().__init__("parkingbot_diagnostic_snapshot")
         self.values = {key: None for key in TOPICS}
         self.values.update({key: False for key in PRESENCE_TOPICS})
         self.received = set()
+        selected = set(observer_topic_keys(mode))
 
         for key, topic in TOPICS.items():
+            if key not in selected:
+                continue
             message_type = Bool if key in BOOL_KEYS else String
             # hardware_status is a retained safety state; all other sampled
             # topics are volatile latest-value streams.
@@ -62,6 +65,8 @@ class SnapshotNode(Node):
                 message_type, topic,
                 lambda msg, k=key: self._value(k, msg), profile)
         for key, topic in PRESENCE_TOPICS.items():
+            if key not in selected:
+                continue
             self.create_subscription(
                 PRESENCE_TYPES[key], topic,
                 lambda _msg, k=key: self._present(k), qos())
@@ -89,7 +94,7 @@ def main():
         parser.error("--stream-interval must be non-negative")
 
     rclpy.init(args=[])
-    node = SnapshotNode()
+    node = SnapshotNode(args.mode)
     deadline = time.monotonic() + args.timeout
     next_emit = time.monotonic() + args.stream_interval
     try:

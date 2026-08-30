@@ -45,6 +45,30 @@ def _individual_move_for_visual_fallback(phase="SCAN_IN"):
     return node
 
 
+def test_wait_front_staged_has_a_dedicated_90_second_timeout(monkeypatch):
+    node = object.__new__(IndividualMoveNode)
+    node.phase = "WAIT_FRONT_STAGED"
+    node.phase_enter_time = 100.0
+    node.substate_timeout = 60.0
+    node.wait_front_staged_timeout = 90.0
+    faults = []
+    node.fault = faults.append
+
+    monkeypatch.setattr(move_module.time, "monotonic", lambda: 167.0)
+    assert node.phase_timed_out() is False
+    assert faults == []
+
+    monkeypatch.setattr(move_module.time, "monotonic", lambda: 190.1)
+    assert node.phase_timed_out() is True
+    assert faults == ["WAIT_FRONT_STAGED_TIMEOUT"]
+
+    node.phase = "SCAN_IN"
+    faults.clear()
+    monkeypatch.setattr(move_module.time, "monotonic", lambda: 160.1)
+    assert node.phase_timed_out() is True
+    assert faults == ["SCAN_IN_TIMEOUT"]
+
+
 def test_last_top_marker_true_then_silence_slows_and_holds_without_fault(
         monkeypatch):
     node = _individual_move_for_visual_fallback()

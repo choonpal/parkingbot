@@ -148,6 +148,10 @@ class IndividualMoveNode(Node):
         self.declare_parameter("max_yaw_rate", 0.15)
         self.declare_parameter("yaw_tolerance_deg", 3.0)
         self.declare_parameter("substate_timeout_s", 60.0)
+        # Rear waits motionless while Front clears the adjacent start lane.
+        # The measured 2.13 m staging route takes about 67 s at 0.035 m/s, so
+        # this coordination gate must not share the shorter generic timeout.
+        self.declare_parameter("wait_front_staged_timeout_s", 90.0)
         self.declare_parameter("target_timeout_s", 2.0)
         self.declare_parameter("mission_data_timeout_s", 5.0)
         self.declare_parameter("future_tolerance_s", 0.10)
@@ -241,6 +245,8 @@ class IndividualMoveNode(Node):
         self.yaw_tolerance = math.radians(
             float(gp("yaw_tolerance_deg").value))
         self.substate_timeout = float(gp("substate_timeout_s").value)
+        self.wait_front_staged_timeout = float(
+            gp("wait_front_staged_timeout_s").value)
         self.target_timeout = float(gp("target_timeout_s").value)
         self.mission_data_timeout = float(
             gp("mission_data_timeout_s").value)
@@ -464,6 +470,7 @@ class IndividualMoveNode(Node):
             "lateral_deviation_limit_m": self.deviation_limit,
             "center_tolerance_m": self.center_tolerance,
             "substate_timeout_s": self.substate_timeout,
+            "wait_front_staged_timeout_s": self.wait_front_staged_timeout,
             "target_timeout_s": self.target_timeout,
             "mission_data_timeout_s": self.mission_data_timeout,
             "odom_timeout_s": self.odom_timeout,
@@ -1006,7 +1013,11 @@ class IndividualMoveNode(Node):
         self.get_logger().error(f"[{self.role}] motion fault: {reason}")
 
     def phase_timed_out(self):
-        if time.monotonic() - self.phase_enter_time <= self.substate_timeout:
+        timeout = (
+            self.wait_front_staged_timeout
+            if self.phase == "WAIT_FRONT_STAGED"
+            else self.substate_timeout)
+        if time.monotonic() - self.phase_enter_time <= timeout:
             return False
         self.fault(f"{self.phase}_TIMEOUT")
         return True

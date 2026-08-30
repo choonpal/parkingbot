@@ -14,6 +14,7 @@ jobs:
           python-version: '3.10'
       - run: python -m pip install --upgrade pip pytest numpy pyyaml
       - run: python -m compileall ros2/cooperative_parking_robot
+
       - name: Run ROS-independent unit and source-policy regressions
         env:
           PYTHONPATH: ros2/cooperative_parking_robot
@@ -21,8 +22,18 @@ jobs:
           python -m pytest -q \
             ros2/cooperative_parking_robot/test/test_relative_sync_filter.py \
             ros2/cooperative_parking_robot/test/test_rigid_body_p0_policy.py \
-            ros2/cooperative_parking_robot/test/test_dual_cctv_merge.py \
-            ros2/cooperative_parking_robot/test/test_v9_scanin_complete.py \
             ros2/cooperative_parking_robot/test/test_encoder_relative_predictor.py \
             ros2/cooperative_parking_robot/test/test_fault_policy.py \
             ros2/cooperative_parking_robot/test/test_runtime_safety_regressions.py
+
+      - name: Run ROS-node regressions when rclpy is available
+        env:
+          PYTHONPATH: ros2/cooperative_parking_robot
+        run: |
+          if python -c "import rclpy" >/dev/null 2>&1; then
+            python -m pytest -q \
+              ros2/cooperative_parking_robot/test/test_dual_cctv_merge.py \
+              ros2/cooperative_parking_robot/test/test_v9_scanin_complete.py
+          else
+            echo "rclpy is not installed on the pure-Python runner; ROS-node tests are skipped."
+          fi

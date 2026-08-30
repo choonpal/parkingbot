@@ -10,7 +10,6 @@ import shlex
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 
 from parkingbot_ops import (
@@ -224,6 +223,141 @@ def print_observer_failure(observer):
         print("  " + detail.replace("\n", "\n  "))
 
 
+STAGE_FRESH_MS = 2500.0
+STAGE_TIMEOUT_S = {"jetson": 60.0, "rear": 60.0, "front": 75.0}
+STAGE_STABLE_S = {"jetson": 3.0, "rear": 3.0, "front": 5.0}
+
+
+def _fresh(data, key, limit_ms=STAGE_FRESH_MS):
+    age = data.get("topic_ages_ms", {}).get(key)
+    return age is not None and 0.0 <= float(age) <= limit_ms
+
+
+def _counter_baseline(data, role):
+    diag = data.get("topics", {}).get(f"{role}_hb")
+    if not isinstance(diag, dict):
+        return None
+    return {
+        "ack_count": int(diag.get("ack_count", 0)),
+        "velocity_tx_count": int(diag.get("velocity_tx_count", 0)),
+        "velocity_deadline_miss_count": int(
+            diag.get("velocity_deadline_miss_count", 0)),
+        "uart_write_failure_count": int(
+            diag.get("uart_write_failure_count", 0)),
+    }
+
+
+def machine_stage_conditions(role, data, process, baseline=None):
+    """Current-value stage gates; lifetime maxima are intentionally ignored."""
+    values = data.get("topics", {})
+    running = process.get("state") == "RUNNING"
+    if role == "jetson":
+        fleet = values.get("fleet")
+        merge = values.get("merge")
+        cameras = merge.get("cameras", {}) if isinstance(merge, dict) else {}
+        return {
+            "Jetson process alive": running,
+            "fleet/state fresh": isinstance(fleet, dict) and _fresh(data, "fleet"),
+            "CCTV merge fresh": isinstance(merge, dict) and _fresh(data, "merge"),
+            "cam0 fresh": bool(cameras.get("cam0", {}).get("alive")),
+            "cam2 fresh": bool(cameras.get("cam2", {}).get("alive")),
+            "parking map fresh": bool(values.get("map_stream")) and _fresh(
+                data, "map_stream"),
+        }
+
+    diag = values.get(f"{role}_hb")
+    status = values.get(f"{role}_hw_status")
+    fault = values.get(f"{role}_fault")
+    state = values.get(f"{role}_state")
+    diag_ok = isinstance(diag, dict) and _fresh(data, f"{role}_hb")
+    fatal = (state == "FAULT" or
+             isinstance(status, str) and status.startswith(("ERR,", "ESTOP")) or
+             fault not in (None, "", "OK", "-"))
+    conditions = {
+        f"{role.title()} process alive": running,
+        f"{role.title()} robot_state fresh": _fresh(data, f"{role}_state"),
+        f"{role.title()} startup-safe state": state == "IDLE",
+        f"{role.title()} hardware_ready": (
+            values.get(f"{role}_hw") is True and _fresh(data, f"{role}_hw")),
+        f"{role.title()} odom fresh": (
+            bool(values.get(f"{role}_odom")) and _fresh(data, f"{role}_odom")),
+        f"{role.title()} diagnostics fresh": diag_ok,
+        f"{role.title()} communication stable": (
+            diag_ok and not bool(diag.get("recovering", True))),
+        f"{role.title()} no fatal fault": not fatal,
+    }
+    if baseline is None or not diag_ok:
+        conditions[f"{role.title()} counter baseline"] = False
+        return conditions
+    conditions[f"{role.title()} no new UART write failure"] = (
+        int(diag.get("uart_write_failure_count", 0)) ==
+        baseline["uart_write_failure_count"])
+    if role == "front":
+        conditions.update({
+            "Front heartbeat ACK progressing": (
+                int(diag.get("ack_count", 0)) > baseline["ack_count"]),
+            "Front heartbeat recent": (
+                diag.get("last_heartbeat_ack_age_ms") is not None and
+                float(diag["last_heartbeat_ack_age_ms"]) < 400.0),
+            "Front command TX progressing": (
+                int(diag.get("velocity_tx_count", 0)) >
+                baseline["velocity_tx_count"]),
+            "Front no new command deadline miss": (
+                int(diag.get("velocity_deadline_miss_count", 0)) ==
+                baseline["velocity_deadline_miss_count"]),
+        })
+    return conditions
+
+
+def wait_machine_stage(role, config, observer_samples, runner, processes,
+                       *, clock=time.monotonic):
+    """Require continuous readiness without sleeping or recreating DDS."""
+    timeout_s = float(config.get(
+        f"{role.upper()}_STAGE_TIMEOUT_S", STAGE_TIMEOUT_S[role]))
+    stable_s = float(config.get(
+        f"{role.upper()}_STAGE_STABLE_S", STAGE_STABLE_S[role]))
+    if timeout_s <= 0.0 or stable_s <= 0.0 or stable_s >= timeout_s:
+        print(f"[{role.upper()} STARTUP FAILED] invalid stage timing")
+        return False, None, {"valid stage timing": False}
+    deadline = clock() + timeout_s
+    stable_since = None
+    baseline = None
+    previous = {}
+    last_conditions = {}
+    for observer in observer_samples:
+        now = clock()
+        current = process_status(runner, config, role)
+        processes[role] = current
+        data = snapshot(config, observer_result=observer)
+        data["processes"] = dict(processes)
+        if role != "jetson" and baseline is None:
+            baseline = _counter_baseline(data, role)
+        conditions = machine_stage_conditions(
+            role, data, current, baseline)
+        last_conditions = conditions
+        for label, ok in conditions.items():
+            rendered = "OK" if ok else "WAIT"
+            if previous.get(label) != rendered:
+                print(f"[{rendered}] {label}", flush=True)
+        previous = {label: ("OK" if ok else "WAIT")
+                    for label, ok in conditions.items()}
+        if conditions and all(conditions.values()):
+            if stable_since is None:
+                stable_since = now
+            if now - stable_since >= stable_s:
+                print(f"[{role.upper()} STAGE OK] stable {stable_s:.1f}s")
+                return True, data, conditions
+        else:
+            stable_since = None
+        if now >= deadline:
+            break
+    print(f"[{role.upper()} STARTUP FAILED]")
+    for label, ok in last_conditions.items():
+        if not ok:
+            print(f"[FAIL] {label}")
+    return False, None, last_conditions
+
+
 def incident_metadata(role, reason, data, process=None, config=None):
     values = data.get("topics", {})
     process = process or {}
@@ -243,6 +377,105 @@ def incident_metadata(role, reason, data, process=None, config=None):
             process.get("launch_command") or
             (launch_command(config, role) if config and role else None)),
     }
+
+
+def launch_machine(args, config, runner, role, run_id, head, processes):
+    """Start one machine exactly once; readiness is checked by the caller."""
+    remote_head = remote_run(
+        runner, role_host(config, role),
+        workspace_revision_command(role_workspace(config, role)),
+        timeout=7).stdout.strip()
+    if remote_head and head and remote_head != head:
+        print(
+            f"[WARN] {role.title()} code revision differs\n"
+            f"  Controller: {head}\n  {role.title()}: {remote_head}")
+    launch = launch_command(config, role)
+    log_name = ("cctv_server_dual.log" if role == "jetson"
+                else f"{role}_robot.log")
+    remote_dir = f"$HOME/.ros/parkingbot_logs/{run_id}/{role}"
+    command = (
+        f"mkdir -p {remote_dir} $HOME/.ros/parkingbot_logs/"
+        f"{run_id}/incidents && "
+        f"ln -sfn {run_id} $HOME/.ros/parkingbot_logs/latest && "
+        f"({manifest(config, role, launch)}) > {remote_dir}/run_manifest.txt && "
+        + stack_launch_command(
+            ros_prefix(config, role), launch, remote_dir, log_name))
+    print(f"[START] {role.title()} production stack")
+    result = remote_run(runner, role_host(config, role), command, timeout=12)
+    if result.returncode:
+        print(
+            f"[FAIL] {role.title()} start: "
+            f"{(result.stderr or result.stdout).strip()}")
+        return False
+    status = process_status(runner, config, role)
+    processes[role] = status
+    if status["state"] != "RUNNING":
+        print(
+            f"[FAIL] {role.title()} stack did not stay alive: "
+            f"{status['state']} returncode={status.get('returncode')}")
+        return False
+    print(f"[PROCESS OK] {role.title()} stack pid={status['pid']}")
+    if (role == "rear" and
+            config["REAR_ENABLE_INTERNAL_CAMERA"].lower() == "false"):
+        camera_log = (
+            f"$HOME/.ros/parkingbot_logs/{run_id}/rear/rear_camera.log")
+        camera_command = (
+            ros_prefix(config, "rear") + " && " +
+            config["REAR_EXTERNAL_CAMERA_COMMAND"] +
+            f" 2>&1 | tee -a {camera_log}")
+        result = remote_run(
+            runner, role_host(config, "rear"),
+            f"tmux new-window -t {SESSION} -n rear-camera "
+            f"{shlex.quote(camera_command)}", timeout=10)
+        if result.returncode:
+            print("[FAIL] Rear external camera start")
+            return False
+    return True
+
+
+def wait_final_readiness(config, observer_samples, runner, processes,
+                         *, clock=time.monotonic):
+    """Preserve the existing whole-system distributed readiness contract."""
+    started_at = clock()
+    grace_until = started_at + 3.0
+    deadline = started_at + 120.0
+    previous = {}
+    conditions = {}
+    data = None
+    for observer in observer_samples:
+        now = clock()
+        for role in ROLES:
+            processes[role] = process_status(runner, config, role)
+        process_failure = startup_process_failure(processes)
+        if process_failure:
+            role, current = process_failure
+            print(
+                f"[PROCESS EXITED] {role.title()} stack "
+                f"state={current['state']} exit={current.get('returncode')}")
+            return False, None, conditions
+        data = snapshot(config, observer_result=observer)
+        data["processes"] = dict(processes)
+        previous, conditions = report_startup_progress(data, previous)
+        fatal = startup_fatal_faults(data)
+        if fatal and now >= grace_until:
+            for reason in fatal:
+                print(f"[FAIL] {reason}")
+            return False, data, conditions
+        if conditions and all(conditions.values()):
+            return True, data, conditions
+        if now >= deadline:
+            break
+    return False, data, conditions
+
+
+def run_machine_stages(launch_one, wait_one):
+    """Launch the next machine only after the prior stable gate passes."""
+    for role in ROLES:
+        if not launch_one(role):
+            return False, role, "launch"
+        if not wait_one(role):
+            return False, role, "readiness"
+    return True, None, None
 
 
 def start(args):
@@ -304,145 +537,45 @@ def start(args):
     head = subprocess.run(
         ["git", "-C", str(repo_root(config)), "rev-parse", "HEAD"],
         text=True, capture_output=True).stdout.strip()
-    for role in ROLES:
-        remote_head = remote_run(
-            runner, role_host(config, role),
-            workspace_revision_command(role_workspace(config, role)),
-            timeout=7).stdout.strip()
-        if remote_head and head and remote_head != head:
-            print(f"[WARN] {role.title()} code revision differs\n  Controller: {head}\n  {role.title()}: {remote_head}")
-        launch = launch_command(config, role)
-        log_name = "cctv_server_dual.log" if role == "jetson" else f"{role}_robot.log"
-        remote_dir = f"$HOME/.ros/parkingbot_logs/{run_id}/{role}"
-        prefix = ros_prefix(config, role)
-        command = (
-            f"mkdir -p {remote_dir} $HOME/.ros/parkingbot_logs/{run_id}/incidents && "
-            f"ln -sfn {run_id} $HOME/.ros/parkingbot_logs/latest && "
-            f"({manifest(config, role, launch)}) > {remote_dir}/run_manifest.txt && "
-            + stack_launch_command(prefix, launch, remote_dir, log_name))
-        print(f"[START] {role.title()} production stack")
-        result = remote_run(runner, role_host(config, role), command, timeout=12)
-        if result.returncode:
-            print(f"[FAIL] {role.title()} start: {(result.stderr or result.stdout).strip()}")
-            stop_sessions(runner, config, publish_estop=False)
-            return 1
-        status = process_status(runner, config, role)
-        processes[role] = status
-        if status["state"] != "RUNNING":
-            print(
-                f"[FAIL] {role.title()} stack did not stay alive: "
-                f"{status['state']} returncode={status.get('returncode')}")
-            stop_sessions(runner, config, publish_estop=False)
-            return 1
-        print(f"[PROCESS OK] {role.title()} stack pid={status['pid']}")
-        if (role == "rear" and
-                config["REAR_ENABLE_INTERNAL_CAMERA"].lower() == "false"):
-            camera_log = f"$HOME/.ros/parkingbot_logs/{run_id}/rear/rear_camera.log"
-            camera_command = (
-                ros_prefix(config, "rear") + " && " +
-                config["REAR_EXTERNAL_CAMERA_COMMAND"] +
-                f" 2>&1 | tee -a {camera_log}")
-            result = remote_run(
-                runner, role_host(config, "rear"),
-                f"tmux new-window -t {SESSION} -n rear-camera "
-                f"{shlex.quote(camera_command)}", timeout=10)
-            if result.returncode:
-                print("[FAIL] Rear external camera start")
-                stop_sessions(runner, config, publish_estop=False)
-                return 1
-    (run_dir / "run_manifest.txt").write_text(
-        f"run_id={run_id}\ncontroller_commit={head}\nconfig={config_path(args)}\n")
-    (run_dir / "state" / "processes.json").write_text(
-        json.dumps(processes, indent=2, ensure_ascii=False) + "\n")
-    print("\nWaiting for ROS graph...")
-    started_at = time.monotonic()
-    grace_until = started_at + 3.0
-    deadline = started_at + 120.0
-    data = None
-    previous = {}
-    conditions = {}
-    observer_command = observer_argv(config, [
-        config.get("OBSERVER_PYTHON", "/usr/bin/python3"),
-        str(observer_helper_path()), "--mode", "startup", "--timeout", "120",
-        "--stream-interval", "1.0",
-    ])
-    observer_stderr = tempfile.TemporaryFile(mode="w+t")
-    observer_process = subprocess.Popen(
-        observer_command, text=True, stdout=subprocess.PIPE,
-        stderr=observer_stderr, bufsize=1)
-    selector = selectors.DefaultSelector()
-    selector.register(observer_process.stdout, selectors.EVENT_READ)
-    observer_announced = False
-    next_process_probe = started_at
+    observer_samples = persistent_observer_samples(
+        config, mode="full", interval=0.5)
     try:
-        while time.monotonic() < deadline:
-            now = time.monotonic()
-            if now >= next_process_probe:
-                next_process_probe = now + 2.0
-                for role in ROLES:
-                    current = process_status(runner, config, role)
-                    processes[role] = current
-                process_failure = startup_process_failure(processes)
-                if process_failure:
-                    role, current = process_failure
-                    print(
-                        f"[PROCESS EXITED] {role.title()} stack "
-                        f"state={current['state']} "
-                        f"exit={current.get('returncode')}")
-                    print(f"Run: robot_logs {role}")
-                    return 1
-            events = selector.select(timeout=1.0)
-            if events:
-                line = observer_process.stdout.readline()
-                if line:
-                    observer = parse_observer_output(line)
-                    if not observer["observer_ok"]:
-                        print_observer_failure(observer)
-                        return 1
-                    if not observer_announced:
-                        print("[OBSERVER OK] ROS diagnostic observer active")
-                        observer_announced = True
-                    data = snapshot(config, observer_result=observer)
-                    data["processes"] = processes
-                    previous, conditions = report_startup_progress(data, previous)
-                    fatal = startup_fatal_faults(data)
-                    if fatal and time.monotonic() >= grace_until:
-                        for reason in fatal:
-                            print(f"[FAIL] {reason}")
-                        role = "front" if fatal[0].startswith("FRONT") else "rear"
-                        reason = f"{role.upper()}_STARTUP_HARDWARE_FAULT"
-                        incident_snapshot(
-                            run_dir, reason, data, config, runner,
-                            incident_metadata(
-                                role, reason, data, processes.get(role), config))
-                        print(
-                            "Startup failed fast; processes remain available "
-                            "for robot_logs.")
-                        return 1
-                    if conditions and all(conditions.values()):
-                        break
-            if observer_process.poll() is not None:
-                observer_stderr.seek(0)
-                stderr = observer_stderr.read()
-                if not (conditions and all(conditions.values())):
-                    observer = parse_observer_output(
-                        "", observer_process.returncode, stderr)
-                    print_observer_failure(observer)
-                    return 1
-    finally:
-        selector.close()
-        if observer_process.poll() is None:
-            observer_process.terminate()
-            try:
-                observer_process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                observer_process.kill()
-                observer_process.wait()
-        observer_stderr.close()
-    if data is None:
-        print("[OBSERVER FAIL] observer timeout after 120 seconds; no progress received")
+        def launch_one(role):
+            return launch_machine(
+                args, config, runner, role, run_id, head, processes)
+
+        def wait_one(role):
+            stage_ok, _, _ = wait_machine_stage(
+                role, config, observer_samples, runner, processes)
+            if not stage_ok:
+                print(
+                    f"{role.title()} stage failed; later machines were not "
+                    "started. Started processes remain available for logs.")
+            return stage_ok
+
+        staged_ok, failed_role, failure_phase = run_machine_stages(
+            launch_one, wait_one)
+        if not staged_ok:
+            if failure_phase == "launch":
+                stop_sessions(runner, config, publish_estop=False)
+            return 1
+        (run_dir / "run_manifest.txt").write_text(
+            f"run_id={run_id}\ncontroller_commit={head}\n"
+            f"config={config_path(args)}\n")
+        (run_dir / "state" / "processes.json").write_text(
+            json.dumps(processes, indent=2, ensure_ascii=False) + "\n")
+        print("\nWaiting for final whole-system ROS readiness...")
+        final_ok, data, conditions = wait_final_readiness(
+            config, observer_samples, runner, processes)
+    except (RuntimeError, OSError) as exc:
+        print(f"[OBSERVER FAIL] {exc}")
         return 1
-    if not conditions or not all(conditions.values()):
+    finally:
+        observer_samples.close()
+    if data is None:
+        print("[OBSERVER FAIL] final readiness received no data")
+        return 1
+    if not final_ok or not conditions or not all(conditions.values()):
         for label, ok in conditions.items():
             if not ok:
                 print(f"[FAIL] {label}")
@@ -502,15 +635,78 @@ def state(args):
     hosts = {}
     runner = Runner()
     hosts = {role: ("ONLINE" if reachable(runner, config, role) else "OFFLINE") for role in ROLES}
-    while True:
+    if args.watch:
+        try:
+            for observer in persistent_observer_samples(
+                    config, mode="full", interval=1.0):
+                data = snapshot(
+                    config, hosts=hosts, observer_result=observer)
+                output = (json.dumps(data, ensure_ascii=False, indent=2)
+                          if args.json else format_snapshot(data))
+                if not args.json:
+                    print("\033[2J\033[H", end="")
+                print(output, flush=True)
+        except KeyboardInterrupt:
+            return 130
+        return 1
+    else:
         data = snapshot(config, hosts=hosts)
         output = json.dumps(data, ensure_ascii=False, indent=2) if args.json else format_snapshot(data)
-        if args.watch and not args.json:
-            print("\033[2J\033[H", end="")
         print(output, flush=True)
-        if not args.watch:
-            return 0 if not data["blockers"] else 1
-        time.sleep(1.0)
+        return 0 if not data["blockers"] else 1
+
+
+def persistent_observer_samples(config, *, mode, interval):
+    """Yield updates from exactly one long-lived rclpy/DDS participant."""
+    command = observer_argv(config, [
+        config.get("OBSERVER_PYTHON", "/usr/bin/python3"),
+        str(observer_helper_path()), "--mode", mode, "--timeout", "86400",
+        "--stream-interval", str(float(interval)),
+    ])
+    process = subprocess.Popen(
+        command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        bufsize=1)
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ)
+    last_observer = {
+        "observer_ok": True, "topics": {}, "ages_ms": {},
+        "complete": False,
+    }
+    last_received_at = time.monotonic()
+    try:
+        while True:
+            events = selector.select(timeout=1.0)
+            if events:
+                line = process.stdout.readline()
+                if line:
+                    observer = parse_observer_output(line)
+                    if not observer["observer_ok"]:
+                        raise RuntimeError(observer["message"])
+                    last_observer = observer
+                    last_received_at = time.monotonic()
+                    yield observer
+                    continue
+            if process.poll() is not None:
+                stderr = process.stderr.read()
+                raise RuntimeError(
+                    f"persistent observer exited rc={process.returncode}: "
+                    f"{stderr.strip()}")
+            elapsed_ms = (time.monotonic() - last_received_at) * 1000.0
+            stale = dict(last_observer)
+            stale["ages_ms"] = {
+                key: float(age) + elapsed_ms
+                for key, age in last_observer.get("ages_ms", {}).items()
+            }
+            yield stale
+    finally:
+        selector.close()
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
 
 
 def logs(args):
@@ -652,51 +848,70 @@ def monitor(args):
     runner = Runner()
     last_faults = set()
     grace_until = time.monotonic() + 15.0
+    restart_count = 0
+    backoff_s = 1.0
     while True:
-        data = snapshot(config, timeout=1.2)
-        processes = {
-            role: process_status(runner, config, role) for role in ROLES}
-        data["processes"] = processes
-        with (run_dir / "state" / "state_monitor.jsonl").open("a") as stream:
-            stream.write(json.dumps(data, ensure_ascii=False) + "\n")
-        faults = set(data["blockers"])
-        process_incidents = {}
-        for role, status in processes.items():
-            # UNKNOWN covers SSH timeout/unreachable and SESSION_MISSING covers
-            # an externally removed tmux session. Neither proves a process
-            # crash. remain-on-exit makes EXITED authoritative.
-            if status["state"] == "EXITED":
-                faults.add(f"{role.upper()} PROCESS EXITED")
-                process_incidents[f"{role.upper()} PROCESS EXITED"] = (
-                    role, status)
-        for reason in sorted(faults - last_faults):
-            if (time.monotonic() >= grace_until and any(
-                    word in reason for word in
-                    ("FAULT", "SYNC:", "HARDWARE", "PROCESS EXITED"))):
-                if reason in process_incidents:
-                    role, status = process_incidents[reason]
-                elif reason.startswith("FRONT"):
-                    role, status = "front", processes["front"]
-                elif reason.startswith("REAR"):
-                    role, status = "rear", processes["rear"]
-                else:
-                    role, status = None, None
-                target = incident_snapshot(
-                    run_dir, reason, data, config, runner,
-                    incident_metadata(role, reason, data, status, config))
-                for role in ROLES:
-                    name = ("cctv_server_dual.log" if role == "jetson"
-                            else f"{role}_robot.log")
-                    remote_path = f"$HOME/.ros/parkingbot_logs/{run_dir.name}/{role}/{name}"
-                    result = remote_run(
-                        runner, role_host(config, role),
-                        f"tail -n 200 {remote_path}", timeout=8)
-                    (target / f"{role}_tail.log").write_text(
-                        result.stdout + result.stderr)
-        # Faults first observed during discovery grace must still create one
-        # incident when grace expires; do not mark them handled prematurely.
-        last_faults = faults if time.monotonic() >= grace_until else set()
-        time.sleep(2.0)
+        try:
+            for observer in persistent_observer_samples(
+                    config, mode="full", interval=2.0):
+                data = snapshot(config, observer_result=observer)
+                processes = {
+                    role: process_status(runner, config, role) for role in ROLES}
+                data["processes"] = processes
+                with (run_dir / "state" / "state_monitor.jsonl").open("a") as stream:
+                    stream.write(json.dumps(data, ensure_ascii=False) + "\n")
+                faults = set(data["blockers"])
+                process_incidents = {}
+                for role, status in processes.items():
+                    # Only EXITED is authoritative; observer failures do not
+                    # become robot safety incidents.
+                    if status["state"] == "EXITED":
+                        reason = f"{role.upper()} PROCESS EXITED"
+                        faults.add(reason)
+                        process_incidents[reason] = (role, status)
+                for reason in sorted(faults - last_faults):
+                    if (time.monotonic() >= grace_until and any(
+                            word in reason for word in
+                            ("FAULT", "SYNC:", "HARDWARE", "PROCESS EXITED"))):
+                        if reason in process_incidents:
+                            role, status = process_incidents[reason]
+                        elif reason.startswith("FRONT"):
+                            role, status = "front", processes["front"]
+                        elif reason.startswith("REAR"):
+                            role, status = "rear", processes["rear"]
+                        else:
+                            role, status = None, None
+                        target = incident_snapshot(
+                            run_dir, reason, data, config, runner,
+                            incident_metadata(
+                                role, reason, data, status, config))
+                        for log_role in ROLES:
+                            name = ("cctv_server_dual.log"
+                                    if log_role == "jetson"
+                                    else f"{log_role}_robot.log")
+                            remote_path = (
+                                f"$HOME/.ros/parkingbot_logs/{run_dir.name}/"
+                                f"{log_role}/{name}")
+                            result = remote_run(
+                                runner, role_host(config, log_role),
+                                f"tail -n 200 {remote_path}", timeout=8)
+                            (target / f"{log_role}_tail.log").write_text(
+                                result.stdout + result.stderr)
+                last_faults = (
+                    faults if time.monotonic() >= grace_until else set())
+            return 0
+        except (RuntimeError, OSError) as exc:
+            restart_count += 1
+            with (run_dir / "state" / "state_monitor.jsonl").open("a") as stream:
+                stream.write(json.dumps({
+                    "observer_error": str(exc),
+                    "observer_restart_count": restart_count,
+                    "timestamp": time.time(),
+                }, ensure_ascii=False) + "\n")
+            if restart_count >= 5:
+                return 1
+            time.sleep(backoff_s)
+            backoff_s = min(30.0, backoff_s * 2.0)
 
 
 def main():

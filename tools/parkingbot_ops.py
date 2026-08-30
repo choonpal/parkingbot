@@ -56,6 +56,8 @@ TOPICS = {
     "rear_marker": "/rear/cctv_marker_visible",
     "id0_marker": "/sync/marker_visible",
     "sync": "/sync/error_state",
+    "front_hb": "/front/heartbeat_diagnostics",
+    "rear_hb": "/rear/heartbeat_diagnostics",
 }
 PRESENCE_TOPICS = {
     "front_odom": "/front/odom",
@@ -637,6 +639,7 @@ def parse_observer_output(stdout, returncode=0, stderr="", timed_out=False):
             "observer_returncode": returncode, "observer_stderr": "",
             "observer_stdout": "", "observer_timed_out": False,
             "topics": payload["topics"],
+            "ages_ms": payload.get("ages_ms", {}),
             "complete": bool(payload.get("complete", False)),
         }
     return {
@@ -684,7 +687,8 @@ def snapshot(config, runner=None, timeout=1.2, hosts=None, mode="full",
         for key in values:
             if key in sampled:
                 values[key] = sampled[key]
-    for key in ("fleet", "target_status", "vehicle_spec", "merge", "front_loc", "rear_loc", "sync"):
+    for key in ("fleet", "target_status", "vehicle_spec", "merge",
+                "front_loc", "rear_loc", "sync", "front_hb", "rear_hb"):
         if isinstance(values[key], str):
             try:
                 values[key] = json.loads(values[key])
@@ -738,6 +742,7 @@ def snapshot(config, runner=None, timeout=1.2, hosts=None, mode="full",
         "blockers": blockers, "overall": "READY FOR PARK" if not blockers else "NOT READY",
         "observer": {key: value for key, value in observer.items()
                      if key != "topics"},
+        "topic_ages_ms": dict(observer.get("ages_ms", {})),
     }
     return data
 

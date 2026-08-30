@@ -87,26 +87,34 @@ class UartTxScheduler:
     def pop_next(self):
         """Return the next item; P1 replaceable slots use earliest deadline."""
         with self._condition:
-            if self._emergency:
-                return self._emergency.popleft()
-            realtime = [item for item in self._slots.values()
-                        if item.priority == P1_REALTIME]
-            if realtime:
-                selected = min(realtime,
-                               key=lambda item: (item.deadline,
-                                                 item.enqueued_at))
+            return self._pop_next_locked()
+
+    def _has_pending_locked(self):
+        return (bool(self._emergency) or bool(self._slots) or
+                any(self._queues[priority] for priority in self._queues))
+
+    def _pop_next_locked(self):
+        """Dequeue while the caller owns ``_condition``."""
+        if self._emergency:
+            return self._emergency.popleft()
+        realtime = [item for item in self._slots.values()
+                    if item.priority == P1_REALTIME]
+        if realtime:
+            selected = min(realtime,
+                           key=lambda item: (item.deadline,
+                                             item.enqueued_at))
+            del self._slots[selected.kind]
+            return selected
+        for priority in range(P2_HANDSHAKE, P4_MAINTENANCE + 1):
+            slots = [item for item in self._slots.values()
+                     if item.priority == priority]
+            if slots:
+                selected = min(slots, key=lambda item: item.enqueued_at)
                 del self._slots[selected.kind]
                 return selected
-            for priority in range(P2_HANDSHAKE, P4_MAINTENANCE + 1):
-                slots = [item for item in self._slots.values()
-                         if item.priority == priority]
-                if slots:
-                    selected = min(slots, key=lambda item: item.enqueued_at)
-                    del self._slots[selected.kind]
-                    return selected
-                if self._queues[priority]:
-                    return self._queues[priority].popleft()
-            return None
+            if self._queues[priority]:
+                return self._queues[priority].popleft()
+        return None
 
     def pending_count(self, kind):
         with self._condition:
@@ -115,6 +123,10 @@ class UartTxScheduler:
             count += sum(item.kind == kind for queue in self._queues.values()
                          for item in queue)
             return count
+
+    def is_running(self):
+        with self._condition:
+            return self._thread is not None and self._thread.is_alive()
 
     def stop(self, timeout=1.0, *, drain=True):
         with self._condition:
@@ -136,13 +148,12 @@ class UartTxScheduler:
         current = threading.current_thread()
         try:
             while True:
-                item = self.pop_next()
-                if item is None:
-                    with self._condition:
-                        if self._stopping:
-                            return
-                        self._condition.wait(timeout=0.05)
-                    continue
+                with self._condition:
+                    self._condition.wait_for(
+                        lambda: self._stopping or self._has_pending_locked())
+                    if self._stopping and not self._has_pending_locked():
+                        return
+                    item = self._pop_next_locked()
                 serial_handle = self._serial_getter()
                 started = self._clock()
                 error = None

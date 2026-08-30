@@ -149,6 +149,150 @@ def test_observer_process_failures_are_not_reported_as_missing_topics():
     assert malformed["observer_error_type"] == "malformed_output"
 
 
+def test_watch_and_monitor_use_one_persistent_observer_process():
+    source = Path(__file__).with_name("robotctl_core").read_text()
+    helper = source[source.index('def persistent_observer_samples'):
+                    source.index('\ndef logs',
+                                 source.index('def persistent_observer_samples'))]
+    state = source[source.index('def state('):
+                   source.index('def persistent_observer_samples')]
+    monitor = source[source.index('def monitor('):source.index('\ndef main(')]
+    assert helper.count('subprocess.Popen(') == 1
+    assert 'for observer in persistent_observer_samples(' in state
+    assert 'data = snapshot(config, timeout=1.2)' not in monitor
+    assert 'for observer in persistent_observer_samples(' in monitor
+    assert 'restart_count >= 5' in monitor
+
+
+def _robotctl_core():
+    return runpy.run_path(str(Path(__file__).with_name("robotctl_core")))
+
+
+def test_machine_stages_never_launch_later_role_before_prior_readiness():
+    core = _robotctl_core()
+    launched = []
+
+    def launch(role):
+        launched.append(role)
+        return True
+
+    ok, role, phase = core["run_machine_stages"](
+        launch, lambda role: role != "jetson")
+    assert (ok, role, phase) == (False, "jetson", "readiness")
+    assert launched == ["jetson"]
+
+    launched.clear()
+    ok, role, phase = core["run_machine_stages"](
+        launch, lambda role: role != "rear")
+    assert (ok, role, phase) == (False, "rear", "readiness")
+    assert launched == ["jetson", "rear"]
+
+
+def test_all_machine_stages_launch_each_role_exactly_once():
+    core = _robotctl_core()
+    launched = []
+    waited = []
+    result = core["run_machine_stages"](
+        lambda role: launched.append(role) or True,
+        lambda role: waited.append(role) or True)
+    assert result == (True, None, None)
+    assert launched == ["jetson", "rear", "front"]
+    assert waited == launched
+
+
+def test_jetson_continuous_stability_resets_when_condition_drops():
+    core = _robotctl_core()
+
+    class Clock:
+        now = 0.0
+
+        def __call__(self):
+            return self.now
+
+    clock = Clock()
+    core["wait_machine_stage"].__globals__["process_status"] = (
+        lambda *_args: {"state": "RUNNING", "pid": 1})
+    topics = {key: None for key in ops.TOPICS}
+    topics.update({key: False for key in ops.PRESENCE_TOPICS})
+    topics.update({
+        "fleet": json.dumps({"state": "IDLE"}),
+        "merge": json.dumps({
+            "cameras": {"cam0": {"alive": True},
+                        "cam2": {"alive": True}}}),
+        "map_stream": True,
+    })
+
+    def samples():
+        for at, ready in ((0.0, True), (2.0, True), (2.1, False),
+                          (3.0, True), (4.1, True)):
+            clock.now = at
+            current = dict(topics)
+            current["map_stream"] = ready
+            yield {
+                "observer_ok": True, "topics": current,
+                "ages_ms": {"fleet": 0.0, "merge": 0.0,
+                            "map_stream": 0.0},
+            }
+
+    config = valid_config()
+    config.update({
+        "JETSON_STAGE_TIMEOUT_S": "4.0",
+        "JETSON_STAGE_STABLE_S": "3.0",
+    })
+    ok, _, _ = core["wait_machine_stage"](
+        "jetson", config, samples(), object(), {}, clock=clock)
+    assert ok is False
+
+
+def test_front_stage_uses_counter_deltas_not_lifetime_maxima():
+    core = _robotctl_core()
+    topics = {key: None for key in ops.TOPICS}
+    topics.update({key: False for key in ops.PRESENCE_TOPICS})
+    topics.update({
+        "front_state": "IDLE", "front_hw": True,
+        "front_odom": True, "front_fault": None,
+        "front_hw_status": "INFO,READY",
+        "front_hb": {
+            "recovering": False, "ack_count": 101,
+            "velocity_tx_count": 201,
+            "velocity_deadline_miss_count": 7,
+            "uart_write_failure_count": 3,
+            "last_heartbeat_ack_age_ms": 80.0,
+            "max_tx_gap_ms": 9000.0,
+            "velocity_max_tx_gap_ms": 8000.0,
+        },
+    })
+    data = {
+        "topics": topics,
+        "topic_ages_ms": {
+            "front_state": 10.0, "front_hw": 10.0,
+            "front_odom": 10.0, "front_hb": 10.0,
+        },
+    }
+    baseline = {
+        "ack_count": 100, "velocity_tx_count": 200,
+        "velocity_deadline_miss_count": 7,
+        "uart_write_failure_count": 3,
+    }
+    conditions = core["machine_stage_conditions"](
+        "front", data, {"state": "RUNNING"}, baseline)
+    assert all(conditions.values())
+
+    topics["front_hb"]["velocity_deadline_miss_count"] = 8
+    conditions = core["machine_stage_conditions"](
+        "front", data, {"state": "RUNNING"}, baseline)
+    assert conditions["Front no new command deadline miss"] is False
+
+
+def test_start_reuses_one_observer_and_runs_final_readiness_once():
+    source = Path(__file__).with_name("robotctl_core").read_text()
+    start = source[source.index('def start('):source.index('\ndef stop_sessions')]
+    assert start.count('persistent_observer_samples(') == 1
+    assert start.count('wait_final_readiness(') == 1
+    assert start.count('run_machine_stages(') == 1
+    assert 'observer_samples.close()' in start
+
+
 def test_snapshot_preserves_observer_failure_in_status():
     observer = ops.parse_observer_output(
         "", returncode=1, stderr="rclpy import failed")

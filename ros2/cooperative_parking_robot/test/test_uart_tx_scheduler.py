@@ -71,6 +71,54 @@ def test_latest_velocity_wins_without_backlog():
     assert tx.pop_next() is None
 
 
+def test_writer_wait_predicate_and_dequeue_share_the_condition_lock():
+    source = (Path(__file__).resolve().parents[1] /
+              'cooperative_parking_robot/uart_tx_scheduler.py').read_text()
+    run = source[source.index('    def _run(self):'):]
+    assert 'self._condition.wait_for(' in run
+    assert 'self._stopping or self._has_pending_locked()' in run
+    assert 'item = self._pop_next_locked()' in run
+    assert 'wait(timeout=0.05)' not in run
+
+
+def test_stop_wakes_idle_writer_and_joins_cleanly():
+    tx = UartTxScheduler(lambda: None)
+    tx.start()
+    worker = tx._thread
+    tx.stop(drain=False)
+    assert not worker.is_alive()
+    assert tx.is_running() is False
+
+
+def test_reconnect_requires_old_writer_exit_before_new_handle_install():
+    source = (Path(__file__).resolve().parents[1] /
+              'cooperative_parking_robot/stm32_bridge_node.py').read_text()
+    reconnect = source[source.index('    def serial_reconnect_tick(self):'):
+                       source.index('    def publish_motor_diagnostics',
+                                    source.index(
+                                        '    def serial_reconnect_tick(self):'))]
+    stop = reconnect.index('self.tx_scheduler.stop(drain=False)')
+    verify = reconnect.index('if self.tx_scheduler.is_running():')
+    install = reconnect.index('self._prepare_serial_session(handle)')
+    start = reconnect.index('self.tx_scheduler.start()')
+    assert stop < verify < install < start
+    assert "handle.close()" in reconnect[verify:install]
+
+
+def test_repeated_writer_restart_has_no_stale_threads():
+    tx = UartTxScheduler(lambda: None)
+    previous = []
+    for _ in range(10):
+        tx.start()
+        worker = tx._thread
+        assert tx.is_running()
+        assert worker not in previous
+        tx.stop(drain=False)
+        assert not worker.is_alive()
+        assert not tx.is_running()
+        previous.append(worker)
+
+
 def test_writer_cannot_restart_until_self_stopped_worker_has_exited():
     callback_entered = threading.Event()
     callback_release = threading.Event()
@@ -129,3 +177,14 @@ def test_firmware_keeps_fast_motor_watchdog_and_new_session_recovery():
     assert 'Robot_StopMotorsImmediate();' in source
     assert 'strcmp(g_robot.session_id, session_id) == 0' in source
     assert 'g_robot.heartbeat_timed_out = 0U;' in source
+
+
+def test_command_keepalive_is_executor_independent_and_keeps_50hz_default():
+    source = (Path(__file__).resolve().parents[1] /
+              'cooperative_parking_robot/stm32_bridge_node.py').read_text()
+    assert "declare_parameter('velocity_tx_rate_hz', 50.0)" in source
+    assert 'target=self._command_producer_loop' in source
+    assert "name=f'{self.role}-command-producer'" in source
+    assert 'self.send_velocity_loop(scheduled_due=next_tick)' in source
+    assert '1.0 / self.velocity_tx_rate_hz,\n            self.send_velocity_loop' not in source
+    assert "kind='velocity', priority=P1_REALTIME" in source

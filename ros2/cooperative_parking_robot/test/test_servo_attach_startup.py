@@ -126,6 +126,9 @@ class FakeArbiter:
     def force_zero(self, now):
         self.force_zero_calls.append(now)
 
+    def is_manual_enabled(self):
+        return self.manual_enabled
+
     def output(self, _now):
         return 0.0, 0.0, 0.0
 
@@ -140,8 +143,12 @@ class ImmediateScheduler:
         error = None
         if written != len(payload):
             error = OSError(f'partial UART write {written}/{len(payload)}')
-        item = type('Item', (), {'kind': kwargs['kind'],
-                                 'metadata': kwargs.get('metadata')})()
+        item = type('Item', (), {
+            'kind': kwargs['kind'],
+            'metadata': kwargs.get('metadata'),
+            'enqueued_at': started,
+            'deadline': kwargs.get('deadline', float('inf')),
+        })()
         self.node._uart_write_result(item, started, 0.0, error)
         return True
 
@@ -150,6 +157,9 @@ class ImmediateScheduler:
 
     def stop(self, **_kwargs):
         pass
+
+    def is_running(self):
+        return False
 
 
 def bridge_for_unit_test(profile='robot-2'):
@@ -185,8 +195,18 @@ def bridge_for_unit_test(profile='robot-2'):
     node.communication_recovered = False
     node.recovery_fault_latched = False
     node.recovery_ack_count = 0
+    node.communication_generation = 0
+    node.recovery_stage = 'STARTUP'
+    node.same_fault_suppressed_count = 0
+    node.recovery_restart_count = 0
+    node.last_recovery_reason = None
+    node.last_recovery_fault = None
+    node.last_velocity_tx_time = 0.0
+    node.command_thread_stop = threading.Event()
+    node.command_thread = None
     node.heartbeat_lock = threading.RLock()
     node.transport_lifecycle_lock = threading.RLock()
+    node.deferred_serial_close = None
     node.serial_reader_thread_stop = threading.Event()
     node.serial_reader_thread = None
     node.heartbeat_stats = {
@@ -196,6 +216,23 @@ def bridge_for_unit_test(profile='robot-2'):
         'max_tx_gap_ms': 0.0, 'max_rtt_ms': 0.0,
         'rtt_average_ms': 0.0, 'scheduler_max_lateness_ms': 0.0,
         'uart_write_max_ms': 0.0,
+        'recent_tx_gap_ms': 0.0, 'producer_recent_lateness_ms': 0.0,
+        'producer_max_lateness_ms': 0.0, 'queue_wait_recent_ms': 0.0,
+        'queue_wait_max_ms': 0.0,
+        'write_duration_recent_ms': 0.0,
+        'last_successful_heartbeat_write_time': 0.0,
+        'producer_deadline_miss_count': 0,
+        'velocity_enqueue_count': 0, 'velocity_tx_count': 0,
+        'velocity_recent_tx_gap_ms': 0.0, 'velocity_max_tx_gap_ms': 0.0,
+        'velocity_producer_max_lateness_ms': 0.0,
+        'velocity_queue_wait_max_ms': 0.0, 'velocity_last_tx_time': 0.0,
+        'velocity_deadline_miss_count': 0, 'velocity_write_max_ms': 0.0,
+        'velocity_write_recent_ms': 0.0,
+        'uart_write_last_failure_kind': None,
+        'uart_write_last_failure_duration_ms': 0.0,
+        'uart_write_last_success_time': 0.0,
+        'uart_write_consecutive_failure_count': 0,
+        'uart_transport_generation': 1, 'serial_reconnect_count': 0,
         'rx_frame_count': 0, 'rx_read_error_count': 0,
         'rx_max_processing_ms': 0.0, 'rx_max_gap_ms': 0.0,
     }
@@ -600,6 +637,21 @@ def test_uart_reconnect_restarts_an_inflight_disarmed_recovery(monkeypatch):
             in node.statuses)
 
 
+def test_rx_fault_defers_handle_close_until_reader_exit():
+    node = bridge_for_unit_test()
+    old_handle = node.ser
+    node.serial_reader_thread = threading.current_thread()
+    node._latch_transport_fault('ERR,UART_READ', 'read failed')
+    assert node.ser is None
+    assert node.deferred_serial_close is old_handle
+    assert old_handle.closed is False
+
+    node.serial_reader_thread = None
+    assert node._finish_deferred_serial_close() is True
+    assert node.deferred_serial_close is None
+    assert old_handle.closed is True
+
+
 def test_heartbeat_ack_is_not_mirrored_to_reliable_hardware_status(
         monkeypatch):
     node = bridge_for_unit_test()
@@ -610,6 +662,33 @@ def test_heartbeat_ack_is_not_mirrored_to_reliable_hardware_status(
     token = complete_to_heartbeat_ack(node)
 
     assert f'ACK,{token}' not in node.statuses
+
+
+def test_timeout_storm_does_not_restart_waiting_recovery_generation(monkeypatch):
+    node = bridge_for_unit_test()
+    monkeypatch.setattr(bridge_module.time, 'monotonic', lambda: 10.0)
+    node.hello_acknowledged = True
+    node._handle_error('HEARTBEAT_TIMEOUT')
+    generation = node.communication_generation
+    for _ in range(100):
+        node._handle_error('HEARTBEAT_TIMEOUT')
+    assert node.communication_generation == generation
+    assert node.same_fault_suppressed_count == 100
+
+
+def test_active_recovery_generation_timeout_opens_exactly_one_next_generation(
+        monkeypatch):
+    node = bridge_for_unit_test()
+    monkeypatch.setattr(bridge_module.time, 'monotonic', lambda: 10.0)
+    node.communication_recovering = True
+    node.hello_acknowledged = True
+    node.recovery_stage = 'SESSION_ACTIVE'
+    node._handle_error('COMMAND_TIMEOUT')
+    assert node.communication_generation == 1
+    assert node.recovery_stage == 'WAIT_HELLO'
+    node._handle_error('COMMAND_TIMEOUT')
+    assert node.communication_generation == 1
+    assert node.same_fault_suppressed_count == 1
 
 
 def test_estop_latch_stops_handshake_and_is_not_cleared_by_hello(monkeypatch):
@@ -709,7 +788,7 @@ def test_host_heartbeat_timeout_defaults_and_bounds_are_explicit():
     assert "declare_parameter('heartbeat_period_s', 0.10)" in bridge_source
     assert "declare_parameter('heartbeat_ack_timeout_s', 0.40)" in bridge_source
     assert 'self.heartbeat_ack_timeout <= 0.50' in bridge_source
-    assert "declare_parameter('velocity_tx_rate_hz', 20.0)" in bridge_source
+    assert "declare_parameter('velocity_tx_rate_hz', 50.0)" in bridge_source
     assert '1.0 / self.velocity_tx_rate_hz' in bridge_source
 
 

@@ -51,6 +51,7 @@ class SnapshotNode(Node):
         self.values = {key: None for key in TOPICS}
         self.values.update({key: False for key in PRESENCE_TOPICS})
         self.received = set()
+        self.updated_at = {}
         selected = set(observer_topic_keys(mode))
 
         for key, topic in TOPICS.items():
@@ -74,10 +75,19 @@ class SnapshotNode(Node):
     def _value(self, key, message):
         self.values[key] = message.data
         self.received.add(key)
+        self.updated_at[key] = time.monotonic()
 
     def _present(self, key):
         self.values[key] = True
         self.received.add(key)
+        self.updated_at[key] = time.monotonic()
+
+    def ages_ms(self):
+        now = time.monotonic()
+        return {
+            key: max(0.0, now - updated_at) * 1000.0
+            for key, updated_at in self.updated_at.items()
+        }
 
 
 def main():
@@ -105,6 +115,7 @@ def main():
             if args.stream_interval and time.monotonic() >= next_emit:
                 print(json.dumps({
                     "topics": node.values, "complete": complete,
+                    "ages_ms": node.ages_ms(),
                     "mode": args.mode,
                 }, ensure_ascii=False), flush=True)
                 next_emit = time.monotonic() + args.stream_interval
@@ -115,6 +126,7 @@ def main():
                 break
         print(json.dumps({
             "topics": node.values,
+            "ages_ms": node.ages_ms(),
             "complete": observer_complete(node.received, args.mode),
             "mode": args.mode,
         }, ensure_ascii=False), flush=True)

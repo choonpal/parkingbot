@@ -236,6 +236,21 @@ Front heartbeat는 9,327 ACK 동안 loss 0이었다. 같은 시점 Rear는 heart
 fault가 아니라 Wi-Fi 자체에서 이탈해 ping/SSH/ROS publisher가 모두 사라졌으므로,
 Rear 재연결 뒤 동일 SHA 배포와 heartbeat 확인이 남아 있다.
 
+### Front 바퀴 공중 pulse
+
+Front 재부팅 뒤 bridge-only로 HELLO/servo attach/hardware ready를 다시 확인하고
+바퀴를 띄운 상태에서 `drive_pulse`를 실행했다. 첫 pulse는 도구가 공통
+`base_link` frame을 보내 역할별 `front_base`만 허용하는 bridge가 전부 거부했다.
+도구를 `{role}_base`로 수정하고 회귀 `22 passed` 뒤 재시험했다.
+
+- 0.0628m/s x 0.8s 정방향: wheel odom +4.39cm, 횡 -0.24mm
+- 같은 역방향: 누적 x +0.83mm, 횡 오차는 사실상 0
+- 매 pulse 뒤 manual false, 네 모터 RPM/PWM 0
+- 최종 heartbeat ACK 3,606, loss 0, recovery 없음
+
+이 시험은 바퀴 공중 무부하 결과이며 바닥 거리 보정이나 하중 주행 통과를
+뜻하지 않는다.
+
 시간 제한으로 process를 종료할 때 bridge UART reader와 일부 rclpy node가 이미
 닫힌 context에 publish하며 traceback을 남기는 shutdown race도 확인했다. 실행 중
 heartbeat 장애와는 구분되며 모든 camera/serial 점유는 시험 뒤 해제됐다.

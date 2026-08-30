@@ -120,6 +120,12 @@ def test_expected_distance_uses_both_axes():
     assert expected_distance_m(0.03, 0.04, 2.0) == pytest.approx(0.10)
 
 
+def test_pulse_uses_role_scoped_base_frame():
+    with open(SOURCE, encoding='utf-8') as handle:
+        source = handle.read()
+    assert "msg.header.frame_id = f'{self.role}_base'" in source
+
+
 def test_pure_rotation_travels_no_distance():
     assert expected_distance_m(0.0, 0.0, 3.0) == 0.0
 

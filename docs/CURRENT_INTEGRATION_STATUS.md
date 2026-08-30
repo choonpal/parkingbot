@@ -26,6 +26,8 @@
   CCTV ArUco 2-frame decimation, 관제 영상 5fps/BEV 2fps
 - 위 전체 무주행 후보에서 Jetson 코어별 약 47~69%로 개선
   (수정 전 15fps 전체 구성 약 87~96%)
+- Front 바퀴 공중 직진 pulse: 0.0628m/s x 0.8s 정방향에서 wheel odom
+  +4.39cm, 같은 역방향 뒤 원점 잔차 +0.83mm, heartbeat loss 0
 - 현재 실행: 최적화 Jetson 전체 스택과 Front bridge; Rear Wi-Fi 이탈로
   원격 배포·heartbeat 최종 확인 대기
 - 이번 복구 작업의 차량 이동: 없음

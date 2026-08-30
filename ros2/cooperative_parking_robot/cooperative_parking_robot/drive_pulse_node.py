@@ -165,7 +165,9 @@ class DrivePulseNode(Node):
     def _send(self, vx, vy, wz):
         msg = TwistStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = 'base_link'
+        # stm32_bridge는 역할이 다른 로봇의 명령이 섞이지 않도록
+        # ``front_base``/``rear_base``만 허용한다.
+        msg.header.frame_id = f'{self.role}_base'
         msg.twist.linear.x = float(vx)
         msg.twist.linear.y = float(vy)
         msg.twist.angular.z = float(wz)

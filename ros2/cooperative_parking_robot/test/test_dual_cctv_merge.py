@@ -445,7 +445,7 @@ def test_dual_launch_uses_one_shared_tensorrt_model():
     dual = (ROOT / 'launch/cctv_server_dual.launch.py').read_text()
     assert "executable='shared_yolo_bev_map'" in dual
     assert "'enable_shared_yolo', default_value='true'" in dual
-    assert "'shared_inference_rate_hz', default_value='6.0'" in dual
+    assert "'shared_inference_rate_hz', default_value='4.0'" in dual
     assert 'TimerAction' not in dual
     assert 'yolo_cam2_start_delay_s' not in dual
 

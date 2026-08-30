@@ -436,7 +436,7 @@ def launch_command(config, role):
         runtime = "$HOME/.ros/adaptive_valet_bot"
         camera_width = config.get("CAMERA_WIDTH_PX", "640")
         camera_height = config.get("CAMERA_HEIGHT_PX", "360")
-        camera_fps = config.get("CAMERA_FPS", "30")
+        camera_fps = config.get("CAMERA_FPS", "15")
 
         def mjpeg_pipeline(device):
             return (

@@ -127,6 +127,9 @@ class CctvRobotMarkerNode(Node):
         self.declare_parameter('selection_hold_s', 0.30)
         # 이 시간이 지난 관측은 카메라 선택 후보에서 제외한다.
         self.declare_parameter('observation_timeout_s', 0.30)
+        # 카메라별 frame decimation. 15fps 입력에서는 2가 pose 추적에
+        # 충분하면서 두 영상의 ArUco CPU 비용을 절반 가까이 줄인다.
+        self.declare_parameter('process_every_n', 1)
         # BEV 브라우저 등록 도구의 H는 픽셀->metre를 직접 출력한다.
         self.declare_parameter('homography_scale_to_m', 1.0)
         self.declare_parameter('aruco_dict', 'DICT_4X4_50')
@@ -206,11 +209,15 @@ class CctvRobotMarkerNode(Node):
             self.get_parameter('selection_hold_s').value)
         self.observation_timeout_s = float(
             self.get_parameter('observation_timeout_s').value)
+        self.process_every_n = max(
+            1, int(self.get_parameter('process_every_n').value))
         if self.selection_hold_s < 0.0 or self.observation_timeout_s <= 0.0:
             raise ValueError(
                 'selection_hold_s must be >= 0 and observation_timeout_s > 0')
         self._configure_cameras()
         self._setup_aruco()
+        self._frame_counts = {
+            camera['camera_id']: 0 for camera in self.cameras}
 
         # ===== 구독 (카메라마다 하나) =====
         for camera in self.cameras:
@@ -240,7 +247,8 @@ class CctvRobotMarkerNode(Node):
         self.get_logger().info(
             f"cctv_robot_marker_node 시작 (markers={self.marker_ids}, "
             f"cameras={[c['camera_id'] for c in self.cameras]}, "
-            f"min_area={self.min_marker_area_px:.0f}px)")
+            f"min_area={self.min_marker_area_px:.0f}px, "
+            f"every_n={self.process_every_n})")
 
     # ------------------------------------------------------------------
     # 카메라 구성
@@ -372,6 +380,10 @@ class CctvRobotMarkerNode(Node):
     # 이미지 콜백
     # ================================================
     def image_cb(self, camera_id, msg):
+        frame_count = self._frame_counts[camera_id]
+        self._frame_counts[camera_id] = frame_count + 1
+        if frame_count % self.process_every_n != 0:
+            return
         camera = self.camera_by_id[camera_id]
         image_stamp = msg.header.stamp
         if image_stamp.sec == 0 and image_stamp.nanosec == 0:

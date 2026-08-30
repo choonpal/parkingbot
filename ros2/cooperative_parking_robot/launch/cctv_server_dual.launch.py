@@ -175,7 +175,7 @@ def generate_launch_description():
             description='merge_detection_topics 와 같은 길이·순서'),
         DeclareLaunchArgument('camera_width_px', default_value='640'),
         DeclareLaunchArgument('camera_height_px', default_value='360'),
-        DeclareLaunchArgument('camera_fps', default_value='30.0'),
+        DeclareLaunchArgument('camera_fps', default_value='15.0'),
         DeclareLaunchArgument('camera0_gstreamer_pipeline', default_value=''),
         DeclareLaunchArgument('camera2_gstreamer_pipeline', default_value=''),
         DeclareLaunchArgument('cctv0_raw_topic', default_value='/cctv0/image_raw'),
@@ -197,7 +197,7 @@ def generate_launch_description():
         DeclareLaunchArgument('model_mode', default_value='vehicle_seg'),
         DeclareLaunchArgument('inference_imgsz', default_value='640'),
         DeclareLaunchArgument(
-            'shared_inference_rate_hz', default_value='6.0',
+            'shared_inference_rate_hz', default_value='4.0',
             description='두 카메라를 합친 총 YOLO 추론 상한'),
         DeclareLaunchArgument('confidence', default_value='0.4'),
         DeclareLaunchArgument('yaw_pca_min_ratio', default_value='1.25'),
@@ -254,7 +254,7 @@ def generate_launch_description():
         # ============================================================
         # 병합
         # ============================================================
-        DeclareLaunchArgument('merge_rate_hz', default_value='10.0'),
+        DeclareLaunchArgument('merge_rate_hz', default_value='5.0'),
         DeclareLaunchArgument('camera_timeout_s', default_value='1.0'),
         DeclareLaunchArgument(
             'require_all_cameras', default_value='true',
@@ -301,6 +301,8 @@ def generate_launch_description():
         DeclareLaunchArgument('rear_marker_height_m', default_value='0.0'),
         DeclareLaunchArgument('selection_hold_s', default_value='0.30'),
         DeclareLaunchArgument('observation_timeout_s', default_value='0.30'),
+        DeclareLaunchArgument(
+            'cctv_marker_process_every_n', default_value='2'),
 
         # ============================================================
         # UI / 진단
@@ -330,6 +332,10 @@ def generate_launch_description():
             'control_tower_web_host', default_value='0.0.0.0'),
         DeclareLaunchArgument(
             'control_tower_web_port', default_value='5008'),
+        DeclareLaunchArgument(
+            'control_tower_video_rate_hz', default_value='5.0'),
+        DeclareLaunchArgument(
+            'control_tower_bev_rate_hz', default_value='2.0'),
 
         # ============================================================
         # 노드 — 카메라 0
@@ -525,6 +531,7 @@ def generate_launch_description():
                 'camera_heights_m': _float_array('camera_heights_m'),
                 'selection_hold_s': _float('selection_hold_s'),
                 'observation_timeout_s': _float('observation_timeout_s'),
+                'process_every_n': _int('cctv_marker_process_every_n'),
                 'zero_stamp_fallback_to_now': True,
                 'homography_scale_to_m': _float('homography_scale_to_m'),
                 'aruco_dict': LaunchConfiguration('aruco_dict'),
@@ -561,9 +568,14 @@ def generate_launch_description():
                     '/cctv0/detections,/cctv2/detections',
                 'web_host': LaunchConfiguration('control_tower_web_host'),
                 'web_port': _int('control_tower_web_port'),
+                'video_stream_rate_hz': _float(
+                    'control_tower_video_rate_hz'),
+                'bev_stream_rate_hz': _float(
+                    'control_tower_bev_rate_hz'),
                 'calibration_width_px': _int('calibration_width_px'),
                 'calibration_height_px': _int('calibration_height_px'),
-                'enable_aruco': True,
+                # Production marker 노드가 이미 두 영상을 처리한다.
+                'enable_aruco': False,
                 'aruco_dict': LaunchConfiguration('aruco_dict'),
                 'marker_size_m': _float('marker_size_m'),
                 'enable_bev': True,

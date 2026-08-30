@@ -212,6 +212,30 @@ pause/resume한다.
 압력이 유지되므로, "정차+치수 확정 시 더 일찍 snapshot/unload" 정책은 별도
 안전 판단이 필요한 다음 개선 후보로 남긴다.
 
+### shared YOLO 후 전체 Jetson 부하 제한
+
+15fps 전체 구성에서도 수정 전 Jetson CPU는 코어별 약 87~96%였다. 빠른 분리
+시험에서 카메라·보정·merge만으로 약 30~57%, shared YOLO 추가 시 약 40~82%,
+Production ArUco까지 추가하면 약 52~92%였다. 따라서 두 YOLO 프로세스만의
+문제가 아니라 rectification, merge/map JPEG, ArUco와 관제 렌더링이 함께 CPU를
+소모한다고 판단했다.
+
+구조 변경 없이 다음 상한만 적용했다.
+
+- CCTV 입력 15fps
+- shared YOLO cam0+cam2 총 4Hz
+- merge/map 5Hz
+- Production CCTV ArUco는 카메라별 두 프레임 중 하나만 처리
+- 관제탑은 Production ArUco를 중복 실행하지 않음
+- 관제 영상 5fps, BEV 2fps
+- debug overlay가 꺼진 Kiosk는 카메라 JPEG worker를 만들지 않음
+
+두 UI가 실제 접속된 전체 무주행 재시험에서 코어별 약 47~69%, RAM 약
+4.83/7.62GB였고 detection, marker, merge와 HTTP 5000/5008 응답은 유지됐다.
+Front heartbeat는 9,327 ACK 동안 loss 0이었다. 같은 시점 Rear는 heartbeat
+fault가 아니라 Wi-Fi 자체에서 이탈해 ping/SSH/ROS publisher가 모두 사라졌으므로,
+Rear 재연결 뒤 동일 SHA 배포와 heartbeat 확인이 남아 있다.
+
 시간 제한으로 process를 종료할 때 bridge UART reader와 일부 rclpy node가 이미
 닫힌 context에 publish하며 traceback을 남기는 shutdown race도 확인했다. 실행 중
 heartbeat 장애와는 구분되며 모든 camera/serial 점유는 시험 뒤 해제됐다.

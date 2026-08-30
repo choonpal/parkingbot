@@ -453,8 +453,11 @@ class JetsonVisionWebNode(Node):
         self._stop_event = threading.Event()
         self._last_process_time = None
 
-        self.create_subscription(
-            Image, self.image_topic, self.image_cb, SENSOR_LATEST_QOS)
+        # Kiosk는 맵과 상태만 사용한다. Production에서 debug overlay가
+        # 꺼져 있으면 카메라 JPEG worker를 만들지 않는다.
+        if self.enable_debug_overlay:
+            self.create_subscription(
+                Image, self.image_topic, self.image_cb, SENSOR_LATEST_QOS)
         self.create_subscription(
             OccupancyGrid, self.map_topic, self.map_cb, 10)
 
@@ -487,12 +490,14 @@ class JetsonVisionWebNode(Node):
         if self.enable_operator_ui:
             self._setup_operator_ui()
 
-        self._worker_thread = threading.Thread(
-            target=self._worker_loop,
-            name='jetson-vision-worker',
-            daemon=True,
-        )
-        self._worker_thread.start()
+        self._worker_thread = None
+        if self.enable_debug_overlay:
+            self._worker_thread = threading.Thread(
+                target=self._worker_loop,
+                name='jetson-vision-worker',
+                daemon=True,
+            )
+            self._worker_thread.start()
 
         self._flask_app = self._make_flask_app()
         self._web_server = make_server(
@@ -1312,7 +1317,8 @@ class JetsonVisionWebNode(Node):
             self._web_server.shutdown()
         except Exception:
             pass
-        if self._worker_thread.is_alive():
+        if (self._worker_thread is not None and
+                self._worker_thread.is_alive()):
             self._worker_thread.join(timeout=2.0)
         if self._web_thread.is_alive():
             self._web_thread.join(timeout=2.0)

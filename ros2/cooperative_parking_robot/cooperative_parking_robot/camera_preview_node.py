@@ -1626,6 +1626,8 @@ class CameraPreviewNode(Node):
         self.declare_parameter('web_host', '0.0.0.0')
         self.declare_parameter('web_port', 5005)
         self.declare_parameter('jpeg_quality', 75)
+        self.declare_parameter('video_stream_rate_hz', 12.5)
+        self.declare_parameter('bev_stream_rate_hz', 8.0)
         self.declare_parameter('grid_step_px', 100)
         # 실제 스트림 해상도가 캘리브레이션과 다르면 화면에서 경고한다.
         # 0이면 검사하지 않는다.
@@ -1803,6 +1805,13 @@ class CameraPreviewNode(Node):
                     'aruco_min_marker_distance_rate').value))
         self.web_host = str(self.get_parameter('web_host').value)
         self.web_port = int(self.get_parameter('web_port').value)
+        self.video_stream_rate_hz = float(
+            self.get_parameter('video_stream_rate_hz').value)
+        self.bev_stream_rate_hz = float(
+            self.get_parameter('bev_stream_rate_hz').value)
+        if (self.video_stream_rate_hz <= 0.0 or
+                self.bev_stream_rate_hz <= 0.0):
+            raise ValueError('web stream rates must be positive')
         self.enable_yolo = bool(self.get_parameter('enable_yolo').value)
         self.external_detection_topics = parse_detection_topics(
             self.get_parameter('detection_topics_csv').value, labels)
@@ -4035,7 +4044,7 @@ class CameraPreviewNode(Node):
                                b'Content-Length: ' +
                                str(len(payload)).encode() + b'\r\n\r\n' +
                                payload + b'\r\n')
-                    self._stop_event.wait(0.12)
+                    self._stop_event.wait(1.0 / self.bev_stream_rate_hz)
             return Response(
                 stream(),
                 mimetype='multipart/x-mixed-replace; boundary=frame')
@@ -4131,9 +4140,7 @@ class CameraPreviewNode(Node):
                                b'Content-Length: ' +
                                str(len(payload)).encode() + b'\r\n\r\n' +
                                payload + b'\r\n')
-                    # 약 12fps — 눈으로 확인하는 용도라 충분하고, 원본 30fps를
-                    # 그대로 밀면 인코딩이 CPU를 잡아먹는다.
-                    self._stop_event.wait(0.08)
+                    self._stop_event.wait(1.0 / self.video_stream_rate_hz)
 
             return Response(
                 stream(),

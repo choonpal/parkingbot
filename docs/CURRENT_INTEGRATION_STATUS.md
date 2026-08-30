@@ -7,8 +7,8 @@
 ## 2026-08-30 strict 복구 상태
 
 현재 통합 후보는 `ddad9ac`를 기준으로 다시 만든
-`recovery/ddad-strict-20260830`이며 현재 배포한 기능/운영 guard 기준점은
-`89081ad`이다. 상세 변경과
+`recovery/ddad-strict-20260830`이며 공유 TensorRT 기준점은 `cbfe2fd`이다.
+상세 변경과
 실차 로그는 [ddad strict 복구·기동 부하 감사](change_logs/2026-08-30_ddad-strict-recovery-and-startup-audit.md)에
 기록했다.
 
@@ -22,7 +22,12 @@
   실제 `WAIT_LIFT` 전환 미검증
 - Front/Rear UART bridge-only 및 shared DDS+Jetson CAM0/CAM2/YOLO0 join: PASS
 - 전체 production cold-start: 두 차례 FAIL
-- 현재 production stack: 모두 종료
+- Jetson 부하 제한 후보: CCTV 15fps, 공유 YOLO 총 4Hz, merge 5Hz,
+  CCTV ArUco 2-frame decimation, 관제 영상 5fps/BEV 2fps
+- 위 전체 무주행 후보에서 Jetson 코어별 약 47~69%로 개선
+  (수정 전 15fps 전체 구성 약 87~96%)
+- 현재 실행: 최적화 Jetson 전체 스택과 Front bridge; Rear Wi-Fi 이탈로
+  원격 배포·heartbeat 최종 확인 대기
 - 이번 복구 작업의 차량 이동: 없음
 
 전체 기동 중 RPi heartbeat gap, UART write timeout과 SSH 불안정이 재현됐으므로
@@ -53,8 +58,8 @@ Python import realpath가 active workspace 안인지 검사한다.
 |---|---|---|
 | pregrip 소프트웨어 통합 | 회귀 PASS / 실기 보류 | 기존 회귀는 유지됐지만 현재 strict 전체 cold-start가 heartbeat FAULT로 차단됨 |
 | clean ROS 2 Humble build/import | PASS | 격리 workspace에서 package build와 install-only import 확인 |
-| Jetson CCTV 운용값 | PASS(제약 있음) | 카메라 2대가 TensorRT 1개를 round-robin 공유하는 경로는 무구동 PASS; production 기본은 총 6Hz(카메라별 약 3Hz), mission pause/resume 실차 전환은 미검증 |
-| 현재 통합본 원격 배포 | PASS | 세 장비 active release, revision marker, runtime import/prefix와 `robot_doctor` 일치 |
+| Jetson CCTV 운용값 | PASS(제약 있음) | 카메라 2대가 TensorRT 1개를 round-robin 공유하는 경로는 무구동 PASS; 부하 제한 후보는 15fps·총 4Hz, mission pause/resume 실차 전환은 미검증 |
+| 현재 통합본 원격 배포 | 대기 | `cbfe2fd`는 세 장비 일치 배포했으나 후속 Jetson 부하 제한 커밋은 Rear Wi-Fi 복구 뒤 재배포 필요 |
 | 차량 하부 실기 모션 | **NO-GO** | 전체 cold-start heartbeat/UART FAULT와 SSH 불안정이 남음 |
 | grip/lift/운반 | **범위 밖·NO-GO** | `stop_after_align` 뒤 기능이며 현재 감사에서 실차 검증하지 않음 |
 

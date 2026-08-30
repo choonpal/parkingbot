@@ -29,12 +29,12 @@ AVAILABILITY = FaultPolicy(
     FaultClass.AVAILABILITY, False, True, False, True, False, False)
 
 
-# Only conditions with an explicit physical hard-latch justification belong
-# here. Distance/yaw/vision degradation is handled by continued correction and
-# feed-forward slowdown in the rigid controller, not by software E-stop.
+# Only explicit manual/firmware hard-latch conditions belong here. Relative
+# control degradation never emits a software E-stop. The physical lateral-load
+# limit still stops motion, but is recoverable and can be software-rearmed after
+# the payload geometry is checked.
 _EMERGENCY_PREFIXES = (
     "ESTOP", "ERR,ESTOP_LATCHED", "ERR,WHEEL_DIR_MISMATCH",
-    "SYNC,LATERAL_ERROR_FATAL",
 )
 
 _RECOVERABLE_PREFIXES = (
@@ -42,7 +42,8 @@ _RECOVERABLE_PREFIXES = (
     "MISSION_CHANGED_WHILE_ACTIVE", "APPROACH_TIMEOUT", "ALIGN_TIMEOUT",
     "LIFT_TIMEOUT", "DRIVE_TIMEOUT", "RELEASE_BARRIER_TIMEOUT",
     "RELEASE_TIMEOUT", "RETURN_TIMEOUT", "MOTION,",
-    "SYNC,ODOM_TIMEOUT", "SYNC,LATERAL_ERROR_TIMEOUT",
+    "SYNC,ODOM_TIMEOUT", "SYNC,LATERAL_ERROR_FATAL",
+    "SYNC,LATERAL_ERROR_TIMEOUT",
     "SYNC,SYNC_FILTER_INIT_FAILED", "SYNC,REFERENCE_CAPTURE_FAILED",
     "SYNC,SLOT_POSE_MISSING",
     "ERR,HEARTBEAT_TIMEOUT", "ERR,HEARTBEAT_ACK_TIMEOUT",

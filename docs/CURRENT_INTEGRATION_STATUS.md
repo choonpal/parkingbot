@@ -16,6 +16,8 @@
 - Jetson 카메라 각 단독 및 TensorRT cam0/cam2 각 단독: PASS
 - Jetson dual TensorRT 순차 cold-load: 회복은 PASS, 두 번째 load 중 약 4초
   perception gap과 `NvMapMemAlloc error 12` 발생
+- Jetson shared TensorRT 1개/dual-camera round-robin: 무구동 PASS. cam0/cam2
+  각 5Hz 시험에서 70초간 재중단·NvMap 오류 없음, RAM 약 4.27/7.62GB
 - stationary target snapshot과 mission 중 YOLO unload/reload: 구현·회귀 PASS,
   실제 `WAIT_LIFT` 전환 미검증
 - Front/Rear UART bridge-only 및 shared DDS+Jetson CAM0/CAM2/YOLO0 join: PASS
@@ -51,7 +53,7 @@ Python import realpath가 active workspace 안인지 검사한다.
 |---|---|---|
 | pregrip 소프트웨어 통합 | 회귀 PASS / 실기 보류 | 기존 회귀는 유지됐지만 현재 strict 전체 cold-start가 heartbeat FAULT로 차단됨 |
 | clean ROS 2 Humble build/import | PASS | 격리 workspace에서 package build와 install-only import 확인 |
-| Jetson CCTV 운용값 | PASS(제약 있음) | 각 단독은 정상; dual 두 번째 cold load 때 약 4초 stale과 NvMap allocation 오류 후 회복; mission snapshot/unload 실차 전환은 미검증 |
+| Jetson CCTV 운용값 | PASS(제약 있음) | 카메라 2대가 TensorRT 1개를 round-robin 공유하는 경로는 무구동 PASS; production 기본은 총 6Hz(카메라별 약 3Hz), mission pause/resume 실차 전환은 미검증 |
 | 현재 통합본 원격 배포 | PASS | 세 장비 active release, revision marker, runtime import/prefix와 `robot_doctor` 일치 |
 | 차량 하부 실기 모션 | **NO-GO** | 전체 cold-start heartbeat/UART FAULT와 SSH 불안정이 남음 |
 | grip/lift/운반 | **범위 밖·NO-GO** | `stop_after_align` 뒤 기능이며 현재 감사에서 실차 검증하지 않음 |

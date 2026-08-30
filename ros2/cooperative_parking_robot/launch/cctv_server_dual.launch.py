@@ -5,12 +5,12 @@
 ----
     camera 0 ──> opencv_camera(cam0) ──> /cctv0/image_raw
                     └─> cctv_rectify(cam0, calib0) ──> /cctv0/image_rect
-                            ├─> yolo_bev_map(cam0, sensor 모드) ──> /cctv0/detections
-                            └────────────────┐
+                            └─> shared_yolo_bev_map ─────────────┐
     camera 2 ──> opencv_camera(cam2) ──> /cctv2/image_raw
                     └─> cctv_rectify(cam2, calib2) ──> /cctv2/image_rect
-                            ├─> yolo_bev_map(cam2, sensor 모드) ──> /cctv2/detections
-                            └────────────────┤
+                            └─> shared_yolo_bev_map ─────────────┤
+                                    (TensorRT engine 1개,
+                                     cam0/cam2 round-robin)
                                              v
                                     cctv_merge_node
                                       /parking/map
@@ -40,7 +40,7 @@
 from typing import List
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, TimerAction
+from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
 from launch.substitutions import (
     EnvironmentVariable, LaunchConfiguration, PathJoinSubstitution,
@@ -91,8 +91,7 @@ def _int_array(name):
 
 def generate_launch_description():
     enable_cameras = LaunchConfiguration('enable_opencv_camera')
-    enable_yolo_cam0 = LaunchConfiguration('enable_yolo_cam0')
-    enable_yolo_cam2 = LaunchConfiguration('enable_yolo_cam2')
+    enable_shared_yolo = LaunchConfiguration('enable_shared_yolo')
     enable_markers = LaunchConfiguration('enable_cctv_robot_markers')
     enable_control_tower = LaunchConfiguration('enable_control_tower_preview')
     enable_web = PythonExpression([
@@ -124,7 +123,9 @@ def generate_launch_description():
         'model_path': LaunchConfiguration('model_path'),
         'model_mode': LaunchConfiguration('model_mode'),
         'inference_imgsz': _int('inference_imgsz'),
-        'process_every_n': _int('process_every_n'),
+        # shared 노드의 timer가 전체 추론률을 제한한다. 카메라별 처리기는
+        # scheduler가 넘긴 모든 프레임을 한 번씩 처리해야 한다.
+        'process_every_n': 1,
         'confidence': _float('confidence'),
         'yaw_pca_min_ratio': _float('yaw_pca_min_ratio'),
         'yaw_ema_alpha': _float('yaw_ema_alpha'),
@@ -162,15 +163,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'camera2_id', default_value='0',
             description='fallback ID when camera2_device is empty'),
-        # 카메라마다 YOLO 를 켜고 끌 수 있다. 한 대만 검출하면 CPU/GPU 부담이
-        # 절반으로 줄고, 나머지 카메라는 영상과 상판 마커만 담당한다.
-        # 한 대만 쓸 때는 merge 대상 목록도 같이 줄여야 한다. 안 그러면
-        # 병합 노드가 오지 않는 카메라를 계속 "죽었다"고 보고한다.
-        DeclareLaunchArgument('enable_yolo_cam0', default_value='true'),
-        DeclareLaunchArgument('enable_yolo_cam2', default_value='true'),
         DeclareLaunchArgument(
-            'yolo_cam2_start_delay_s', default_value='15.0',
-            description='Jetson cold-start memory peak를 피하는 cam2 load 지연'),
+            'enable_shared_yolo', default_value='true',
+            description='두 CCTV를 번갈아 처리하는 단일 TensorRT 엔진'),
         DeclareLaunchArgument(
             'merge_detection_topics',
             default_value="['/cctv0/detections', '/cctv2/detections']",
@@ -202,8 +197,8 @@ def generate_launch_description():
         DeclareLaunchArgument('model_mode', default_value='vehicle_seg'),
         DeclareLaunchArgument('inference_imgsz', default_value='640'),
         DeclareLaunchArgument(
-            'process_every_n', default_value='3',
-            description='카메라 2대분 추론이 동시에 돌므로 1대일 때보다 크게 둔다'),
+            'shared_inference_rate_hz', default_value='6.0',
+            description='두 카메라를 합친 총 YOLO 추론 상한'),
         DeclareLaunchArgument('confidence', default_value='0.4'),
         DeclareLaunchArgument('yaw_pca_min_ratio', default_value='1.25'),
         DeclareLaunchArgument('yaw_ema_alpha', default_value='0.15'),
@@ -375,26 +370,6 @@ def generate_launch_description():
             }],
             output='screen'),
 
-        Node(
-            package='cooperative_parking_robot',
-            executable='yolo_bev_map',
-            name='yolo_bev_map_node_cam0',
-            condition=IfCondition(enable_yolo_cam0),
-            parameters=[LaunchConfiguration('layout_config'),
-                        dict(common_vision_params, **{
-                            'camera_id': 'cam0',
-                            'detection_topic': '/cctv0/detections',
-                            'image_topic': LaunchConfiguration('cctv0_rect_topic'),
-                            'homography_file': LaunchConfiguration(
-                                'homography_cam0_file'),
-                            'camera_ground_x_m': _float('cam0_ground_x_m'),
-                            'camera_ground_y_m': _float('cam0_ground_y_m'),
-                            'camera_height_m': _float('cam0_height_m'),
-                            'vehicle_detection_height_m': _float(
-                                'vehicle_detection_height_m'),
-                        })],
-            output='screen'),
-
         # ============================================================
         # 노드 — 카메라 2
         # ============================================================
@@ -434,28 +409,42 @@ def generate_launch_description():
             }],
             output='screen'),
 
-        TimerAction(
-            period=LaunchConfiguration('yolo_cam2_start_delay_s'),
-            actions=[Node(
-                package='cooperative_parking_robot',
-                executable='yolo_bev_map',
-                name='yolo_bev_map_node_cam2',
-                condition=IfCondition(enable_yolo_cam2),
-                parameters=[LaunchConfiguration('layout_config'),
-                            dict(common_vision_params, **{
-                                'camera_id': 'cam2',
-                                'detection_topic': '/cctv2/detections',
-                                'image_topic': LaunchConfiguration(
-                                    'cctv2_rect_topic'),
-                                'homography_file': LaunchConfiguration(
-                                    'homography_cam2_file'),
-                                'camera_ground_x_m': _float('cam2_ground_x_m'),
-                                'camera_ground_y_m': _float('cam2_ground_y_m'),
-                                'camera_height_m': _float('cam2_height_m'),
-                                'vehicle_detection_height_m': _float(
-                                    'vehicle_detection_height_m'),
-                            })],
-                output='screen')]),
+        # ============================================================
+        # 공용 YOLO — 모델은 한 번만 로드하고 두 카메라 상태는 분리
+        # ============================================================
+        Node(
+            package='cooperative_parking_robot',
+            executable='shared_yolo_bev_map',
+            name='shared_yolo_bev_map_node',
+            condition=IfCondition(enable_shared_yolo),
+            parameters=[LaunchConfiguration('layout_config'),
+                        dict(common_vision_params, **{
+                            'camera_id': 'cam0',
+                            'detection_topic': '/cctv0/detections',
+                            'image_topic': LaunchConfiguration(
+                                'cctv0_rect_topic'),
+                            'homography_file': LaunchConfiguration(
+                                'homography_cam0_file'),
+                            'camera_ground_x_m': _float('cam0_ground_x_m'),
+                            'camera_ground_y_m': _float('cam0_ground_y_m'),
+                            'camera_height_m': _float('cam0_height_m'),
+                            'vehicle_detection_height_m': _float(
+                                'vehicle_detection_height_m'),
+                            'shared_inference_rate_hz': _float(
+                                'shared_inference_rate_hz'),
+                            'shared_cam2_image_topic': LaunchConfiguration(
+                                'cctv2_rect_topic'),
+                            'shared_cam2_detection_topic':
+                                '/cctv2/detections',
+                            'shared_cam2_homography_file': LaunchConfiguration(
+                                'homography_cam2_file'),
+                            'shared_cam2_ground_x_m': _float(
+                                'cam2_ground_x_m'),
+                            'shared_cam2_ground_y_m': _float(
+                                'cam2_ground_y_m'),
+                            'shared_cam2_height_m': _float('cam2_height_m'),
+                        })],
+            output='screen'),
 
         # ============================================================
         # 병합 노드 — /parking/* 최종 발행자

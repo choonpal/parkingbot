@@ -5,6 +5,9 @@
 > 저장소의 `docs/REAL_ROBOT_DEPLOYMENT_RUNBOOK.md`와 `docs/pipeline.md`을 따르며,
 > 숫자 장치 ID가 아닌 안정적인
 > `/dev/v4l/by-path/...` 경로를 사용한다.
+> 2026-08-30부터 production launch는 아래의 카메라별 world-coordinate 계약은
+> 유지하되, TensorRT 메모리 중복을 피하려고 두 논리 camera state가 모델 객체
+> 1개를 공유한다.
 
 `/dev/video0`, `/dev/video2` 두 대의 천장 카메라를 임의 간격으로 설치하고, 두 시야가 겹치는 구간을 포함해 **하나의 map으로 합치는** 기능을 추가했다.
 
@@ -21,7 +24,7 @@
 ## 0. 3줄 요약
 
 - 카메라마다 **자기 homography(H0, H2)** 를 갖되, **두 번 다 같은 바닥 점에 같은 실측 (X,Y)m를 입력**해서 등록한다. 그러면 두 H의 출력이 자동으로 같은 map 좌표계가 되므로 카메라 간 변환 행렬이 필요 없다.
-- 카메라별 `yolo_bev_map_node`는 **자기가 본 차량 목록만** 발행하고(sensor 모드), 새로 만든 **`cctv_merge_node`** 가 두 목록을 겹침 제거해서 최종 `/parking/map`, `/parking/empty_slots` 등을 발행한다.
+- 공용 `shared_yolo_bev_map` 프로세스 안의 카메라별 sensor state는 **자기가 본 차량 목록만** 발행하고, **`cctv_merge_node`** 가 두 목록을 겹침 제거해서 최종 `/parking/map`, `/parking/empty_slots` 등을 발행한다. TensorRT 모델 객체는 1개다.
 - 하류(`fleet_manager_node`, A*, `individual_move`, `rigid_body_sync`, UI)는 **코드 한 줄도 바뀌지 않았다.** 토픽 이름과 의미가 그대로이기 때문이다.
 
 ---
@@ -48,13 +51,18 @@
 - 등록 도구가 이미 "픽셀을 클릭하고 실측 metre를 타이핑"하는 구조다. 두 번째 카메라에서 **같은 바닥 점에 같은 숫자**를 입력하는 것만으로 정합이 끝난다. 추가 코드도, 추가 오차원도 없다.
 - 실측 줄자 작업은 어차피 1회차에서 한 번 해야 한다. 2회차는 그 값을 **다시 입력**만 하면 되므로 추가 부담이 사실상 없다.
 
-### 1-3. 노드 하나가 카메라 2대를 다 처리하지 않은 이유
+### 1-3. 원래 카메라별 프로세스를 선택했던 이유와 현재 수정
 
-`yolo_bev_map_node` 내부를 2채널로 고치는 방법도 있었다. 채택하지 않았다.
+v1.11에서는 `yolo_bev_map_node` 내부를 2채널로 고치는 방법을 채택하지 않았다.
 
 - 단일 카메라 경로와 코드가 뒤엉켜 "지금 어느 쪽이 도는 건지" 알 수 없게 된다.
 - 카메라를 3대로 늘릴 때 또 고쳐야 한다. 현재 구조는 launch에 블록만 추가하면 된다.
 - 한 카메라의 YOLO 추론이 다른 카메라의 콜백을 막는다(단일 스레드 executor).
+
+실제 Jetson 시험에서 프로세스 2개의 두 번째 TensorRT cold-load가
+`NvMapMemAlloc error 12`와 약 4초 perception gap을 만들었다. 따라서 현재는
+카메라별 homography/coverage/sequence/publisher 상태는 계속 분리하되, 최신
+프레임 슬롯과 round-robin scheduler로 공용 모델 하나를 안전하게 직렬 사용한다.
 
 ---
 
@@ -64,13 +72,12 @@
  /dev/video0 ─ opencv_camera(cam0) ─→ /cctv0/image_raw
                   └→ cctv_rectify(cam0, cctv0_camera_calibration.npz)
                         ─→ /cctv0/image_rect
-                              ├→ yolo_bev_map(cam0, sensor) ─→ /cctv0/detections
-                              └───────────────────────────────┐
+                              └→ shared_yolo_bev_map ─────────┐
  /dev/video2 ─ opencv_camera(cam2) ─→ /cctv2/image_raw        │
                   └→ cctv_rectify(cam2, cctv2_camera_calibration.npz)
                         ─→ /cctv2/image_rect                  │
-                              ├→ yolo_bev_map(cam2, sensor) ─→ /cctv2/detections
-                              └───────────────────────────────┤
+                              └→ shared_yolo_bev_map ─────────┤
+                                  (한 process/model, camera state 2개)
                                                               ▼
                                                      cctv_merge_node
                                                        ├ /parking/map
@@ -180,7 +187,9 @@ ROS/OpenCV/YOLO에 의존하지 않는 순수 계산 모듈. 단위 테스트가
 
 기존 `cctv_server.launch.py`는 **손대지 않았다.** 단일 카메라로 되돌리고 싶으면 그대로 쓰면 된다.
 
-띄우는 노드: `opencv_camera` ×2, `cctv_rectify` ×2, `yolo_bev_map` ×2(sensor 모드), `cctv_merge` ×1, `fleet_manager` ×1, `cctv_robot_marker` ×1, `jetson_vision_web` ×1.
+띄우는 노드: `opencv_camera` ×2, `cctv_rectify` ×2,
+`shared_yolo_bev_map` ×1(process 안 camera state ×2), `cctv_merge` ×1,
+`fleet_manager` ×1, `cctv_robot_marker` ×1, `jetson_vision_web` ×1.
 
 #### `test/test_dual_cctv_merge.py` — 신규
 
@@ -423,7 +432,8 @@ ros2 launch cooperative_parking_robot cctv_server_dual.launch.py \
 ros2 node list
 #  /opencv_camera_node_cam0   /opencv_camera_node_cam2
 #  /cctv_rectify_node_cam0    /cctv_rectify_node_cam2
-#  /yolo_bev_map_node_cam0    /yolo_bev_map_node_cam2
+#  /shared_yolo_bev_map_node  /yolo_bev_map_node_cam2
+#  (위 두 logical node는 shared_yolo_bev_map process 하나에 함께 존재)
 #  /cctv_merge_node           /fleet_manager_node
 #  /cctv_robot_marker_node    ← 1개만 있어야 정상
 
@@ -483,7 +493,7 @@ ros2 topic info /front/cctv_pose --verbose | grep "Publisher count"
 
 | 파라미터 | 기본 | 언제 만지나 |
 |---|---|---|
-| `process_every_n` | 3 | 카메라 2대분 추론이 동시에 돌아 1대일 때보다 무겁다. Jetson이 버거우면 4~5로 올린다 |
+| `shared_inference_rate_hz` | 6.0 | TensorRT 1개가 두 카메라를 번갈아 처리하는 총 추론률. 카메라별 약 3Hz |
 | `duplicate_center_gate_m` | 0.35 | 같은 차가 2개로 보이면 ↑, 다른 차 2대가 1개로 합쳐지면 ↓ |
 | `duplicate_overlap_ratio` | 0.30 | mask 기반 중복 판정 임계 |
 | `duplicate_center_blend` | 0.0 | 0이면 광축 가까운 카메라 값만 사용(권장). 경계에서 위치가 튀면 0.2~0.3 |
@@ -518,7 +528,11 @@ ros2 topic info /front/cctv_pose --verbose | grep "Publisher count"
 5. **A*는 여전히 인양 직후 1회만 계산한다.** 카메라를 늘려도 주행 중 동적 재계획은 없다(`FRONT_FIRST_ENTRY_ID0_ULTRASONIC_20260725.md` 지적 사항 그대로).
 6. **벽·기둥은 여전히 YOLO가 보지 못한다.** 차량 Seg 모델은 차량만 검출하므로 고정 장애물은 별도 no-go 영역으로 등록해야 한다(`BEV_SLOT_REGISTRATION_AND_PARKING.md` §9).
 7. **출차(retrieve)는 여전히 미구현이다.** 이번 변경은 인지/맵 레이어만 확장했다. 출차 설계는 `MASTER_PLAN.md` Part 5 참조.
-8. **Jetson 부하.** YOLO 추론이 2배가 된다. `process_every_n`을 올리거나 TensorRT engine(`vehicle_seg.engine`)을 쓰는 것을 권장한다.
+8. **Jetson 부하.** production dual launch는 TensorRT engine 1개를 공유하고
+   cam0/cam2 최신 프레임을 round-robin 처리한다. 2026-08-30의 총 10Hz 시험은
+   두 detection topic이 각각 약 5Hz였고 NvMap 오류 없이 동작했지만 CPU 여유를
+   위해 기본값은 총 6Hz로 낮췄다. 기존처럼 카메라별 YOLO 프로세스를 둘 띄우지
+   않는다.
 9. **NTP/chrony 시간 동기화가 더 중요해졌다.** 병합 노드가 카메라 생존을 판단할 때 자기 monotonic 시계를 쓰므로 이 부분은 안전하지만, `/parking/vehicle_pose_feedback`의 `header.stamp`는 CCTV 촬영시각을 그대로 전파하므로 로봇 쪽 신선도 판정이 시계 오차에 영향을 받는다.
 
 ---

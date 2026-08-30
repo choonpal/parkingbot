@@ -195,6 +195,16 @@ RAM 약 4.95/7.62GB, swap 3MB, CPU 50~77%, GR3D 최대 89%였다. 따라서 단�
 카메라나 DDS 영상 publisher 자체는 RPi heartbeat 원인으로 보이지 않지만, dual
 TensorRT cold-load/상시 운용에는 충분한 여유가 있다고 볼 수 없다.
 
+후속 변경에서는 카메라별 YOLO 프로세스 2개를 제거하고, 한 프로세스 안에서
+TensorRT/Ultralytics 모델 객체 1개를 cam0/cam2가 공유하도록 바꿨다. 카메라별
+homography, coverage, sequence와 detection topic은 독립 상태로 유지하고, 최신
+프레임 round-robin scheduler가 총 추론률을 제한한다. 총 10Hz 무구동 시험에서
+두 detection topic은 각각 약 5Hz였고, 70초 동안 perception 재중단이나
+`NvMapMemAlloc` 오류는 없었다. RAM은 약 4.27/7.62GB로 기존 dual-process peak
+약 4.95GB보다 낮았다. CPU 사용률이 높아 production 기본 총 추론률은 6Hz로
+설정했다. mission snapshot 때는 shared engine을 삭제·재로드하지 않고 추론만
+pause/resume한다.
+
 현재 unload 계약은 target 정차와 치수 확정만으로 실행되지 않는다. Fleet가 운영
 승인 뒤 `WAIT_LIFT`에 들어가야 mission snapshot이 active가 되고
 `/parking/perception_suspend=true`가 발행된다. 이번 시험은 PARK/승인을 보내지

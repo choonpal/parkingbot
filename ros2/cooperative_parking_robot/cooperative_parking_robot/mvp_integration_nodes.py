@@ -391,8 +391,8 @@ class OriginAwareCctvMergeNode(cctv_module.CctvMergeNode):
 class OriginAwareYoloBevMapNode(yolo_module.YoloBevMapNode):
     """Support a non-zero OccupancyGrid origin in single-camera operation."""
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         if not self.has_parameter('map_origin_x_m'):
             self.declare_parameter('map_origin_x_m', 0.0)
         if not self.has_parameter('map_origin_y_m'):

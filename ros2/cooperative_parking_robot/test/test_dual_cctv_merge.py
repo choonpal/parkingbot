@@ -441,11 +441,13 @@ def test_dual_launch_fails_closed_when_any_camera_is_missing_by_default():
     assert "declare_parameter('require_all_cameras', True)" in merge
 
 
-def test_dual_launch_staggers_second_tensorrt_model_load():
+def test_dual_launch_uses_one_shared_tensorrt_model():
     dual = (ROOT / 'launch/cctv_server_dual.launch.py').read_text()
-    assert 'TimerAction' in dual
-    assert "'yolo_cam2_start_delay_s', default_value='15.0'" in dual
-    assert "period=LaunchConfiguration('yolo_cam2_start_delay_s')" in dual
+    assert "executable='shared_yolo_bev_map'" in dual
+    assert "'enable_shared_yolo', default_value='true'" in dual
+    assert "'shared_inference_rate_hz', default_value='6.0'" in dual
+    assert 'TimerAction' not in dual
+    assert 'yolo_cam2_start_delay_s' not in dual
 
 
 def test_vehicle_dimensions_reject_out_of_range_masks():
@@ -514,7 +516,8 @@ def test_only_one_publisher_owns_each_mission_topic():
     # 상판 마커 노드는 카메라가 2대여도 인스턴스 하나만 띄운다.
     assert dual.count("executable='cctv_robot_marker'") == 1
     assert dual.count("executable='cctv_merge'") == 1
-    assert dual.count("executable='yolo_bev_map'") == 2
+    assert dual.count("executable='shared_yolo_bev_map'") == 1
+    assert dual.count("executable='yolo_bev_map'") == 0
     assert dual.count("executable='cctv_rectify'") == 2
 
 

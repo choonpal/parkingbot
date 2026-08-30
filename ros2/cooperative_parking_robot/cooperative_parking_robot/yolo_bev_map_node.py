@@ -82,8 +82,17 @@ except ImportError:
 
 
 class YoloBevMapNode(Node):
-    def __init__(self):
-        super().__init__('yolo_bev_map_node')
+    def __init__(self, *, node_name='yolo_bev_map_node',
+                 parameter_overrides=None, shared_model_provider=None,
+                 use_global_arguments=True):
+        # The dual-camera production runtime injects one process-local model
+        # provider into two camera-specific node instances.  Keeping this
+        # optional preserves the standalone/single-camera entry point.
+        self._shared_model_provider = shared_model_provider
+        super().__init__(
+            node_name,
+            parameter_overrides=parameter_overrides,
+            use_global_arguments=use_global_arguments)
 
         # ===== 파라미터 =====
         self.declare_parameter('image_topic', '/cctv/image_rect')
@@ -495,10 +504,27 @@ class YoloBevMapNode(Node):
             # mask 가 없으면 차량 길이/폭을 못 내고 vehicle_spec 이 영원히
             # invalid 라서 미션이 시작되지 않는다. load_yolo_model 이
             # model_mode 에 맞는 task 를 붙여준다.
-            self.model, _task = load_yolo_model(YOLO, mp, self.model_mode)
-            self._validate_model_classes()
+            if self._shared_model_provider is None:
+                self.model, _task = load_yolo_model(
+                    YOLO, mp, self.model_mode)
+                model_status = 'loaded'
+            else:
+                self.model, _task, created = (
+                    self._shared_model_provider.acquire(
+                        YOLO, mp, self.model_mode))
+                model_status = 'loaded once' if created else 'shared reuse'
+            # Both shared camera states clone the same class configuration.
+            # Re-reading ``YOLO.names`` from a TensorRT asset creates a
+            # temporary backend/context in Ultralytics, so validate only on
+            # the first acquisition instead of repeating that cold work for
+            # cam2.
+            if self._shared_model_provider is None or created:
+                self._validate_model_classes()
+            else:
+                self.get_logger().info(
+                    'shared YOLO class mapping already validated')
             self.get_logger().info(
-                f'YOLO loaded: {mp} | mode={self.model_mode} | '
+                f'YOLO {model_status}: {mp} | mode={self.model_mode} | '
                 f'imgsz={self.inference_imgsz} every_n={self.process_every_n}')
         except Exception as e:
             raise RuntimeError(f'YOLO model load failed: {mp}') from e
@@ -619,8 +645,17 @@ class YoloBevMapNode(Node):
         suspend = bool(msg.data)
         if suspend == self.detector_suspended:
             return
+        shared_provider = getattr(self, '_shared_model_provider', None)
+        retain_shared = bool(
+            shared_provider is not None and
+            getattr(shared_provider, 'retain_on_suspend', False))
         if suspend:
             self.detector_suspended = True
+            if retain_shared:
+                self.get_logger().info(
+                    f'[{self.camera_id}] mission snapshot active — '
+                    'shared YOLO inference paused')
+                return
             self.model = None
             self.classifier = None
             gc.collect()
@@ -629,7 +664,14 @@ class YoloBevMapNode(Node):
                 f'[{self.camera_id}] mission snapshot active — YOLO unloaded')
             return
 
-        # The production wrapper serializes reloads across camera processes.
+        if retain_shared:
+            self.detector_suspended = False
+            self.get_logger().info(
+                f'[{self.camera_id}] shared YOLO inference resumed')
+            return
+
+        # The standalone production wrapper serializes reloads across camera
+        # processes.  A shared runtime takes the no-reload branch above.
         # Keep this node suspended if load fails so image_cb cannot use a
         # partially initialized detector.
         try:
@@ -762,7 +804,7 @@ class YoloBevMapNode(Node):
     # 이미지 콜백 — 메인 처리
     # ================================================
     def image_cb(self, msg):
-        if self.model is None:
+        if self.detector_suspended or self.model is None:
             return
         self.frame_count += 1
         if self.frame_count % self.process_every_n != 0:

@@ -70,8 +70,8 @@ class _MaskCenteredYoloModel:
 class YoloBevMapNode(BaselineYoloBevMapNode):
     """Apply measured camera geometry and Seg-mask centre position policy."""
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         geometry = CAMERA_GEOMETRY.get(self.camera_id)
         configured = (
             self.camera_height > 0.0 and

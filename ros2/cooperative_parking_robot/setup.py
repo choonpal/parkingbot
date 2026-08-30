@@ -21,6 +21,8 @@ setup(
              'bev_layout_calibrator_main'),
             ('yolo_bev_map = '
              'cooperative_parking_robot.yolo_bev_map_production_node:main'),
+            ('shared_yolo_bev_map = '
+             'cooperative_parking_robot.shared_yolo_bev_map_node:main'),
             ('yolo_bev_map_baseline = '
              'cooperative_parking_robot.mvp_integration_nodes:yolo_bev_map_main'),
             'fleet_manager = cooperative_parking_robot.fleet_manager_node:main',

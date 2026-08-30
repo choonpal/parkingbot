@@ -12,10 +12,7 @@ from cooperative_parking_robot.gpu_inference_guard import (
     GPU_INFERENCE_GUARD,
     release_unused_cuda_cache,
 )
-from cooperative_parking_robot.site_geometry import (
-    CAMERA_GEOMETRY,
-    VEHICLE_DETECTION_EFFECTIVE_HEIGHT_M,
-)
+from cooperative_parking_robot.site_geometry import CAMERA_GEOMETRY
 from cooperative_parking_robot.vehicle_mask_center import (
     recenter_vehicle_result_boxes,
 )
@@ -100,15 +97,12 @@ class YoloBevMapNode(BaselineYoloBevMapNode):
                 f'[{self.camera_id}] vehicle centre policy: '
                 'segmentation minAreaRect centre (bbox fallback)')
 
-        if VEHICLE_DETECTION_EFFECTIVE_HEIGHT_M is None:
-            self.vehicle_detection_height = 0.0
-            self.get_logger().warn(
-                'vehicle top is sloped; 0.74m is maximum only. '
-                'Vehicle parallax remains disabled until effective '
-                'segmentation height is measured.')
-        else:
-            self.vehicle_detection_height = float(
-                VEHICLE_DETECTION_EFFECTIVE_HEIGHT_M)
+        self.get_logger().info(
+            f'[{self.camera_id}] effective geometry | '
+            f'ground=({self.camera_ground[0]:.3f},'
+            f'{self.camera_ground[1]:.3f})m | '
+            f'camera_height={self.camera_height:.3f}m | '
+            f'vehicle_detection_height_m={self.vehicle_detection_height:.3f}')
 
     def _load_models(self):
         """Bound concurrent CUDA context/CUBLAS initialization across cameras."""

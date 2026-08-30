@@ -282,6 +282,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'target_position_filter_window', default_value='3',
             description='차량 중심 median filter 표본 수'),
+        DeclareLaunchArgument('vehicle_dimension_window_size', default_value='15'),
+        DeclareLaunchArgument('vehicle_dimension_min_samples', default_value='8'),
 
         # ============================================================
         # 상판 마커 (노드 1개가 두 영상 구독)
@@ -482,6 +484,10 @@ def generate_launch_description():
                     'target_position_filter_window'),
                 'use_fixed_wheelbase': True,
                 'fixed_wheelbase_m': _float('fixed_wheelbase_m'),
+                'vehicle_dimension_window_size': _int(
+                    'vehicle_dimension_window_size'),
+                'vehicle_dimension_min_samples': _int(
+                    'vehicle_dimension_min_samples'),
                 'suspend_detectors_after_mission_lock': True,
             }],
             output='screen'),

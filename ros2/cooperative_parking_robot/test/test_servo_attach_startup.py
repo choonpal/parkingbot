@@ -174,7 +174,7 @@ def bridge_for_unit_test(profile='robot-2'):
     node.heartbeat_sequence = 0
     node.outstanding_heartbeats = {}
     node.last_heartbeat_ack_time = 0.0
-    node.heartbeat_ack_timeout = 0.30
+    node.heartbeat_ack_timeout = 0.40
     node.heartbeat_period = 0.10
     node.heartbeat_tx_late_warn = 0.04
     node.heartbeat_rtt_warn = 0.10
@@ -186,6 +186,9 @@ def bridge_for_unit_test(profile='robot-2'):
     node.recovery_fault_latched = False
     node.recovery_ack_count = 0
     node.heartbeat_lock = threading.RLock()
+    node.transport_lifecycle_lock = threading.RLock()
+    node.serial_reader_thread_stop = threading.Event()
+    node.serial_reader_thread = None
     node.heartbeat_stats = {
         'tx_count': 0, 'ack_count': 0, 'lost_count': 0,
         'stale_ack_count': 0, 'duplicate_ack_count': 0,
@@ -193,6 +196,8 @@ def bridge_for_unit_test(profile='robot-2'):
         'max_tx_gap_ms': 0.0, 'max_rtt_ms': 0.0,
         'rtt_average_ms': 0.0, 'scheduler_max_lateness_ms': 0.0,
         'uart_write_max_ms': 0.0,
+        'rx_frame_count': 0, 'rx_read_error_count': 0,
+        'rx_max_processing_ms': 0.0, 'rx_max_gap_ms': 0.0,
     }
     node.last_zero_request_time = None
     node.zero_command_sent = False
@@ -353,6 +358,22 @@ def test_serial_boot_noise_is_drained_before_frames_are_parsed(monkeypatch):
     assert node.ser.in_waiting == 0
     assert node.serial_input_drained is True
     assert node.active_fault is None
+
+
+def test_fresh_serial_session_reapplies_settle_and_drain(monkeypatch):
+    node = bridge_for_unit_test()
+    node.serial_startup_settle = 0.75
+    node.rx_buffer = bytearray(b'partial')
+    replacement = FakeSerial()
+    monkeypatch.setattr(bridge_module.time, 'monotonic', lambda: 20.0)
+
+    node._prepare_serial_session(replacement)
+
+    assert node.ser is replacement
+    assert node.rx_buffer == bytearray()
+    assert node.serial_ready_at == pytest.approx(20.75)
+    assert node.hello_started_at == node.serial_ready_at
+    assert node.serial_input_drained is False
 
 
 def test_hardware_ready_requires_every_specific_gate(monkeypatch):
@@ -634,6 +655,13 @@ def test_heartbeat_producer_is_independent_of_ros_callback_execution():
     assert 'MultiThreadedExecutor' not in bridge_source
     assert 'MultiThreadedExecutor' not in mvp_source
     assert 'executor.spin()' in mvp_source
+
+
+def test_host_heartbeat_timeout_defaults_and_bounds_are_explicit():
+    bridge_source = Path(bridge_module.__file__).read_text(encoding='utf-8')
+    assert "declare_parameter('heartbeat_period_s', 0.10)" in bridge_source
+    assert "declare_parameter('heartbeat_ack_timeout_s', 0.40)" in bridge_source
+    assert 'self.heartbeat_ack_timeout <= 0.50' in bridge_source
 
 
 def test_dedicated_producer_does_not_skip_boundary_ticks(monkeypatch):

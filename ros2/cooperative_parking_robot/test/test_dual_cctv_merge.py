@@ -452,10 +452,34 @@ def test_dual_launch_uses_one_shared_tensorrt_model():
 
 def test_vehicle_dimensions_reject_out_of_range_masks():
     tracker = VehicleDimensionTracker(0.90, 0.35, padding_m=0.03)
+    for _ in range(7):
+        assert tracker.update_dimensions(0.88, 0.33) is True
+        assert tracker.dimension_valid is False
     assert tracker.update_dimensions(0.88, 0.33) is True
     assert tracker.length_m == pytest.approx(0.94)
     assert tracker.update_dimensions(99.0, 0.30) is False
     assert tracker.length_m == pytest.approx(0.94)
+
+
+def test_vehicle_dimension_window_rejects_single_oversized_outlier():
+    tracker = VehicleDimensionTracker(0.90, 0.35, padding_m=0.03)
+    samples = [(0.88, 0.33)] * 7 + [(2.0, 1.0)]
+    for length, width in samples:
+        tracker.update_dimensions(length, width)
+    assert tracker.dimension_valid
+    assert tracker.length_m == pytest.approx(0.94)
+    assert tracker.width_m == pytest.approx(0.39)
+
+
+def test_camera_dimension_windows_are_independent():
+    trackers = {
+        camera: VehicleDimensionTracker(0.90, 0.35)
+        for camera in ('cam0', 'cam2')}
+    for _ in range(8):
+        trackers['cam0'].update_dimensions(0.88, 0.33)
+    trackers['cam2'].update_dimensions(1.20, 0.50)
+    assert trackers['cam0'].dimension_valid
+    assert not trackers['cam2'].dimension_valid
 
 
 def test_vehicle_yaw_ema_handles_axis_wraparound():

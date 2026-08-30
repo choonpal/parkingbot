@@ -46,6 +46,8 @@
     slot_empty_confirm_frames: 5
     slot_occupied_hold_s: 0.750000
     vehicle_feedback_association_gate_m: 0.450000
+    vehicle_dimension_window_size: 15
+    vehicle_dimension_min_samples: 8
     use_mask_vehicle_dimensions: true
 
 fleet_manager_node:
@@ -69,6 +71,7 @@ fleet_manager_node:
     default_wheelbase_m: 0.785000
     default_vehicle_length_m: 0.900000
     default_vehicle_width_m: 0.350000
+    use_measured_vehicle_dimensions_for_planning: false
     footprint_safety_margin_m: 0.060000
     slot_fit_longitudinal_margin_m: 0.060000
     slot_fit_lateral_margin_m: 0.060000

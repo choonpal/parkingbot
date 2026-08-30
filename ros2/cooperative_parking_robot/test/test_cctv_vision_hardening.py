@@ -140,6 +140,9 @@ def test_production_wrappers_preserve_explicit_site_geometry():
     )).read_text()
     assert 'if configured:' in yolo
     assert 'elif geometry is not None:' in yolo
+    assert 'self.vehicle_detection_height = 0.0' not in yolo
+    assert 'VEHICLE_DETECTION_EFFECTIVE_HEIGHT_M' not in yolo
+    assert 'vehicle_detection_height_m={self.vehicle_detection_height:.3f}' in yolo
     assert 'if not configured and set(ids) == set(CAMERA_GEOMETRY):' in marker
 
 

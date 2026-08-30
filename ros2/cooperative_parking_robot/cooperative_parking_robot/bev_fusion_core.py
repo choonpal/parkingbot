@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import math
+import statistics
 from collections import deque
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -706,7 +707,9 @@ class VehicleDimensionTracker:
                  length_range_m: Sequence[float] = (0.30, 6.50),
                  width_range_m: Sequence[float] = (0.20, 2.80),
                  dimension_alpha: float = 0.20,
-                 yaw_alpha: float = 0.15):
+                 yaw_alpha: float = 0.15,
+                 window_size: int = 15,
+                 min_samples: int = 8):
         if float(default_length_m) <= 0.0 or float(default_width_m) <= 0.0:
             raise ValueError('default vehicle dimensions must be positive')
         if float(padding_m) < 0.0:
@@ -717,6 +720,9 @@ class VehicleDimensionTracker:
             raise ValueError('dimension_alpha must be in (0,1]')
         if not 0.0 < float(yaw_alpha) <= 1.0:
             raise ValueError('yaw_alpha must be in (0,1]')
+        if (int(window_size) <= 0 or
+                not 1 <= int(min_samples) <= int(window_size)):
+            raise ValueError('dimension sample counts are invalid')
         self.default_length = float(default_length_m)
         self.default_width = float(default_width_m)
         self.padding = float(padding_m)
@@ -724,8 +730,15 @@ class VehicleDimensionTracker:
         self.width_range = (float(width_range_m[0]), float(width_range_m[1]))
         self.dimension_alpha = float(dimension_alpha)
         self.yaw_alpha = float(yaw_alpha)
+        self.window_size = int(window_size)
+        self.min_samples = int(min_samples)
+        self.samples = deque(maxlen=self.window_size)
         self.length_m = self.default_length
         self.width_m = self.default_width
+        self.raw_length_m = None
+        self.raw_width_m = None
+        self.filtered_length_m = None
+        self.filtered_width_m = None
         self.dimension_valid = False
         self.yaw = 0.0
         self.yaw_valid = False
@@ -734,18 +747,45 @@ class VehicleDimensionTracker:
         self.length_m = self.default_length
         self.width_m = self.default_width
         self.dimension_valid = False
+        self.samples.clear()
+        self.raw_length_m = None
+        self.raw_width_m = None
+        self.filtered_length_m = None
+        self.filtered_width_m = None
         self.yaw = 0.0
         self.yaw_valid = False
 
     def update_dimensions(self, measured_length, measured_width) -> bool:
         if measured_length is None or measured_width is None:
             return False
-        length = float(measured_length) + 2.0 * self.padding
-        width = float(measured_width) + 2.0 * self.padding
+        raw_length = float(measured_length)
+        raw_width = float(measured_width)
+        length = raw_length + 2.0 * self.padding
+        width = raw_width + 2.0 * self.padding
         if not self.length_range[0] <= length <= self.length_range[1]:
             return False
         if not self.width_range[0] <= width <= self.width_range[1]:
             return False
+        self.raw_length_m = raw_length
+        self.raw_width_m = raw_width
+        self.samples.append((raw_length, raw_width))
+        if len(self.samples) < self.min_samples:
+            return True
+
+        def robust_median(values):
+            center = statistics.median(values)
+            mad = statistics.median(abs(value - center) for value in values)
+            tolerance = max(3.0 * mad, 0.02)
+            retained = [value for value in values
+                        if abs(value - center) <= tolerance]
+            return statistics.median(retained)
+
+        filtered_length = robust_median([sample[0] for sample in self.samples])
+        filtered_width = robust_median([sample[1] for sample in self.samples])
+        self.filtered_length_m = filtered_length
+        self.filtered_width_m = filtered_width
+        length = filtered_length + 2.0 * self.padding
+        width = filtered_width + 2.0 * self.padding
         if not self.dimension_valid:
             self.length_m = length
             self.width_m = width

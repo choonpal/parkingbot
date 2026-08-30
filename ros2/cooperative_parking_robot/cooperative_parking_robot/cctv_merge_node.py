@@ -152,6 +152,8 @@ class CctvMergeNode(Node):
         self.declare_parameter('vehicle_length_range_m', [0.30, 6.50])
         self.declare_parameter('vehicle_width_range_m', [0.20, 2.80])
         self.declare_parameter('vehicle_dimension_ema_alpha', 0.20)
+        self.declare_parameter('vehicle_dimension_window_size', 15)
+        self.declare_parameter('vehicle_dimension_min_samples', 8)
         self.declare_parameter('vehicle_spec_republish_s', 1.0)
         self.declare_parameter('yaw_ema_alpha', 0.15)
         self.declare_parameter('waiting_yaw_deg', 0.0)
@@ -331,20 +333,29 @@ class CctvMergeNode(Node):
             detection_timeout_s=float(
                 self.get_parameter('target_detection_timeout_s').value),
             position_filter_window=self.target_position_filter_window)
-        self.dimension_tracker = VehicleDimensionTracker(
-            default_length_m=float(
-                self.get_parameter('default_vehicle_length_m').value),
-            default_width_m=float(
-                self.get_parameter('default_vehicle_width_m').value),
-            padding_m=float(
-                self.get_parameter('vehicle_dimension_padding_m').value),
-            length_range_m=list(
-                self.get_parameter('vehicle_length_range_m').value),
-            width_range_m=list(
-                self.get_parameter('vehicle_width_range_m').value),
-            dimension_alpha=float(
-                self.get_parameter('vehicle_dimension_ema_alpha').value),
-            yaw_alpha=float(self.get_parameter('yaw_ema_alpha').value))
+        tracker_args = dict(
+            default_length_m=float(self.get_parameter(
+                'default_vehicle_length_m').value),
+            default_width_m=float(self.get_parameter(
+                'default_vehicle_width_m').value),
+            padding_m=float(self.get_parameter(
+                'vehicle_dimension_padding_m').value),
+            length_range_m=list(self.get_parameter(
+                'vehicle_length_range_m').value),
+            width_range_m=list(self.get_parameter(
+                'vehicle_width_range_m').value),
+            dimension_alpha=float(self.get_parameter(
+                'vehicle_dimension_ema_alpha').value),
+            yaw_alpha=float(self.get_parameter('yaw_ema_alpha').value),
+            window_size=int(self.get_parameter(
+                'vehicle_dimension_window_size').value),
+            min_samples=int(self.get_parameter(
+                'vehicle_dimension_min_samples').value))
+        self.dimension_trackers = {
+            camera_id: VehicleDimensionTracker(**tracker_args)
+            for camera_id in self.camera_ids}
+        self.dimension_source_camera = None
+        self.dimension_tracker = self.dimension_trackers[self.camera_ids[0]]
 
         # 카메라별 최신 envelope. 값이 None이면 아직 한 번도 못 받은 상태다.
         self.latest = {camera_id: None for camera_id in self.camera_ids}
@@ -482,7 +493,7 @@ class CctvMergeNode(Node):
         if self.target_tracker.latched is None:
             return
         self.target_tracker.reset()
-        self.dimension_tracker.reset()
+        self._reset_dimension_trackers()
         self.spec_sent = False
         self.spec_last_publish_wall = None
         self.latest_vehicle_class = 'default'
@@ -576,6 +587,14 @@ class CctvMergeNode(Node):
                 break
         if target_detection is not None:
             self._target_last_observed_wall = now
+            source_camera = target_detection.primary.camera_id
+            if source_camera != self.dimension_source_camera:
+                self.dimension_source_camera = source_camera
+                self.dimension_tracker = self.dimension_trackers[source_camera]
+                self.spec_sent = False
+                self.spec_last_publish_wall = None
+                if self.fleet_state not in ('PLAN_PATH', 'NAVIGATING'):
+                    self.mission_snapshot = None
             self.dimension_tracker.update_yaw(target_detection.yaw)
             self.dimension_tracker.update_dimensions(
                 target_detection.length_m, target_detection.width_m)
@@ -584,7 +603,7 @@ class CctvMergeNode(Node):
             if (self.target_tracker.latched is None and
                     now - self.target_tracker.last_seen >
                     self.target_tracker.timeout_s):
-                self.dimension_tracker.reset()
+                self._reset_dimension_trackers()
 
         mission_active = (
             self.fleet_state in ('PLAN_PATH', 'NAVIGATING') or
@@ -717,7 +736,7 @@ class CctvMergeNode(Node):
 
     def _publish_fail_closed(self, camera_states):
         self.target_tracker.reset()
-        self.dimension_tracker.reset()
+        self._reset_dimension_trackers()
         self.spec_sent = False
         self.spec_last_publish_wall = None
         self.latest_vehicle_class = 'default'
@@ -744,6 +763,16 @@ class CctvMergeNode(Node):
         msg.pose.orientation.z = math.sin(half_yaw)
         msg.pose.orientation.w = math.cos(half_yaw)
         self.pub_target.publish(msg)
+
+    def _reset_dimension_trackers(self):
+        trackers = getattr(self, 'dimension_trackers', None)
+        if trackers is None:
+            self.dimension_tracker.reset()
+            return
+        for tracker in trackers.values():
+            tracker.reset()
+        self.dimension_source_camera = None
+        self.dimension_tracker = trackers[self.camera_ids[0]]
 
     def _publish_target_status(
             self, now, current_visible, ready, perception_available=True,
@@ -804,7 +833,16 @@ class CctvMergeNode(Node):
             'vehicle_length_m': self.dimension_tracker.length_m,
             'vehicle_width_m': self.dimension_tracker.width_m,
             'dimension_source': 'segmentation_mask',
+            'dimension_source_camera': self.dimension_source_camera,
             'dimension_valid': True,
+            'dimension_sample_count': len(self.dimension_tracker.samples),
+            'raw_vehicle_length_m': self.dimension_tracker.raw_length_m,
+            'raw_vehicle_width_m': self.dimension_tracker.raw_width_m,
+            'filtered_vehicle_length_m': (
+                self.dimension_tracker.filtered_length_m),
+            'filtered_vehicle_width_m': (
+                self.dimension_tracker.filtered_width_m),
+            'dimension_padding_m': self.dimension_tracker.padding,
             'sequence': 1,
             'stamp_ns': self.get_clock().now().nanoseconds,
         })

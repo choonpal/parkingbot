@@ -159,7 +159,7 @@ class Stm32BridgeNode(Node):
         self.declare_parameter('servo_attach_retry_interval_s', 0.75)
         self.declare_parameter('hello_retry_interval_s', 0.25)
         self.declare_parameter('hello_handshake_timeout_s', 2.0)
-        self.declare_parameter('heartbeat_ack_timeout_s', 0.30)
+        self.declare_parameter('heartbeat_ack_timeout_s', 0.40)
         self.declare_parameter('heartbeat_period_s', 0.10)
         self.declare_parameter('heartbeat_tx_late_warn_s', 0.04)
         self.declare_parameter('heartbeat_rtt_warn_s', 0.10)
@@ -206,10 +206,10 @@ class Stm32BridgeNode(Node):
         if (self.hello_retry_interval <= 0.0 or
                 self.hello_handshake_timeout <= self.hello_retry_interval):
             raise ValueError('invalid HELLO retry/timeout parameters')
-        if not (0.0 < self.heartbeat_period < self.heartbeat_ack_timeout <= 0.30):
+        if not (0.0 < self.heartbeat_period < self.heartbeat_ack_timeout <= 0.50):
             raise ValueError(
                 'heartbeat period must be positive and ACK timeout must be '
-                'between the period and STM32 0.30s')
+                'greater than the period and at most 0.50s')
         if not (0.0 < self.heartbeat_tx_late_warn <
                 self.heartbeat_ack_timeout):
             raise ValueError('invalid heartbeat TX lateness warning threshold')
@@ -323,6 +323,7 @@ class Stm32BridgeNode(Node):
         # independent producer incorrectly reaches its 300 ms timeout.
         self.serial_reader_thread_stop = threading.Event()
         self.serial_reader_thread = None
+        self.transport_lifecycle_lock = threading.RLock()
         self.heartbeat_stats = {
             'tx_count': 0, 'ack_count': 0, 'lost_count': 0,
             'stale_ack_count': 0, 'duplicate_ack_count': 0,
@@ -330,7 +331,11 @@ class Stm32BridgeNode(Node):
             'max_tx_gap_ms': 0.0, 'max_rtt_ms': 0.0,
             'rtt_average_ms': 0.0, 'scheduler_max_lateness_ms': 0.0,
             'uart_write_max_ms': 0.0,
+            'rx_frame_count': 0, 'rx_read_error_count': 0,
+            'rx_max_processing_ms': 0.0, 'rx_max_gap_ms': 0.0,
         }
+        self.rx_last_frame_time = None
+        self.rx_last_read_time = None
         self.last_zero_request_time = None
         self.zero_command_sent = False
         self.zero_command_acknowledged = False
@@ -385,17 +390,14 @@ class Stm32BridgeNode(Node):
                 f'[{self.role}] serial 연결 비활성화 — smoke mode')
         elif SERIAL_OK:
             try:
-                self.ser = serial.Serial(
+                handle = serial.Serial(
                     self.serial_port,
                     self.serial_baud,
                     timeout=0.0,
                     write_timeout=0.05,
                     exclusive=True)
-                self.ser.reset_input_buffer()
-                self.serial_ready_at = (
-                    time.monotonic() + self.serial_startup_settle)
-                self.hello_started_at = self.serial_ready_at
-                self.serial_input_drained = False
+                handle.reset_input_buffer()
+                self._prepare_serial_session(handle)
                 self.get_logger().info(f'[{self.role}] STM32 연결')
             except Exception as e:
                 self.get_logger().error(f'STM32 연결 실패: {e}')
@@ -920,20 +922,45 @@ class Stm32BridgeNode(Node):
         thread = getattr(self, 'serial_reader_thread', None)
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout)
-        self.serial_reader_thread = None
+        if thread is None or not thread.is_alive():
+            self.serial_reader_thread = None
+
+    def _prepare_serial_session(self, handle):
+        """Install one fresh handle with the cold-open settle/drain contract."""
+        self.ser = handle
+        self.rx_buffer.clear()
+        self.serial_ready_at = time.monotonic() + self.serial_startup_settle
+        self.hello_started_at = self.serial_ready_at
+        self.serial_input_drained = False
 
     def _serial_reader_loop(self):
         """Poll at 100 Hz; serial itself remains non-blocking (timeout=0)."""
         next_tick = time.monotonic()
-        while not self.serial_reader_thread_stop.is_set():
-            self.read_serial()
-            next_tick += 0.01
-            now = time.monotonic()
-            if next_tick <= now:
-                next_tick = now + 0.01
-            if self.serial_reader_thread_stop.wait(
-                    max(0.0, next_tick - now)):
-                return
+        current = threading.current_thread()
+        try:
+            while not self.serial_reader_thread_stop.is_set():
+                started = time.monotonic()
+                self.read_serial()
+                finished = time.monotonic()
+                with self.heartbeat_lock:
+                    if self.rx_last_read_time is not None:
+                        self.heartbeat_stats['rx_max_gap_ms'] = max(
+                            self.heartbeat_stats['rx_max_gap_ms'],
+                            (started - self.rx_last_read_time) * 1000.0)
+                    self.rx_last_read_time = started
+                    self.heartbeat_stats['rx_max_processing_ms'] = max(
+                        self.heartbeat_stats['rx_max_processing_ms'],
+                        (finished - started) * 1000.0)
+                next_tick += 0.01
+                now = time.monotonic()
+                if next_tick <= now:
+                    next_tick = now + 0.01
+                if self.serial_reader_thread_stop.wait(
+                        max(0.0, next_tick - now)):
+                    return
+        finally:
+            if self.serial_reader_thread is current:
+                self.serial_reader_thread = None
 
     def _stop_heartbeat_producer(self, timeout=1.0):
         stop_event = getattr(self, 'heartbeat_thread_stop', None)
@@ -1107,6 +1134,13 @@ class Stm32BridgeNode(Node):
                 'motion_rearm_required': self.motion_rearm_required,
                 'outstanding_count': len(self.outstanding_heartbeats),
                 'intended_period_ms': self.heartbeat_period * 1000.0,
+                'rx_thread_alive': bool(
+                    self.serial_reader_thread is not None and
+                    self.serial_reader_thread.is_alive()),
+                'rx_last_frame_age_ms': (
+                    None if self.rx_last_frame_time is None else
+                    max(0.0, time.monotonic() - self.rx_last_frame_time) *
+                    1000.0),
             })
         self.pub_heartbeat_diag.publish(String(
             data=json.dumps(snapshot, separators=(',', ':'), sort_keys=True)))
@@ -1129,14 +1163,20 @@ class Stm32BridgeNode(Node):
         # If RX detected the failure, wait for the sole writer before close.
         # If the writer detected it, stop() recognizes its own thread and only
         # prevents subsequent dequeues, so there is no self-join deadlock.
-        self.tx_scheduler.stop(drain=False)
-        serial_handle = self.ser
-        self.ser = None
-        if serial_handle is not None and hasattr(serial_handle, 'close'):
-            try:
-                serial_handle.close()
-            except Exception:
-                pass
+        with self.transport_lifecycle_lock:
+            self.tx_scheduler.stop(drain=False)
+            reader = getattr(self, 'serial_reader_thread', None)
+            if reader is threading.current_thread():
+                self.serial_reader_thread_stop.set()
+            else:
+                self._stop_serial_reader()
+            serial_handle = self.ser
+            self.ser = None
+            if serial_handle is not None and hasattr(serial_handle, 'close'):
+                try:
+                    serial_handle.close()
+                except Exception:
+                    pass
 
     def _write(self, cmd, *, kind='action', priority=P3_ACTION,
                deadline=float('inf'), metadata=None):
@@ -1192,32 +1232,39 @@ class Stm32BridgeNode(Node):
     # ===== STM32 → ROS2 =====
     def read_serial(self):
         """UART byte stream을 newline 단위로 조립해 완전한 프레임만 파싱한다."""
-        if not self.ser:
+        serial_handle = self.ser
+        if not serial_handle:
             return
         now = time.monotonic()
         if now < getattr(self, 'serial_ready_at', 0.0):
             # 부팅 중의 부분 telemetry/boot noise가 정상 프로토콜 frame으로
             # 오인되지 않게 버린다. 이 구간에는 아직 어떤 명령도 보내지 않는다.
             try:
-                self.ser.reset_input_buffer()
+                serial_handle.reset_input_buffer()
             except Exception as exc:
+                with self.heartbeat_lock:
+                    self.heartbeat_stats['rx_read_error_count'] += 1
                 self._latch_transport_fault('ERR,UART_READ', str(exc))
             self.rx_buffer.clear()
             return
         if not getattr(self, 'serial_input_drained', True):
             try:
-                self.ser.reset_input_buffer()
+                serial_handle.reset_input_buffer()
             except Exception as exc:
+                with self.heartbeat_lock:
+                    self.heartbeat_stats['rx_read_error_count'] += 1
                 self._latch_transport_fault('ERR,UART_READ', str(exc))
                 return
             self.rx_buffer.clear()
             self.serial_input_drained = True
             return
         try:
-            waiting = int(self.ser.in_waiting)
+            waiting = int(serial_handle.in_waiting)
             if waiting > 0:
-                self.rx_buffer.extend(self.ser.read(min(waiting, 1024)))
+                self.rx_buffer.extend(serial_handle.read(min(waiting, 1024)))
         except Exception as exc:
+            with self.heartbeat_lock:
+                self.heartbeat_stats['rx_read_error_count'] += 1
             self._latch_transport_fault('ERR,UART_READ', str(exc))
             return
 
@@ -1246,6 +1293,9 @@ class Stm32BridgeNode(Node):
                 continue
             if not line:
                 continue
+            with self.heartbeat_lock:
+                self.heartbeat_stats['rx_frame_count'] += 1
+                self.rx_last_frame_time = time.monotonic()
             self._handle_serial_line(line)
             if self.transport_fault:
                 break
@@ -1509,12 +1559,21 @@ class Stm32BridgeNode(Node):
                 f'[{self.role}] serial reconnect failed: {exc}',
                 throttle_duration_sec=2.0)
             return
-        self.ser = handle
-        self.rx_buffer.clear()
-        self.transport_fault = None
-        self._clear_recoverable_fault()
-        self.tx_scheduler.start()
-        self._begin_communication_recovery('UART_RECONNECTED')
+        with self.transport_lifecycle_lock:
+            self._stop_serial_reader()
+            if (self.serial_reader_thread is not None and
+                    self.serial_reader_thread.is_alive()):
+                handle.close()
+                self.get_logger().error(
+                    'UART reader did not stop; reconnect deferred')
+                return
+            self._prepare_serial_session(handle)
+            self.transport_fault = None
+            self._clear_recoverable_fault()
+            self.tx_scheduler.start()
+            self._begin_communication_recovery('UART_RECONNECTED')
+            self.hello_started_at = self.serial_ready_at
+            self._start_serial_reader()
         self.publish_status('INFO,RECOVERY_STATE:HANDSHAKING')
 
     def publish_motor_diagnostics(self, parsed):

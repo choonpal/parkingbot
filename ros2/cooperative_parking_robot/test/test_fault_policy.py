@@ -4,6 +4,7 @@ from cooperative_parking_robot.fault_policy import FaultClass, classify_fault
 def test_required_fault_matrix_classification():
     recoverable = (
         'ERR,HEARTBEAT_TIMEOUT', 'ERR,COMMAND_TIMEOUT',
+        'ERR,PROTOCOL_HANDSHAKE_TIMEOUT',
         'ERR,CLOCK_SKEW:auto:STALE_STAMP', 'ERR,UART_FRAME_CORRUPTION',
         'SERIAL_UNAVAILABLE', 'SERIAL_BUSY', 'ERR,HELLO_REQUIRED',
         'ERR,SERVO_NOT_ATTACHED', 'ERR,BAD_SERVO_ATTACH',
@@ -34,3 +35,12 @@ def test_recoverable_faults_are_safe_stop_not_ignored():
     assert policy.hardware_ready_false
     assert policy.mission_abort_required
     assert policy.reconnect_allowed
+
+
+def test_protocol_handshake_timeout_is_reconnectable_not_estop():
+    policy = classify_fault('ERR,PROTOCOL_HANDSHAKE_TIMEOUT')
+    assert policy.classification is FaultClass.RECOVERABLE
+    assert policy.motion_stop_required and policy.hardware_ready_false
+    assert policy.reconnect_allowed
+    assert not policy.estop_required
+    assert not policy.manual_reset_required

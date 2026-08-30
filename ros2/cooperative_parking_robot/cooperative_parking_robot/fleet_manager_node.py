@@ -109,7 +109,7 @@ class FleetManagerNode(Node):
         self.declare_parameter('default_wheelbase_m', 0.785)
         # 차량 외곽은 아직 실측 전 placeholder이며 config에서 교체한다.
         self.declare_parameter('default_vehicle_length_m', 0.90)
-        self.declare_parameter('default_vehicle_width_m', 0.35)
+        self.declare_parameter('default_vehicle_width_m', 0.62)
         self.declare_parameter('source_vehicle_fallback_mask_m', 0.90)
         self.declare_parameter('footprint_safety_margin_m', 0.06)
         self.declare_parameter('unknown_is_occupied', True)

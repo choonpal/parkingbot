@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Tuple
 
 
 @dataclass(frozen=True)
@@ -30,8 +30,8 @@ ROBOT_MARKER_HEIGHT_M = 0.120
 FRONT_MARKER_OFFSET_X_M = 0.0
 REAR_MARKER_OFFSET_X_M = 0.0
 
-# The vehicle top surface is sloped and 0.74 m is only its maximum height.
-# A single 0.74 m plane would over-correct the segmentation centroid. Leave
-# this disabled until the effective height is estimated from a known vehicle
-# center versus the raw homography-projected YOLO center.
-VEHICLE_DETECTION_EFFECTIVE_HEIGHT_M: Optional[float] = None
+# 2026-08-30 현장 실측 차량 높이는 0.530m지만, 대기 차량 YOLO는 존재 확인에만
+# 사용하고 목표 pose는 고정한다. 검출 표시까지 이동시키는 시차 보정은 적용하지
+# 않는다.
+MEASURED_VEHICLE_HEIGHT_M = 0.530
+VEHICLE_DETECTION_EFFECTIVE_HEIGHT_M = None

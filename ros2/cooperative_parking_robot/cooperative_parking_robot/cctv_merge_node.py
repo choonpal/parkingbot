@@ -68,7 +68,6 @@ from cooperative_parking_robot.latest_qos import (
     SENSOR_LATEST_QOS,
     STATE_LATEST_QOS,
 )
-from cooperative_parking_robot.vision_utils import directed_axis_yaw
 
 try:
     import cv2
@@ -129,6 +128,8 @@ class CctvMergeNode(Node):
         self.declare_parameter(
             'waiting_polygon',
             [2.10, 0.30, 2.50, 0.30, 2.50, 0.90, 2.10, 0.90])
+        self.declare_parameter('waiting_x', 0.60)
+        self.declare_parameter('waiting_y', 0.40)
         self.declare_parameter('slot_occupancy_overlap_ratio', 0.10)
         self.declare_parameter('slot_empty_confirm_frames', 5)
         self.declare_parameter('slot_occupied_hold_s', 0.75)
@@ -146,8 +147,9 @@ class CctvMergeNode(Node):
         self.declare_parameter('vehicle_feedback_association_gate_m', 0.45)
         self.declare_parameter('use_fixed_wheelbase', True)
         self.declare_parameter('fixed_wheelbase_m', 0.785)
+        self.declare_parameter('use_mask_vehicle_dimensions', False)
         self.declare_parameter('default_vehicle_length_m', 0.90)
-        self.declare_parameter('default_vehicle_width_m', 0.35)
+        self.declare_parameter('default_vehicle_width_m', 0.62)
         self.declare_parameter('vehicle_dimension_padding_m', 0.03)
         self.declare_parameter('vehicle_length_range_m', [0.30, 6.50])
         self.declare_parameter('vehicle_width_range_m', [0.20, 2.80])
@@ -287,6 +289,15 @@ class CctvMergeNode(Node):
         self.waiting_polygon = [
             (float(waiting_flat[i]), float(waiting_flat[i + 1]))
             for i in range(0, 8, 2)]
+        self.waiting_target = (
+            float(self.get_parameter('waiting_x').value),
+            float(self.get_parameter('waiting_y').value))
+        if (not all(math.isfinite(value) for value in self.waiting_target) or
+                not point_in_polygon(
+                    self.waiting_target[0], self.waiting_target[1],
+                    self.waiting_polygon)):
+            raise ValueError(
+                'waiting_x/y must lie inside vehicle detection ROI')
 
         self.feedback_gate = float(
             self.get_parameter('vehicle_feedback_association_gate_m').value)
@@ -295,6 +306,8 @@ class CctvMergeNode(Node):
                 'vehicle_feedback_association_gate_m must be positive')
         self.use_fixed_wheelbase = bool(
             self.get_parameter('use_fixed_wheelbase').value)
+        self.use_mask_vehicle_dimensions = bool(
+            self.get_parameter('use_mask_vehicle_dimensions').value)
         self.fixed_wheelbase = float(
             self.get_parameter('fixed_wheelbase_m').value)
         if self.fixed_wheelbase <= 0.0:
@@ -344,7 +357,8 @@ class CctvMergeNode(Node):
                 self.get_parameter('vehicle_width_range_m').value),
             dimension_alpha=float(
                 self.get_parameter('vehicle_dimension_ema_alpha').value),
-            yaw_alpha=float(self.get_parameter('yaw_ema_alpha').value))
+            yaw_alpha=float(self.get_parameter('yaw_ema_alpha').value),
+            use_measured_dimensions=self.use_mask_vehicle_dimensions)
 
         # 카메라별 최신 envelope. 값이 None이면 아직 한 번도 못 받은 상태다.
         self.latest = {camera_id: None for camera_id in self.camera_ids}
@@ -576,7 +590,6 @@ class CctvMergeNode(Node):
                 break
         if target_detection is not None:
             self._target_last_observed_wall = now
-            self.dimension_tracker.update_yaw(target_detection.yaw)
             self.dimension_tracker.update_dimensions(
                 target_detection.length_m, target_detection.width_m)
         else:
@@ -590,7 +603,7 @@ class CctvMergeNode(Node):
             self.fleet_state in ('PLAN_PATH', 'NAVIGATING') or
             (self.fleet_state == 'WAIT_LIFT' and self.vehicle_lifted))
         latched = self.target_tracker.update(
-            None if target_detection is None else target_detection.center,
+            None if target_detection is None else self.waiting_target,
             now,
             preserve_latched=mission_active)
         if self.target_tracker.just_latched:
@@ -598,7 +611,7 @@ class CctvMergeNode(Node):
                 '타겟 정차 확인 — target_ready latch (merge)')
             self.pub_target_ready.publish(Bool(data=True))
         if latched is not None:
-            self._publish_target(latched)
+            self._publish_target(self.waiting_target)
             if (not self.spec_sent or self.spec_last_publish_wall is None or
                     now - self.spec_last_publish_wall >=
                     self.spec_republish_s):
@@ -672,7 +685,7 @@ class CctvMergeNode(Node):
     def _publish_mission_snapshot(self, camera_states, now):
         snapshot = self.mission_snapshot
         latched = self.target_tracker.latched
-        self._publish_target(latched)
+        self._publish_target(self.waiting_target)
         if (not self.spec_sent or self.spec_last_publish_wall is None or
                 now - self.spec_last_publish_wall >= self.spec_republish_s):
             self._publish_vehicle_spec()
@@ -739,8 +752,8 @@ class CctvMergeNode(Node):
         msg.header.frame_id = 'map'
         msg.pose.position.x = float(center[0])
         msg.pose.position.y = float(center[1])
-        half_yaw = directed_axis_yaw(
-            self.dimension_tracker.yaw, self.waiting_yaw) / 2.0
+        # YOLO는 존재 확인에만 사용한다. 목표 방향은 현장 대기방향 고정값이다.
+        half_yaw = self.waiting_yaw / 2.0
         msg.pose.orientation.z = math.sin(half_yaw)
         msg.pose.orientation.w = math.cos(half_yaw)
         self.pub_target.publish(msg)
@@ -803,7 +816,10 @@ class CctvMergeNode(Node):
                 'fixed' if self.use_fixed_wheelbase else 'classified'),
             'vehicle_length_m': self.dimension_tracker.length_m,
             'vehicle_width_m': self.dimension_tracker.width_m,
-            'dimension_source': 'segmentation_mask',
+            'dimension_source': (
+                'segmentation_mask'
+                if self.use_mask_vehicle_dimensions
+                else 'configured_fixed'),
             'dimension_valid': True,
             'sequence': 1,
             'stamp_ns': self.get_clock().now().nanoseconds,
@@ -888,10 +904,10 @@ class CctvMergeNode(Node):
         car_px = max(1, int(math.ceil(self.car_size / self.resolution)))
         for detection in merged:
             # 운반 대상은 A* 장애물에서 제거해 시작점이 막히지 않게 한다.
-            if latched is not None and math.hypot(
-                    detection.center[0] - latched[0],
-                    detection.center[1] - latched[1]
-            ) <= self.target_mask_radius:
+            if latched is not None and (
+                    detection.in_waiting or point_in_polygon(
+                        detection.center[0], detection.center[1],
+                        self.waiting_polygon)):
                 continue
             if detection.polygon is not None and len(detection.polygon) >= 3:
                 contour = np.asarray([

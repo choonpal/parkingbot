@@ -697,7 +697,7 @@ class TargetLatchTracker:
 
 
 class VehicleDimensionTracker:
-    """차량 mask의 길이/폭/yaw를 검증하고 EMA로 안정화한다."""
+    """차량 yaw를 안정화하고, 선택 시에만 mask 길이/폭을 추적한다."""
 
     def __init__(self,
                  default_length_m: float,
@@ -706,7 +706,8 @@ class VehicleDimensionTracker:
                  length_range_m: Sequence[float] = (0.30, 6.50),
                  width_range_m: Sequence[float] = (0.20, 2.80),
                  dimension_alpha: float = 0.20,
-                 yaw_alpha: float = 0.15):
+                 yaw_alpha: float = 0.15,
+                 use_measured_dimensions: bool = True):
         if float(default_length_m) <= 0.0 or float(default_width_m) <= 0.0:
             raise ValueError('default vehicle dimensions must be positive')
         if float(padding_m) < 0.0:
@@ -724,20 +725,23 @@ class VehicleDimensionTracker:
         self.width_range = (float(width_range_m[0]), float(width_range_m[1]))
         self.dimension_alpha = float(dimension_alpha)
         self.yaw_alpha = float(yaw_alpha)
+        self.use_measured_dimensions = bool(use_measured_dimensions)
         self.length_m = self.default_length
         self.width_m = self.default_width
-        self.dimension_valid = False
+        self.dimension_valid = not self.use_measured_dimensions
         self.yaw = 0.0
         self.yaw_valid = False
 
     def reset(self) -> None:
         self.length_m = self.default_length
         self.width_m = self.default_width
-        self.dimension_valid = False
+        self.dimension_valid = not self.use_measured_dimensions
         self.yaw = 0.0
         self.yaw_valid = False
 
     def update_dimensions(self, measured_length, measured_width) -> bool:
+        if not self.use_measured_dimensions:
+            return False
         if measured_length is None or measured_width is None:
             return False
         length = float(measured_length) + 2.0 * self.padding

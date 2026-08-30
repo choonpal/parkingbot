@@ -120,7 +120,7 @@ def test_delayed_correction_rewinds_then_replays_later_wheel_steps():
     assert result.quantization_s == pytest.approx(0.1)
 
 
-def test_measured_geometry_and_unknown_sloped_vehicle_height():
+def test_measured_camera_geometry_and_disabled_vehicle_parallax():
     assert CAMERA_GEOMETRY['cam0'].optical_axis_ground_m == pytest.approx(
         (2.319423, 2.315810))
     assert CAMERA_GEOMETRY['cam2'].optical_axis_ground_m == pytest.approx(

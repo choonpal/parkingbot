@@ -458,6 +458,27 @@ def test_vehicle_dimensions_reject_out_of_range_masks():
     assert tracker.length_m == pytest.approx(0.94)
 
 
+def test_fixed_vehicle_dimensions_ignore_mask_measurements():
+    tracker = VehicleDimensionTracker(
+        0.90, 0.62, use_measured_dimensions=False)
+    assert tracker.dimension_valid is True
+    assert tracker.update_dimensions(1.79, 1.41) is False
+    assert tracker.length_m == pytest.approx(0.90)
+    assert tracker.width_m == pytest.approx(0.62)
+    tracker.reset()
+    assert tracker.dimension_valid is True
+
+
+def test_waiting_vehicle_yolo_only_gates_fixed_target_presence():
+    source = (ROOT / 'cooperative_parking_robot' /
+              'cctv_merge_node.py').read_text()
+    assert ('None if target_detection is None else self.waiting_target'
+            in source)
+    assert 'self._publish_target(self.waiting_target)' in source
+    assert 'update_yaw(target_detection.yaw)' not in source
+    assert 'half_yaw = self.waiting_yaw / 2.0' in source
+
+
 def test_vehicle_yaw_ema_handles_axis_wraparound():
     """+89도와 -89도는 같은 장축이다. 평균이 0도로 무너지면 안 된다."""
     tracker = VehicleDimensionTracker(0.90, 0.35, yaw_alpha=0.5)

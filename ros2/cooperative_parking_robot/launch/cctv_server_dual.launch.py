@@ -245,6 +245,12 @@ def generate_launch_description():
             ],
             description='[cam0_height, cam2_height] marker parallax inputs'),
         DeclareLaunchArgument('vehicle_detection_height_m', default_value='0.0'),
+        DeclareLaunchArgument(
+            'use_mask_vehicle_dimensions', default_value='false'),
+        DeclareLaunchArgument('default_vehicle_length_m', default_value='0.900'),
+        DeclareLaunchArgument('default_vehicle_width_m', default_value='0.620'),
+        DeclareLaunchArgument('waiting_target_x_m', default_value='0.600'),
+        DeclareLaunchArgument('waiting_target_y_m', default_value='0.400'),
         # 상판 마커 노드가 카메라를 고를 때 쓰는 광축 지상점 [x0,y0, x2,y2].
         # 위 cam*_ground_*와 같은 값을 넣는다(중복이지만 배열 타입이 필요).
         DeclareLaunchArgument(
@@ -436,6 +442,12 @@ def generate_launch_description():
                             'camera_height_m': _float('cam0_height_m'),
                             'vehicle_detection_height_m': _float(
                                 'vehicle_detection_height_m'),
+                            'use_mask_vehicle_dimensions': _bool(
+                                'use_mask_vehicle_dimensions'),
+                            'default_vehicle_length_m': _float(
+                                'default_vehicle_length_m'),
+                            'default_vehicle_width_m': _float(
+                                'default_vehicle_width_m'),
                             'shared_inference_rate_hz': _float(
                                 'shared_inference_rate_hz'),
                             'shared_cam2_image_topic': LaunchConfiguration(
@@ -482,6 +494,14 @@ def generate_launch_description():
                     'target_position_filter_window'),
                 'use_fixed_wheelbase': True,
                 'fixed_wheelbase_m': _float('fixed_wheelbase_m'),
+                'use_mask_vehicle_dimensions': _bool(
+                    'use_mask_vehicle_dimensions'),
+                'default_vehicle_length_m': _float(
+                    'default_vehicle_length_m'),
+                'default_vehicle_width_m': _float(
+                    'default_vehicle_width_m'),
+                'waiting_x': _float('waiting_target_x_m'),
+                'waiting_y': _float('waiting_target_y_m'),
                 'suspend_detectors_after_mission_lock': True,
             }],
             output='screen'),
@@ -499,6 +519,12 @@ def generate_launch_description():
                 'require_ui_confirmation': _bool('require_ui_confirmation'),
                 'ui_request_timeout_s': _float('ui_request_timeout_s'),
                 'simultaneous_entry': _bool('simultaneous_entry'),
+                'default_vehicle_length_m': _float(
+                    'default_vehicle_length_m'),
+                'default_vehicle_width_m': _float(
+                    'default_vehicle_width_m'),
+                'waiting_x': _float('waiting_target_x_m'),
+                'waiting_y': _float('waiting_target_y_m'),
                 'parking_registry_db_path': LaunchConfiguration(
                     'parking_registry_db_path'),
             }],

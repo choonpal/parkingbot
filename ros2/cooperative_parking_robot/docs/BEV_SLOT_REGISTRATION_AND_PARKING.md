@@ -132,8 +132,10 @@ ros2 launch cooperative_parking_robot cctv_server.launch.py \
 
 ## 7. 차량 크기와 슬롯 크기 비교
 
-차량 mask의 map 좌표에 주축 분석을 적용해 길이·폭·Yaw를 계산한다. 상면 mask가
-범퍼 외곽보다 작게 보일 수 있어 `vehicle_dimension_padding_m`를 양쪽에 더한다.
+대기영역 차량의 YOLO 결과는 차량이 연속 검출되는지만 확인한다. 주행 목표는
+YOLO 중심·Yaw와 무관하게 현장 고정값 `(0.6, 0.4, 180°)`를 사용한다. 차량
+길이·폭도 2026-08-30 실측 고정값 `0.90 x 0.62m`를 사용한다. mask 좌표는
+대기영역 판별과 주차 슬롯 점유 판정에만 남긴다.
 
 Fleet Manager는 차량만 비교하지 않고 다음 결합 footprint를 사용한다.
 
@@ -180,9 +182,9 @@ Fleet Manager가 검사하는 항목:
 - staging point에서 회전 반대각 원이 장애물·맵 경계와 겹치지 않는지
 - 정렬 후 슬롯 중심까지의 삽입 corridor가 비어 있는지
 
-Segmentation 차량은 고정 `0.90m` 사각형이 아니라 실제 mask hull을
-OccupancyGrid에 채운다. 슬롯은 0.75초 점유 유지와 5프레임 연속 empty
-확인을 통과해야 빈자리로 발행된다.
+Segmentation mask hull은 OccupancyGrid와 슬롯 점유 판정에는 사용하지만 차량
+제원을 산출하지 않는다. 슬롯은 0.75초 점유 유지와 5프레임 연속 empty 확인을
+통과해야 빈자리로 발행된다.
 
 `parking_direction`은 다음 중 하나다.
 
@@ -192,8 +194,10 @@ OccupancyGrid에 채운다. 슬롯은 0.75초 점유 유지와 5프레임 연속
 
 ## 9. 실차에서 반드시 조정할 값
 
-- `vehicle_detection_height_m`: 천장 CCTV가 보는 차량 상면 평균 높이
-- `vehicle_dimension_padding_m`: 상면 mask와 실제 범퍼 외곽 차이
+- `vehicle_detection_height_m`: 현재 `0.0`; 대기 차량은 존재만 확인하므로
+  높이 시차 보정을 적용하지 않음 (실측 높이는 `0.53m`로 기록)
+- `default_vehicle_length_m`, `default_vehicle_width_m`: 현재 실측
+  `0.90m`, `0.62m`
 - `slot_occupancy_overlap_ratio`: 빈자리/점유 영상으로 결정
 - `slot_fit_longitudinal_margin_m`, `slot_fit_lateral_margin_m`
 - `slot_staging_gap_m`: 슬롯 입구와 회전 중심 사이 추가 간격

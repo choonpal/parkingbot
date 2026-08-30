@@ -151,11 +151,12 @@ class YoloBevMapNode(Node):
         self.declare_parameter('camera_ground_y_m', 0.0)
         self.declare_parameter('camera_height_m', 0.0)
         self.declare_parameter('vehicle_detection_height_m', 0.0)
-        # Segmentation mask에서 계산한 차량 외곽 치수를 vehicle_spec에 넣는다.
-        # 상면 마스크가 실제 범퍼 외곽보다 작을 수 있어 사방 padding을 더한다.
-        self.declare_parameter('use_mask_vehicle_dimensions', True)
+        # Segmentation은 차량 검출·중심·장축 방향에만 사용한다. 천장 영상의
+        # 상면 외곽을 바닥 Homography에 투영한 크기는 실제 footprint가 아니므로
+        # 현장 실측 제원을 기본으로 사용한다.
+        self.declare_parameter('use_mask_vehicle_dimensions', False)
         self.declare_parameter('default_vehicle_length_m', 0.90)
-        self.declare_parameter('default_vehicle_width_m', 0.35)
+        self.declare_parameter('default_vehicle_width_m', 0.62)
         self.declare_parameter('vehicle_dimension_padding_m', 0.03)
         self.declare_parameter('vehicle_length_range_m', [0.30, 6.50])
         self.declare_parameter('vehicle_width_range_m', [0.20, 2.80])
@@ -285,10 +286,9 @@ class YoloBevMapNode(Node):
             self.get_parameter('default_vehicle_width_m').value)
         self.vehicle_length = self.default_vehicle_length
         self.vehicle_width = self.default_vehicle_width
-        # 첫 정상 mask가 들어오기 전에는 설정 기본값을 사용한다. 첫 측정부터
-        # 기본값과 EMA를 섞으면 실제보다 작은/큰 치수가 오래 남으므로 별도 flag로
-        # 구분하고, 첫 정상값은 그대로 채택한 뒤 두 번째부터 EMA를 적용한다.
-        self.vehicle_dimension_valid = False
+        # mask 치수를 쓰지 않을 때 실측 설정값 자체가 유효한 차량 제원이다.
+        # 선택적으로 mask 치수를 켠 경우에만 첫 정상값을 기다린다.
+        self.vehicle_dimension_valid = not self.use_mask_vehicle_dimensions
         self.vehicle_dimension_padding = float(
             self.get_parameter('vehicle_dimension_padding_m').value)
         self.vehicle_length_range = list(
@@ -968,8 +968,13 @@ class YoloBevMapNode(Node):
         이미지를 보지 않으므로 이 필드가 없으면 wheelbase가 항상 기본값이 된다.
         """
         yaw = None if geometry is None else geometry[0]
-        length_m = None if geometry is None else geometry[1]
-        width_m = None if geometry is None else geometry[2]
+        if self.use_mask_vehicle_dimensions and geometry is not None:
+            length_m, width_m = geometry[1], geometry[2]
+        else:
+            # 마스크는 중심과 장축 방향까지만 담당한다. 병합/UI에도 왜곡된
+            # 상면 투영 크기 대신 실제 차량 footprint를 전달한다.
+            length_m = self.default_vehicle_length
+            width_m = self.default_vehicle_width
         return CameraDetection(
             camera_id=self.camera_id,
             center=(wx, wy),
@@ -1098,7 +1103,8 @@ class YoloBevMapNode(Node):
                 self.target_yaw_valid = False
                 self.vehicle_length = self.default_vehicle_length
                 self.vehicle_width = self.default_vehicle_width
-                self.vehicle_dimension_valid = False
+                self.vehicle_dimension_valid = (
+                    not self.use_mask_vehicle_dimensions)
             return None
         self.target_last_seen = now
         if self.target_anchor is None or math.hypot(
@@ -1172,8 +1178,9 @@ class YoloBevMapNode(Node):
             'vehicle_length_m': self.vehicle_length,
             'vehicle_width_m': self.vehicle_width,
             'dimension_source': (
-                'segmentation_mask' if self.vehicle_dimension_valid
-                else 'configured_default'),
+                'segmentation_mask'
+                if self.use_mask_vehicle_dimensions
+                else 'configured_fixed'),
             'dimension_valid': bool(self.vehicle_dimension_valid),
             'sequence': 1,
             'stamp_ns': self.get_clock().now().nanoseconds,

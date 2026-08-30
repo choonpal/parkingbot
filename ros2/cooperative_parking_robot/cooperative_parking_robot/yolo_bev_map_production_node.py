@@ -102,10 +102,9 @@ class YoloBevMapNode(BaselineYoloBevMapNode):
 
         if VEHICLE_DETECTION_EFFECTIVE_HEIGHT_M is None:
             self.vehicle_detection_height = 0.0
-            self.get_logger().warn(
-                'vehicle top is sloped; 0.74m is maximum only. '
-                'Vehicle parallax remains disabled until effective '
-                'segmentation height is measured.')
+            self.get_logger().info(
+                'vehicle parallax disabled: waiting YOLO is presence-only; '
+                'mission target pose uses configured site coordinates')
         else:
             self.vehicle_detection_height = float(
                 VEHICLE_DETECTION_EFFECTIVE_HEIGHT_M)

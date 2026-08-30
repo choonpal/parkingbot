@@ -55,7 +55,7 @@ def compute_loaded_footprint(
         robot_length_m=0.565,
         robot_width_m=0.420,
         vehicle_length_m=0.90,
-        vehicle_width_m=0.35,
+        vehicle_width_m=0.62,
         safety_margin_m=0.06,
         vehicle_center_offset_x_m=0.0,
         vehicle_center_offset_y_m=0.0):

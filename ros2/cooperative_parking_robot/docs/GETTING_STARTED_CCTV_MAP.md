@@ -569,7 +569,7 @@ grep slot_ids ~/.ros/adaptive_valet_bot/parking_layout.yaml
 | `front_marker_height_m`, `rear_marker_height_m` | 로봇 상판 마커 높이 | 바닥에서 마커 표면까지 |
 | `front_marker_offset_x_m`, `rear_marker_offset_x_m` | 마커 중심이 로봇 회전중심에서 진행축으로 떨어진 거리 | Front는 +, Rear는 − |
 | `front_yaw_offset_deg`, `rear_yaw_offset_deg` | 마커 부착각 오차 | 로봇을 정방향으로 두고 CCTV yaw와 실제 방향 차이 |
-| `vehicle_detection_height_m` | 차량 상면 높이 | 모형차 지붕 높이 |
+| `vehicle_detection_height_m` | 차량 상면 시차 보정 | 현재 `0.0` 비활성, 실측 높이 `0.53m` |
 
 **왜 필요한가**: Homography는 **바닥 평면** 기준이다. 바닥보다 높은 물체(로봇 상판 마커, 차량 지붕)는 카메라 광축에서 멀수록 실제보다 바깥으로 밀려 보인다.
 

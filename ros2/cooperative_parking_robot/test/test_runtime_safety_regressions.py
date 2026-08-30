@@ -58,13 +58,13 @@ def test_map_safety_features_are_wired():
     assert 'region[(region >= 0) & ~region_static] = 0' in source
 
 
-def test_vehicle_spec_waits_for_real_segmentation_dimensions():
+def test_vehicle_spec_uses_configured_dimensions_when_mask_size_is_disabled():
     source = (ROOT / 'cooperative_parking_robot' /
               'cctv_merge_node.py').read_text()
     helper = source.split('    def _publish_vehicle_spec', 1)[1].split(
         '    def _publish_empty_slots', 1)[0]
     assert 'if not self.dimension_tracker.dimension_valid' in helper
-    assert "'dimension_source': 'segmentation_mask'" in helper
+    assert "else 'configured_fixed'" in helper
 
 
 def test_production_fleet_rejects_park_without_fresh_valid_dimensions():

@@ -46,7 +46,7 @@
     slot_empty_confirm_frames: 5
     slot_occupied_hold_s: 0.750000
     vehicle_feedback_association_gate_m: 0.450000
-    use_mask_vehicle_dimensions: true
+    use_mask_vehicle_dimensions: false
 
 fleet_manager_node:
   ros__parameters:
@@ -68,7 +68,7 @@ fleet_manager_node:
     minimum_inter_robot_gap_m: 0.220000
     default_wheelbase_m: 0.785000
     default_vehicle_length_m: 0.900000
-    default_vehicle_width_m: 0.350000
+    default_vehicle_width_m: 0.620000
     footprint_safety_margin_m: 0.060000
     slot_fit_longitudinal_margin_m: 0.060000
     slot_fit_lateral_margin_m: 0.060000
@@ -90,6 +90,8 @@ fleet_manager_node:
 cctv_merge_node:
   ros__parameters:
     layout_registered: false
+    waiting_x: 0.600000
+    waiting_y: 0.400000
     map_resolution: 0.050000
     map_origin_x_m: -0.400000
     map_origin_y_m: -0.800000
@@ -111,3 +113,6 @@ cctv_merge_node:
     slot_empty_confirm_frames: 5
     slot_occupied_hold_s: 0.750000
     vehicle_feedback_association_gate_m: 0.450000
+    use_mask_vehicle_dimensions: false
+    default_vehicle_length_m: 0.900000
+    default_vehicle_width_m: 0.620000

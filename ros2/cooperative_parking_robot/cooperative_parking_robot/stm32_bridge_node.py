@@ -164,6 +164,10 @@ class Stm32BridgeNode(Node):
         self.declare_parameter('heartbeat_tx_late_warn_s', 0.04)
         self.declare_parameter('heartbeat_rtt_warn_s', 0.10)
         self.declare_parameter('heartbeat_recovery_ack_count', 3)
+        # Velocity is replaceable state, not an event stream. 20 Hz leaves a
+        # 5x margin inside the STM32 250 ms command watchdog while reducing
+        # UART and Python scheduling pressure on the 2 GB Front Pi.
+        self.declare_parameter('velocity_tx_rate_hz', 20.0)
         self.declare_parameter('uart_frame_fault_count', 3)
         self.declare_parameter('uart_frame_fault_window_s', 1.0)
         self.declare_parameter('serial_reconnect_interval_s', 1.0)
@@ -203,6 +207,8 @@ class Stm32BridgeNode(Node):
             self.get_parameter('uart_frame_fault_window_s').value)
         self.serial_reconnect_interval = float(
             self.get_parameter('serial_reconnect_interval_s').value)
+        self.velocity_tx_rate_hz = float(
+            self.get_parameter('velocity_tx_rate_hz').value)
         if (self.hello_retry_interval <= 0.0 or
                 self.hello_handshake_timeout <= self.hello_retry_interval):
             raise ValueError('invalid HELLO retry/timeout parameters')
@@ -222,6 +228,8 @@ class Stm32BridgeNode(Node):
             raise ValueError('invalid UART frame fault threshold')
         if self.serial_reconnect_interval < 0.25:
             raise ValueError('serial_reconnect_interval_s must be at least 0.25')
+        if not 10.0 <= self.velocity_tx_rate_hz <= 50.0:
+            raise ValueError('velocity_tx_rate_hz must be in [10,50]')
         self.max_linear = float(self.get_parameter('max_linear_mps').value)
         self.max_angular = float(self.get_parameter('max_angular_rps').value)
         self.odom_publish_hz = float(
@@ -470,7 +478,9 @@ class Stm32BridgeNode(Node):
         # 의해 100 ms deadline이 밀리지 않게 한다. 실제 write는 기존 단일
         # UART scheduler thread만 수행한다.
         self.serial_callback_group = MutuallyExclusiveCallbackGroup()
-        self.create_timer(0.02, self.send_velocity_loop)  # 속도 송신 50Hz (감쇠 포함)
+        self.create_timer(
+            1.0 / self.velocity_tx_rate_hz,
+            self.send_velocity_loop)  # bounded replaceable velocity state
         self.create_timer(
             0.1, self.send_servo_attach,
             callback_group=self.serial_callback_group)  # bounded startup retry
@@ -667,7 +677,7 @@ class Stm32BridgeNode(Node):
                 f'[{self.role}] motion disarmed: {reason}')
 
     def send_velocity_loop(self):
-        """50Hz로 STM32에 속도 송신. cmd가 오래되면 감쇠."""
+        """Send the latest velocity at a watchdog-safe bounded rate."""
         if (self.estop_latched or self.active_fault or self.transport_fault or
                 not self.zero_command_acknowledged or
                 not self._heartbeat_fresh(time.monotonic())):
@@ -1063,9 +1073,12 @@ class Stm32BridgeNode(Node):
                 return
             if self.communication_recovering:
                 # A disarmed bridge may stay under cold-start pressure for
-                # longer than one HELLO window. Start another bounded session
-                # instead of getting stuck in the first recovery forever.
-                if (code == 'PROTOCOL_HANDSHAKE_TIMEOUT' and
+                # longer than one HELLO window. A transport reconnect also
+                # invalidates the in-flight handshake and must always create a
+                # fresh session. Otherwise the MCU rejects the old session's
+                # heartbeat forever after a write failure during recovery.
+                if (code in {
+                        'PROTOCOL_HANDSHAKE_TIMEOUT', 'UART_RECONNECTED'} and
                         not self.motion_armed and self.active_fault is None):
                     self.communication_recovering = False
                 else:
@@ -1428,7 +1441,9 @@ class Stm32BridgeNode(Node):
                 self.get_logger().warn(message)
             else:
                 self.get_logger().debug(message)
-            self.publish_status(f'ACK,{value}')
+            # Heartbeat health already has a dedicated 1 Hz diagnostics topic.
+            # Do not mirror every 10 Hz ACK onto reliable retained safety
+            # state; a blocked DDS publish here delays the UART reader itself.
             if self.communication_recovering:
                 self.recovery_ack_count += 1
                 if self.recovery_ack_count >= self.heartbeat_recovery_ack_count:
@@ -1513,6 +1528,15 @@ class Stm32BridgeNode(Node):
                 self.previous_session_faults.append(code)
             self.get_logger().warn(
                 f'[{self.role}] startup 이전 communication fault 격리: {code}')
+            return
+
+        if code in communication_timeouts and self.communication_recovering:
+            # The first timeout already opened a fresh fail-closed session.
+            # Re-reporting every firmware rejection can flood rosout/DDS and
+            # delay the very UART reader needed to complete that recovery.
+            self.get_logger().warn(
+                f'[{self.role}] communication recovery 진행 중: {code}',
+                throttle_duration_sec=2.0)
             return
 
         status = f'ERR,{code}'

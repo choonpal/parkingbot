@@ -578,6 +578,40 @@ def test_disarmed_host_ack_timeout_is_also_non_latching(monkeypatch):
             in node.statuses)
 
 
+def test_uart_reconnect_restarts_an_inflight_disarmed_recovery(monkeypatch):
+    node = bridge_for_unit_test()
+    now = [100.0]
+    node.hello_started_at = now[0]
+    monkeypatch.setattr(bridge_module.time, 'monotonic', lambda: now[0])
+    monkeypatch.setattr(bridge_module.secrets, 'token_hex',
+                        lambda _length: '4444444444444444')
+    complete_startup(node, now[0])
+    old_session = node.session_id
+    node.communication_recovering = True
+
+    node._begin_communication_recovery('UART_RECONNECTED')
+
+    assert node.session_id == '4444444444444444'
+    assert node.session_id != old_session
+    assert node.hello_acknowledged is False
+    assert node.communication_recovering is True
+    assert node.ser.writes[-1] == b'@HELLO,2,4444444444444444\n'
+    assert ('WARN,DISARMED_COMMUNICATION_RECOVERY:UART_RECONNECTED'
+            in node.statuses)
+
+
+def test_heartbeat_ack_is_not_mirrored_to_reliable_hardware_status(
+        monkeypatch):
+    node = bridge_for_unit_test()
+    now = [100.0]
+    node.hello_started_at = now[0]
+    monkeypatch.setattr(bridge_module.time, 'monotonic', lambda: now[0])
+
+    token = complete_to_heartbeat_ack(node)
+
+    assert f'ACK,{token}' not in node.statuses
+
+
 def test_estop_latch_stops_handshake_and_is_not_cleared_by_hello(monkeypatch):
     node = bridge_for_unit_test()
     monkeypatch.setattr(bridge_module.time, 'monotonic', lambda: 100.0)
@@ -662,6 +696,8 @@ def test_host_heartbeat_timeout_defaults_and_bounds_are_explicit():
     assert "declare_parameter('heartbeat_period_s', 0.10)" in bridge_source
     assert "declare_parameter('heartbeat_ack_timeout_s', 0.40)" in bridge_source
     assert 'self.heartbeat_ack_timeout <= 0.50' in bridge_source
+    assert "declare_parameter('velocity_tx_rate_hz', 20.0)" in bridge_source
+    assert '1.0 / self.velocity_tx_rate_hz' in bridge_source
 
 
 def test_dedicated_producer_does_not_skip_boundary_ticks(monkeypatch):

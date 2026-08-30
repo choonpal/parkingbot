@@ -271,6 +271,14 @@ find /dev/v4l/by-id -maxdepth 1 -type l -printf '%f -> %l\n' | sort
 호스트에서 검사한다. 설정의 CAM0/CAM2 및 내부 Rear camera가
 `/dev/v4l/by-id/`가 아니면 host 접속 전부터 차단한다.
 
+`robot-1.local`이 일시적으로 해석되지 않지만 기존 IP가 응답하면 host key 검증을
+끄지 않는다. 현장 IP를 임시로 쓸 때는 이미 신뢰한 이름을 `HostKeyAlias`로
+지정하고, avahi/mDNS가 복구되면 이름 기반 설정으로 되돌린다.
+
+```bash
+ssh -o HostKeyAlias=robot-1.local robot@CURRENT_REAR_IP hostname
+```
+
 #### Active workspace and install ownership contract
 
 운영 설정에는 역사적인 디렉터리나 commit 이름을 직접 넣지 않고 다음 고정
@@ -296,6 +304,9 @@ layout은 저장소형 `<workspace>/ros2/cooperative_parking_robot`와 표준 co
 
 둘 중 하나라도 예전 overlay나 다른 install을 가리키면 기동 전에 차단된다.
 운영 명령 설치도 active checkout에서 수행한다.
+TensorRT model도 가능하면 active install의
+`install/cooperative_parking_robot/share/cooperative_parking_robot/models/` 아래
+파일을 사용해 코드와 model 경로가 서로 다른 과거 workspace로 갈라지지 않게 한다.
 
 ```bash
 cd ${HOME}/parkingbot_active

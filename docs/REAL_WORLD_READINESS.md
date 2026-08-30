@@ -23,11 +23,16 @@ localization, 초음파 정렬, 결합 footprint A*, UI 승인과 SQLite Registr
 상세 기준은 [현재 통합 상태](CURRENT_INTEGRATION_STATUS.md)에 있다.
 
 2026-08-30 `ddad9ac` 기준 strict 복구에서는 TensorRT 두 engine의 순차 로딩과
-양쪽 bridge-only heartbeat는 통과했다. 그러나 전체 production cold-start 중
+양쪽 bridge-only heartbeat는 통과했다. 2026-08-30 후속 시험에서 세 장비 active
+release 배포와 `robot_doctor`도 통과했고, shared DDS에서 양 bridge에 Jetson
+CAM0/CAM2와 YOLO0를 차례로 추가할 때 heartbeat 오류는 없었다. 그러나 dual
+TensorRT의 두 번째 cold load 중 약 4초 perception stale과 `NvMapMemAlloc error
+12`가 발생한 뒤 회복했다. 또한 이전 전체 production cold-start에서는
 Front/Rear heartbeat ACK timeout, UART write timeout과 SSH 불안정이 재현됐다.
 mission target snapshot 뒤 YOLO unload 기능도 실제 mission 상태까지 도달하지
 못해 실차 미검증이다. 전체 stack 반복 기동을 중단하고 RPi 한 대씩 cold-start
-부하를 격리하기 전까지 단계 gate 2를 통과한 것으로 간주하지 않는다.
+부하를 격리하는 원칙은 유지한다. 단계 gate 2 전체를 통과한 것으로 간주하지
+않는다.
 
 현재 로봇은 메인 전원이 RPi/카메라와 모터 계통에 함께 인가되며 motor rail만
 독립적으로 켜고 끌 수 없다. 그러므로 정적 인지/UART 시험도 바닥에서 수행하지

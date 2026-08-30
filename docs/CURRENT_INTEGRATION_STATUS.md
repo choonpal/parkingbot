@@ -7,14 +7,18 @@
 ## 2026-08-30 strict 복구 상태
 
 현재 통합 후보는 `ddad9ac`를 기준으로 다시 만든
-`recovery/ddad-strict-20260830`이며 기능 코드 기준점은 `a5e7290`이다. 상세 변경과
+`recovery/ddad-strict-20260830`이며 현재 배포한 기능/운영 guard 기준점은
+`89081ad`이다. 상세 변경과
 실차 로그는 [ddad strict 복구·기동 부하 감사](change_logs/2026-08-30_ddad-strict-recovery-and-startup-audit.md)에
 기록했다.
 
-- Jetson TensorRT cam0/cam2 순차 cold-load: 실차 PASS
+- 세 장비 `parkingbot_active` 동일 release 배포와 `robot_doctor`: PASS
+- Jetson 카메라 각 단독 및 TensorRT cam0/cam2 각 단독: PASS
+- Jetson dual TensorRT 순차 cold-load: 회복은 PASS, 두 번째 load 중 약 4초
+  perception gap과 `NvMapMemAlloc error 12` 발생
 - stationary target snapshot과 mission 중 YOLO unload/reload: 구현·회귀 PASS,
   실제 `WAIT_LIFT` 전환 미검증
-- Front/Rear UART bridge-only 15초: 양쪽 PASS
+- Front/Rear UART bridge-only 및 shared DDS+Jetson CAM0/CAM2/YOLO0 join: PASS
 - 전체 production cold-start: 두 차례 FAIL
 - 현재 production stack: 모두 종료
 - 이번 복구 작업의 차량 이동: 없음
@@ -24,9 +28,10 @@
 RPi 한 대씩 보조 노드를 하나씩 올리는 방식으로만 진행한다. 300ms watchdog을
 늘려 통과시키지 않는다.
 
-원격 Front/Rear는 Git HEAD `ddad9ac`에 파일 overlay를 배포한 상태라 controller
-`a5e7290`과 clean 동일-SHA 배포가 아니다. 다음 정식 실차 gate 전에 같은 SHA로
-재배포해야 한다.
+Jetson/control은 `${HOME}/parkingbot_active`, Front/Rear는 각 호스트의
+`/home/robot/parkingbot_active`에서 같은 release를 사용한다. package-only 로봇
+workspace는 `.parkingbot_revision`으로 revision을 고정하고, start 전 ROS prefix와
+Python import realpath가 active workspace 안인지 검사한다.
 
 ## 이전 2026-08-29 기준
 
@@ -46,8 +51,8 @@ RPi 한 대씩 보조 노드를 하나씩 올리는 방식으로만 진행한다
 |---|---|---|
 | pregrip 소프트웨어 통합 | 회귀 PASS / 실기 보류 | 기존 회귀는 유지됐지만 현재 strict 전체 cold-start가 heartbeat FAULT로 차단됨 |
 | clean ROS 2 Humble build/import | PASS | 격리 workspace에서 package build와 install-only import 확인 |
-| Jetson CCTV 운용값 | PASS(부분 실기) | 두 TensorRT engine 순차 로드 성공; mission snapshot/unload 실차 전환은 미검증 |
-| 현재 통합본 원격 배포 | 임시 overlay | Front/Rear Git HEAD는 `ddad9ac`, 선택 파일은 `a5e7290` 내용; clean 동일 SHA 미완료 |
+| Jetson CCTV 운용값 | PASS(제약 있음) | 각 단독은 정상; dual 두 번째 cold load 때 약 4초 stale과 NvMap allocation 오류 후 회복; mission snapshot/unload 실차 전환은 미검증 |
+| 현재 통합본 원격 배포 | PASS | 세 장비 active release, revision marker, runtime import/prefix와 `robot_doctor` 일치 |
 | 차량 하부 실기 모션 | **NO-GO** | 전체 cold-start heartbeat/UART FAULT와 SSH 불안정이 남음 |
 | grip/lift/운반 | **범위 밖·NO-GO** | `stop_after_align` 뒤 기능이며 현재 감사에서 실차 검증하지 않음 |
 

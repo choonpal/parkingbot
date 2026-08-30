@@ -128,10 +128,10 @@ bridge-only 시험은 속도 command를 발행하지 않았고 종료할 때 0�
 
 ## 배포 상태
 
-현재 원격 Front/Rear Git HEAD는 `ddad9ac`이고 필요한 Python/launch 파일만 overlay
-복사됐다. 따라서 controller `a5e7290`과 원격 Git SHA가 같은 clean 배포는 아니다.
-`robotctl_core`가 출력한 revision warning을 무시해도 된다는 뜻이 아니며, 다음
-정식 실차 gate 전에는 같은 SHA의 clean workspace로 다시 배포해야 한다.
+active 재배포 전 원격 Front/Rear Git HEAD는 `ddad9ac`이고 필요한 Python/launch
+파일만 overlay 복사된 상태였다. 따라서 당시 controller `a5e7290`과 원격 Git
+SHA가 같은 clean 배포가 아니었다. 이 상태는 아래 Camera 및 workspace 경로
+재감사에서 `parkingbot_active` release로 교체했다.
 
 확인한 배포 SHA-256:
 
@@ -171,6 +171,40 @@ Python 파일이 일치하지 않는 상태였다. 다음의 작은 fail-closed 
 
 이 조치는 device나 workspace를 자동 추측하지 않는다. 명시한 active target과
 host-local persistent path가 맞는지만 빠르게 검증한다.
+
+### Active 배포 후 빠른 단계 시험
+
+세 장비에 `parkingbot_active`를 만들고 Front/Rear package-only release에는
+`89081ad` revision marker를 기록했다. Jetson model도 과거 `ros2_ws`가 아니라
+active install/share 경로를 사용하도록 현장 설정을 바꿨다. 최종
+`robot_doctor`는 `READY`였다.
+
+정적·무주행 시험 결과는 다음과 같다.
+
+- Front/Rear bridge-only: HELLO v2, servo attach, hardware ready, heartbeat 정상
+- Jetson CAM0 C922와 CAM2 C920 각 단독: 640x360, reported 30fps, open/read 정상
+- CAM0+YOLO0, CAM2+YOLO2 각 단독: TensorRT, homography, coverage/detection 처리 정상
+- shared DDS Rear bridge → Front bridge → CAM0 → CAM2 → YOLO0 순차 join:
+  heartbeat timeout, UART write, duplicate ACK 경고 없음
+- 차량 이동과 `cmd_vel` publisher 없음; 종료 때 0속도 전송 확인
+
+반면 production dual launch의 `yolo_cam2_start_delay_s=15` 시험에서는 두 번째
+engine warm-up 중 cam0 detection이 약 4초 stale이 됐고 `NvMapMemAlloc error 12`가
+2회 발생했다. 이후 cam0/cam2 모두 `PERCEPTION_RECOVERED`로 돌아왔지만 peak는
+RAM 약 4.95/7.62GB, swap 3MB, CPU 50~77%, GR3D 최대 89%였다. 따라서 단독
+카메라나 DDS 영상 publisher 자체는 RPi heartbeat 원인으로 보이지 않지만, dual
+TensorRT cold-load/상시 운용에는 충분한 여유가 있다고 볼 수 없다.
+
+현재 unload 계약은 target 정차와 치수 확정만으로 실행되지 않는다. Fleet가 운영
+승인 뒤 `WAIT_LIFT`에 들어가야 mission snapshot이 active가 되고
+`/parking/perception_suspend=true`가 발행된다. 이번 시험은 PARK/승인을 보내지
+않았으므로 suspend 미발행은 계약상 정상이다. 다만 승인 전 대기 중에도 위 메모리
+압력이 유지되므로, "정차+치수 확정 시 더 일찍 snapshot/unload" 정책은 별도
+안전 판단이 필요한 다음 개선 후보로 남긴다.
+
+시간 제한으로 process를 종료할 때 bridge UART reader와 일부 rclpy node가 이미
+닫힌 context에 publish하며 traceback을 남기는 shutdown race도 확인했다. 실행 중
+heartbeat 장애와는 구분되며 모든 camera/serial 점유는 시험 뒤 해제됐다.
 
 ## 다음 작업과 운용 제한
 

@@ -1,11 +1,46 @@
 # 확인된 문제 기록
 
-최종 갱신: 2026-08-29
+최종 갱신: 2026-08-30
 
 실제 관측되거나 전체 테스트에서 재현된 문제만 기록한다. 추측은 해결 완료로
 표시하지 않는다.
 
 ## 미해결
+
+### PARK staging 목표와 Front 실제 이동 방향 불일치
+
+- 심각도: 치명적 — 차량 하부가 아닌 방향으로 이동할 수 있어 현재 PARK 재시도 금지
+- 관측: 차량 target `(0.517, 0.627, 148.2deg)`에서 Front staging goal은
+  `(1.239, 0.179)`였지만, Front는 `(3.600, 0.885)`에서 `(2.435, 2.248)`로
+  이동한 뒤 `TO_REAR_STAGING_TIMEOUT`이 발생했다.
+- 안전 상태: 운영자 관측 뒤 양쪽 ESTOP을 발행했으며 현재 FAULT 상태다.
+- 필요한 조치: waiting-zone yaw gate를 추가하고, Front 10cm 이하 단축 시험으로
+  marker yaw 180도 모호성·장착 offset·map/body 변환을 구분한다. 다음 자동 시험은
+  `stop_after_approach=true`로 staging에서 중단한다.
+
+### Control Tower가 production ArUco를 미검출로 표시
+
+- 심각도: 높음 — 운영자가 위치추정 입력이 없는 것으로 오판함
+- 관측: production `/front|rear/cctv_marker_visible=true`와 pose 발행은 정상이지만,
+  5008 UI는 자체 ArUco detector가 꺼져 있어 `markers=[]`와 "ID [1,2] 미검출"을
+  표시한다. ID0 `/sync/marker_visible=false`는 별개의 실제 미검출이다.
+- 필요한 조치: 중복 detector를 켜지 않고 production pose/visible과 freshness를
+  UI overlay 및 guidance에 연결하고 ID2/ID1/ID0를 분리 표시한다.
+
+### Fleet가 과거 motion fault를 새 mission까지 보존
+
+- 심각도: 높음 — UI는 정상으로 보이지만 PARK는 `ROBOT_NOT_IDLE`로 거절됨
+- 원인: Fleet는 마지막 non-empty `/front|rear/motion_fault`를 무기한 보존하고,
+  UI는 최근 값만 표시해 양쪽 판단이 달라진다.
+- 필요한 조치: IDLE/READY와 새 bridge session을 확인하는 명시적 fault reset/rearm
+  계약을 추가한다. 임의의 빈 토픽 발행을 정상 운용 절차로 사용하지 않는다.
+
+### 전체 RPi launch가 Wi-Fi와 UART heartbeat를 함께 지연
+
+- 심각도: 높음 — 기동 직후 ping/SSH/ROS가 약 30초 끊기고 UART timeout이 발생함
+- 현재 완화: DISARMED bridge recovery가 motion fault 고착과 구동은 차단한다.
+- 남은 문제: Rear는 한 번 recovery session에서 STM32 timeout 반복에 갇혀 bridge
+  단독 재시작이 필요했다. cold-start 부하와 recovery 정체 원인은 미해결이다.
 
 ### 키보드 모드가 robot-2 리더·robot-1 추종 구조가 아님
 

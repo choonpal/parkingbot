@@ -283,6 +283,43 @@ ACK와 command/enable subscriber를 모두 확인한 뒤 실제 pulse 타이머�
 미끄럼의 영향을 받은 결과로, 부호·정지 gate는 PASS이지만 자동 차선 보정
 정밀도를 증명하지는 않는다.
 
+### DISARMED 기동 정책 배포와 최초 PARK 중단
+
+Front/Rear에 `e71fe80`을 package-only release로 배포하고
+`parkingbot_active`를 해당 release로 전환했다. bridge, state machine,
+ultrasonic, pose fusion을 함께 cold-start하자 두 RPi 모두 약 30초 동안
+ping/SSH/ROS가 끊기고 UART write/heartbeat timeout이 발생했다. 새 정책은 이
+구간을 DISARMED recovery로 처리해 mission fault 고착과 예기치 않은 구동은
+막았다. Front는 자동 복구했고 Rear는 기존 recovery session에서
+`STM32 ERR: HEARTBEAT_TIMEOUT`을 반복해, 나머지 노드는 유지한 채 bridge만 새
+HELLO session으로 재시작한 뒤 `hardware_ready=true`를 회복했다. 즉 기동 중
+fault 격리는 검증됐지만 cold-start 부하와 recovery 정체 원인은 해결되지 않았다.
+
+PARK 최초 요청은 Fleet 내부에 과거 `motion_fault` 문자열이 남아 있어
+`ROBOT_NOT_IDLE`로 거절됐다. UI는 최근 fault만 표시해 `fault=null`이었지만 Fleet는
+수명 전체의 마지막 non-empty fault를 보존했다. 현재 IDLE/READY와 활성 fault
+없음을 확인하고 운영자 승인 뒤 과거 값을 초기화하자 두 번째 요청은 승인됐다.
+임시 토픽 발행에 의존하지 않는 명시적 reset/rearm 계약이 필요하다.
+
+승인된 mission에서 Front는 `TO_REAR_STAGING`, Rear는
+`WAIT_FRONT_STAGED`에 진입했다. 당시 고정된 차량 target은
+`(0.517, 0.627, yaw=148.2deg)`였고 코드가 계산한 Front staging goal은
+약 `(1.239, 0.179)`였다. 그러나 CCTV 기준 Front는 초기
+`(3.600, 0.885, -89.2deg)`에서 `(2.435, 2.248, -89.1deg)`로 이동해 계산
+goal의 Y 방향과 반대로 벗어났다. 60초 뒤 `TO_REAR_STAGING_TIMEOUT`이 발생했고,
+운영자 관측 직후 `/emergency_stop=true`를 발행해 양쪽을 FAULT/ESTOP 상태로
+고정했다. 차량 PCA yaw 오류만으로 실제 반대 방향 이동을 설명할 수 없으므로
+Front CCTV heading의 180도 모호성, marker 장착 offset과 map/body 변환을 짧은
+단축 시험으로 구분하기 전에는 PARK를 재시도하지 않는다.
+
+같은 정지 상태에서 production CCTV pose는 Front ID2와 Rear ID1을 모두 fresh
+`visible=true`로 보고했고 `/front|rear/cctv_pose`도 발행했다. 반면 Control Tower
+5008은 중복 CPU 사용을 막기 위해 자체 `enable_aruco=false`인데도 guidance와
+marker overlay를 자체 detector의 빈 `markers[]`에서 계산해 "마커 미검출"로
+표시했다. Rear 전면 카메라의 ID0 `/sync/marker_visible=false`는 실제 미검출이다.
+UI는 detector를 다시 켜지 말고 production pose/visible 토픽으로 ID2/ID1을
+그리며 ID0 상태를 별도 표시해야 한다.
+
 ## 다음 작업과 운용 제한
 
 전체 `robotctl start`를 반복하지 않는다. 특히 SSH가 불안정해지는 상태에서 세
@@ -290,14 +327,17 @@ ACK와 command/enable subscriber를 모두 확인한 뒤 실제 pulse 타이머�
 
 다음 순서는 아래처럼 제한한다.
 
-1. Jetson을 올리지 않고 RPi 한 대만 시험
-2. bridge-only 통과 뒤 state machine, ultrasonic, pose fusion, individual move,
-   camera/ArUco를 한 번에 하나씩 긴 간격으로 cold-start
-3. 최초로 heartbeat gap 또는 UART write timeout을 만드는 프로세스·자원 사용량 기록
-4. 필요하면 비-bridge 노드의 nice/CPU affinity 또는 더 긴 launch stagger를 적용
-5. 300ms firmware watchdog과 host ACK timeout은 완화하지 않음
-6. 양쪽 단독 조합 통과 후에만 movement 없는 전체 준비를 한 번 수행
-7. 그 뒤에도 `stop_after_align=true` 범위의 자동 진입·정렬만 검토
+1. Control Tower의 ID2/ID1 표시는 production pose/visible 토픽을 사용하고 ID0를
+   별도 상태로 표시
+2. 대기구역 mission yaw는 layout 기준과 허용 오차로 gate하고, PCA yaw가 크게
+   벗어나면 PARK를 거절
+3. Front 한 대만 10cm 이하 body-X 저속 이동해 CCTV heading/marker offset과
+   map/body 변환 중 어느 쪽이 반대인지 확인
+4. cold-start 부하와 Rear recovery session 정체를 수정하되 300ms firmware
+   watchdog과 host ACK timeout은 완화하지 않음
+5. Fleet에 명시적인 fault reset/rearm 계약을 추가하고 UI/Fleet 판단을 일치
+6. 다음 자동 시험은 `stop_after_approach=true`로 staging에서 반드시 정지
+7. staging 위치를 사람이 확인한 뒤에만 ID0 정렬 단계를 검토
 
 현재는 encoder 기반 예측, 강체 feedback, mission snapshot 업그레이드를 제거할
 이유가 없다. 다만 전체 cold-start gate를 통과하기 전에는 이 기능들의 실차 통합

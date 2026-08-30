@@ -79,6 +79,13 @@ except ImportError:
     SERIAL_OK = False
 
 
+def rate_limited_publish_due(now, last_publish, period):
+    """Keep integrating every encoder frame but bound ROS/DDS publication."""
+    if last_publish is None or now < last_publish:
+        return True
+    return now - last_publish >= period
+
+
 class Stm32BridgeNode(Node):
     def __init__(self, **kwargs):
         super().__init__('stm32_bridge_node', **kwargs)
@@ -99,6 +106,9 @@ class Stm32BridgeNode(Node):
         self.declare_parameter('max_delta_ticks', 2591)
         self.declare_parameter('max_linear_mps', 0.25)
         self.declare_parameter('max_angular_rps', 1.0)
+        # Integrate every 50 Hz STM32 encoder frame, but publish at the 20 Hz
+        # controller rate so matched DDS readers cannot starve UART service.
+        self.declare_parameter('odom_publish_hz', 20.0)
         # 로봇 섀시 축간/윤거의 절반 — 실측 후 확정 (이전엔 파라미터로 노출되지
         # 않아 EncoderOdometry 기본값 0.10/0.10에 항상 고정되는 버그였음)
         self.declare_parameter('lx', 0.10)
@@ -188,6 +198,14 @@ class Stm32BridgeNode(Node):
             raise ValueError('serial_reconnect_interval_s must be at least 0.25')
         self.max_linear = float(self.get_parameter('max_linear_mps').value)
         self.max_angular = float(self.get_parameter('max_angular_rps').value)
+        self.odom_publish_hz = float(
+            self.get_parameter('odom_publish_hz').value)
+        if (not math.isfinite(self.odom_publish_hz) or
+                self.odom_publish_hz <= 0.0 or
+                self.odom_publish_hz > 50.0):
+            raise ValueError('odom_publish_hz must be in (0, 50]')
+        self.odom_publish_period = 1.0 / self.odom_publish_hz
+        self.last_odom_publish_time = None
         self.protocol = UartProtocol()
         self.serial_baud = int(self.get_parameter('serial_baud').value)
         if self.serial_baud != UART_BAUD_RATE:
@@ -1086,7 +1104,12 @@ class Stm32BridgeNode(Node):
                 self.get_logger().warn(
                     f'[{self.role}] 엔코더 카운터 불연속 감지 '
                     f'— 이번 주기 모션 폐기, 재동기화함')
-            self.publish_odom(odom)
+            now = time.monotonic()
+            if rate_limited_publish_due(
+                    now, self.last_odom_publish_time,
+                    self.odom_publish_period):
+                self.publish_odom(odom)
+                self.last_odom_publish_time = now
         elif parsed['type'] == 'ultrasonic':
             self.publish_ultrasonic(parsed)
         elif parsed['type'] == 'lift':

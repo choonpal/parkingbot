@@ -10,7 +10,10 @@ from rclpy.parameter import Parameter
 
 from cooperative_parking_robot import stm32_bridge_node as bridge_module
 from cooperative_parking_robot.hardware_profile import servo_attach_pulses_for
-from cooperative_parking_robot.stm32_bridge_node import Stm32BridgeNode
+from cooperative_parking_robot.stm32_bridge_node import (
+    Stm32BridgeNode,
+    rate_limited_publish_due,
+)
 from cooperative_parking_robot.uart_protocol import UartProtocol
 from cooperative_parking_robot.ultrasonic_phase_health import (
     UltrasonicPhaseHealth,
@@ -35,6 +38,16 @@ class FakeLogger:
 
     def debug(self, message, **kwargs):
         self._record('debug', message, **kwargs)
+
+
+def test_odom_publish_rate_gate_keeps_first_and_due_samples():
+    assert rate_limited_publish_due(10.0, None, 0.05)
+    assert not rate_limited_publish_due(10.049, 10.0, 0.05)
+    assert rate_limited_publish_due(10.05, 10.0, 0.05)
+
+
+def test_odom_publish_rate_gate_recovers_from_clock_reset():
+    assert rate_limited_publish_due(9.0, 10.0, 0.05)
 
 
 class FakeSerial:

@@ -96,6 +96,90 @@ def vehicle_to_world(longitudinal, lateral, vehicle_x, vehicle_y,
     )
 
 
+def approach_motion_metrics(start, current, goal):
+    """Measure initial travel against the intended map-frame approach.
+
+    Returns ``(travelled, progress, cross_track, alignment_cosine)``.  The
+    controller uses this after a few centimetres of CCTV/odom motion so a
+    wrong marker-to-base yaw cannot turn a valid map goal into a sideways or
+    opposite body command.
+    """
+    sx, sy = (float(start[0]), float(start[1]))
+    cx, cy = (float(current[0]), float(current[1]))
+    gx, gy = (float(goal[0]), float(goal[1]))
+    values = (sx, sy, cx, cy, gx, gy)
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("approach points must be finite")
+    goal_dx, goal_dy = gx - sx, gy - sy
+    goal_distance = math.hypot(goal_dx, goal_dy)
+    if goal_distance <= 1e-9:
+        raise ValueError("approach start and goal must differ")
+    ux, uy = goal_dx / goal_distance, goal_dy / goal_distance
+    move_dx, move_dy = cx - sx, cy - sy
+    travelled = math.hypot(move_dx, move_dy)
+    progress = move_dx * ux + move_dy * uy
+    cross_track = abs(move_dx * uy - move_dy * ux)
+    alignment = 1.0 if travelled <= 1e-9 else progress / travelled
+    return travelled, progress, cross_track, alignment
+
+
+def plan_peer_safe_approach(
+        start, goal, peer,
+        robot_length=ROBOT_LENGTH_M,
+        robot_width=ROBOT_WIDTH_M,
+        clearance=0.06):
+    """Plan an approach that does not cut diagonally through the peer robot.
+
+    Points are in the vehicle ``(s, d)`` frame.  Because both robots hold the
+    vehicle yaw during staging, the pair collision envelope is the sum of the
+    two half-extents: one full robot length/width plus ``clearance``.  If the
+    direct segment enters that envelope, the moving robot first translates on
+    the vehicle axis while keeping its lateral lane, then turns toward its
+    staging point.  This is the Front departure used while Rear waits.
+    """
+    start = (float(start[0]), float(start[1]))
+    goal = (float(goal[0]), float(goal[1]))
+    peer = (float(peer[0]), float(peer[1]))
+    robot_length = float(robot_length)
+    robot_width = float(robot_width)
+    clearance = float(clearance)
+    values = (*start, *goal, *peer, robot_length, robot_width, clearance)
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("peer approach geometry must be finite")
+    if robot_length <= 0.0 or robot_width <= 0.0 or clearance <= 0.0:
+        raise ValueError("robot dimensions and peer clearance must be positive")
+
+    relative_start = (start[0] - peer[0], start[1] - peer[1])
+    relative_goal = (goal[0] - peer[0], goal[1] - peer[1])
+    protected_s = robot_length + clearance
+    protected_d = robot_width + clearance
+    if not segment_intersects_open_rect(
+            relative_start, relative_goal, protected_s, protected_d):
+        return [goal]
+
+    # A robot that already overlaps the peer's physical footprint cannot be
+    # made safe by planning; do not issue an escape command on an assumption.
+    if _point_inside_open_rect(relative_start, robot_length, robot_width):
+        raise ValueError("approach starts inside peer robot footprint")
+    direction = 1.0 if goal[0] >= start[0] else -1.0
+    departure = (
+        peer[0] + direction * protected_s,
+        start[1],
+    )
+    # The first leg is allowed inside the *margin* envelope when the robots
+    # begin side-by-side, but it must never enter the physical footprint.
+    if segment_intersects_open_rect(
+            relative_start,
+            (departure[0] - peer[0], departure[1] - peer[1]),
+            robot_length, robot_width):
+        raise ValueError("no collision-free axial departure from peer")
+    if segment_intersects_open_rect(
+            (departure[0] - peer[0], departure[1] - peer[1]),
+            relative_goal, protected_s, protected_d):
+        raise ValueError("peer-safe departure does not clear approach route")
+    return [departure, goal]
+
+
 def axle_longitudinal(role, wheelbase):
     return role_sign(role) * float(wheelbase) / 2.0
 

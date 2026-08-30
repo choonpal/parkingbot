@@ -10,6 +10,7 @@ from cooperative_parking_robot.vision_utils import (
     correct_floor_projection,
     load_yolo_model,
     normalize_model_mode,
+    object_point_to_floor_ray,
     pnp_distance_m,
     select_marker_by_id,
 )
@@ -331,6 +332,14 @@ def test_floor_homography_parallax_correction_moves_toward_optical_axis():
     assert correct_floor_projection(2.0, 1.0, 0.0, 0.0, 0.0, 0.0) == (2.0, 1.0)
     with pytest.raises(ValueError):
         correct_floor_projection(1.0, 1.0, 0.0, 0.0, 0.2, 0.2)
+
+
+def test_marker_overlay_projection_inverts_height_correction():
+    corrected = correct_floor_projection(
+        2.0, 1.0, 0.0, 0.0, 2.0, 0.2)
+    assert object_point_to_floor_ray(
+        corrected[0], corrected[1], 0.0, 0.0, 2.0, 0.2
+    ) == pytest.approx((2.0, 1.0))
 
 
 def test_real_robot_launches_default_to_front_first_entry():

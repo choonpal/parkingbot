@@ -37,6 +37,7 @@ def generate_launch_description():
         "CAM0_GROUND_X_M", "CAM0_GROUND_Y_M", "CAM0_HEIGHT_M",
         "CAM2_GROUND_X_M", "CAM2_GROUND_Y_M", "CAM2_HEIGHT_M",
         "FRONT_MARKER_HEIGHT_M", "REAR_MARKER_HEIGHT_M",
+        "FRONT_MARKER_YAW_OFFSET_DEG", "REAR_MARKER_YAW_OFFSET_DEG",
     ), "Jetson")
 
     runtime = Path.home() / ".ros" / "adaptive_valet_bot"
@@ -71,6 +72,8 @@ def generate_launch_description():
             config["CAM2_GROUND_X_M"], config["CAM2_GROUND_Y_M"])) + "]",
         "front_marker_height_m": config["FRONT_MARKER_HEIGHT_M"],
         "rear_marker_height_m": config["REAR_MARKER_HEIGHT_M"],
+        "front_yaw_offset_deg": config["FRONT_MARKER_YAW_OFFSET_DEG"],
+        "rear_yaw_offset_deg": config["REAR_MARKER_YAW_OFFSET_DEG"],
         "enable_operator_ui": "true",
         "enable_debug_overlay": "false",
         "simultaneous_entry": "false",

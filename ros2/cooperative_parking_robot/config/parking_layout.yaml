@@ -52,8 +52,10 @@ fleet_manager_node:
   ros__parameters:
     layout_registered: false
     map_resolution: 0.050000
-    waiting_x: 0.600000
-    waiting_y: 0.400000
+    # ID3 상판 마커 실측 차량 중심(2026-08-30). 아래 polygon의 도형 중심과
+    # 별개이며, 차량 진입용 /parking/target_pose 기준점이다.
+    waiting_x: 0.694188
+    waiting_y: 0.369548
     require_valid_vehicle_spec: true
     waiting_polygon: [0.000000, 0.000000, 1.200000, 0.000000, 1.200000, 0.800000, 0.000000, 0.800000]
     source_vehicle_fallback_mask_m: 0.900000
@@ -91,8 +93,8 @@ fleet_manager_node:
 cctv_merge_node:
   ros__parameters:
     layout_registered: false
-    waiting_x: 0.600000
-    waiting_y: 0.400000
+    waiting_x: 0.694188
+    waiting_y: 0.369548
     map_resolution: 0.050000
     map_origin_x_m: -0.400000
     map_origin_y_m: -0.800000

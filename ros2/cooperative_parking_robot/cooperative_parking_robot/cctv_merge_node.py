@@ -128,8 +128,8 @@ class CctvMergeNode(Node):
         self.declare_parameter(
             'waiting_polygon',
             [2.10, 0.30, 2.50, 0.30, 2.50, 0.90, 2.10, 0.90])
-        self.declare_parameter('waiting_x', 0.60)
-        self.declare_parameter('waiting_y', 0.40)
+        self.declare_parameter('waiting_x', 0.694188)
+        self.declare_parameter('waiting_y', 0.369548)
         self.declare_parameter('slot_occupancy_overlap_ratio', 0.10)
         self.declare_parameter('slot_empty_confirm_frames', 5)
         self.declare_parameter('slot_occupied_hold_s', 0.75)

@@ -249,8 +249,8 @@ def generate_launch_description():
             'use_mask_vehicle_dimensions', default_value='false'),
         DeclareLaunchArgument('default_vehicle_length_m', default_value='0.900'),
         DeclareLaunchArgument('default_vehicle_width_m', default_value='0.620'),
-        DeclareLaunchArgument('waiting_target_x_m', default_value='0.600'),
-        DeclareLaunchArgument('waiting_target_y_m', default_value='0.400'),
+        DeclareLaunchArgument('waiting_target_x_m', default_value='0.694188'),
+        DeclareLaunchArgument('waiting_target_y_m', default_value='0.369548'),
         # 상판 마커 노드가 카메라를 고를 때 쓰는 광축 지상점 [x0,y0, x2,y2].
         # 위 cam*_ground_*와 같은 값을 넣는다(중복이지만 배열 타입이 필요).
         DeclareLaunchArgument(
@@ -299,8 +299,11 @@ def generate_launch_description():
         DeclareLaunchArgument('min_marker_area_px', default_value='100.0'),
         DeclareLaunchArgument('min_marker_area_ratio', default_value='0.0003'),
         DeclareLaunchArgument('marker_size_m', default_value='0.24'),
-        DeclareLaunchArgument('front_yaw_offset_deg', default_value='0.0'),
-        DeclareLaunchArgument('rear_yaw_offset_deg', default_value='0.0'),
+        # 2026-08-30 현장 실측: ID2/ID1 상판 마커축 -> robot +X.
+        DeclareLaunchArgument(
+            'front_yaw_offset_deg', default_value='-88.463'),
+        DeclareLaunchArgument(
+            'rear_yaw_offset_deg', default_value='-92.782'),
         DeclareLaunchArgument('front_marker_offset_x_m', default_value='0.0'),
         DeclareLaunchArgument('rear_marker_offset_x_m', default_value='0.0'),
         DeclareLaunchArgument('front_marker_height_m', default_value='0.0'),
@@ -626,6 +629,8 @@ def generate_launch_description():
                 'vehicle_detection_height_m': _float(
                     'vehicle_detection_height_m'),
                 'marker_height_m': _float('front_marker_height_m'),
+                'approach_entry_standoff_m': 0.85,
+                'approach_wheelbase_m': _float('fixed_wheelbase_m'),
             }],
             output='screen'),
 

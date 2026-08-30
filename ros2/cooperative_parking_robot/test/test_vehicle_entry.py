@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from cooperative_parking_robot.vehicle_entry import (
+    approach_motion_metrics,
     approach_longitudinal,
     exit_longitudinal_translation,
     inter_robot_gap,
@@ -14,6 +15,7 @@ from cooperative_parking_robot.vehicle_entry import (
     marker_loss_speed_scale,
     axle_longitudinal,
     plan_around_vehicle,
+    plan_peer_safe_approach,
     projected_robot_x_offset,
     rear_scan_speed_from_relative,
     relative_alignment_is_consistent,
@@ -52,6 +54,47 @@ def test_roles_enter_from_same_rear_end_and_select_different_axles():
     assert target_axle_index("rear") == 1
     assert approach_longitudinal("front", 0.85, 0.70) == -0.85
     assert approach_longitudinal("rear", 0.85, 0.70) == pytest.approx(-1.55)
+
+
+def test_approach_motion_metrics_accepts_progress_toward_staging():
+    travelled, progress, cross_track, alignment = approach_motion_metrics(
+        (0.0, 0.0), (0.05, 0.0), (1.0, 0.0))
+    assert travelled == pytest.approx(0.05)
+    assert progress == pytest.approx(0.05)
+    assert cross_track == pytest.approx(0.0)
+    assert alignment == pytest.approx(1.0)
+
+
+def test_approach_motion_metrics_exposes_wrong_or_sideways_motion():
+    opposite = approach_motion_metrics(
+        (0.0, 0.0), (-0.05, 0.0), (1.0, 0.0))
+    sideways = approach_motion_metrics(
+        (0.0, 0.0), (0.0, 0.05), (1.0, 0.0))
+    assert opposite[3] == pytest.approx(-1.0)
+    assert sideways[1] == pytest.approx(0.0)
+    assert sideways[2] == pytest.approx(0.05)
+    assert sideways[3] == pytest.approx(0.0)
+
+
+def test_front_departs_axially_before_crossing_rear_lane():
+    start = (-2.89, -0.50)
+    rear = (-2.90, 0.0)
+    goal = (-0.85, 0.0)
+    route = plan_peer_safe_approach(
+        start, goal, rear, robot_length=0.565,
+        robot_width=0.420, clearance=0.06)
+    assert len(route) == 2
+    departure, staging = route
+    assert departure == pytest.approx((-2.275, -0.50))
+    assert staging == goal
+    assert abs(departure[0] - rear[0]) == pytest.approx(0.625)
+
+
+def test_rear_direct_route_is_safe_after_front_has_staged():
+    route = plan_peer_safe_approach(
+        (-2.90, 0.0), (-1.635, 0.0), (-0.85, 0.0),
+        robot_length=0.565, robot_width=0.420, clearance=0.06)
+    assert route == [(-1.635, 0.0)]
 
 
 def test_simultaneous_entry_stages_and_scans_both_roles_together():
@@ -242,6 +285,10 @@ def test_source_contract_has_explicit_entry_exit_and_bounded_scan():
     assert "rear_scan_speed_from_relative" in move
     assert "APPROACH_START_NOT_BEHIND_VEHICLE" in move
     assert "APPROACH_NOT_LONGITUDINAL_SAFE" in move
+    assert "APPROACH_WRONG_DIRECTION" in move
+    assert "APPROACH_CROSS_TRACK" in move
+    assert "PEER_ODOM_STALE_FOR_APPROACH" in move
+    assert "PEER_COLLISION_ENVELOPE" in move
     assert 'self.set_phase("TO_SIDE_STAGING")' not in move
     assert "wheel_center_s" in move
     assert "get_scan_start" not in move

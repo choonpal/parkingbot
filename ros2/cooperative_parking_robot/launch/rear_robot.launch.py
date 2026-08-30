@@ -176,7 +176,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "vehicle_half_length_m", default_value="0.45"),
         DeclareLaunchArgument(
-            "vehicle_half_width_m", default_value="0.175"),
+            "vehicle_half_width_m", default_value="0.310"),
         DeclareLaunchArgument("robot_length_m", default_value="0.565"),
         DeclareLaunchArgument("robot_width_m", default_value="0.420"),
         DeclareLaunchArgument(
@@ -186,7 +186,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "entry_standoff_m", default_value="0.85"),
         DeclareLaunchArgument(
-            "entry_side_offset_m", default_value="0.50"),
+            "entry_side_offset_m", default_value="0.60"),
         DeclareLaunchArgument(
             "entry_side", default_value="-1"),
         DeclareLaunchArgument(

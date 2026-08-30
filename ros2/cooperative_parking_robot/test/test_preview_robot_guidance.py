@@ -20,23 +20,34 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SOURCE = os.path.join(HERE, os.pardir, 'cooperative_parking_robot',
                       'camera_preview_node.py')
 
-FUNCTIONS = {'parse_robot_markers'}
+FUNCTIONS = {'parse_robot_markers', 'compute_approach_paths'}
 CONSTANTS = {'MISSION_PARK', 'MISSION_RETRIEVE', 'ROBOT_ROLES'}
 METHODS = {'_robot_marker_world', '_slot_centroid', '_guidance_goal',
-           '_guidance', 'empty_slot_ids'}
+           '_guidance', '_approach_paths', 'empty_slot_ids'}
 
 
 def _load():
     try:
         fusion = importlib.import_module(
             'cooperative_parking_robot.bev_fusion_core')
+        vehicle_entry = importlib.import_module(
+            'cooperative_parking_robot.vehicle_entry')
     except ImportError as exc:
         pytest.skip(f'의존성 없음: {exc}')
 
     with open(SOURCE, encoding='utf-8') as handle:
         tree = ast.parse(handle.read())
 
-    namespace = {'math': math, 'polygon_centroid': fusion.polygon_centroid}
+    namespace = {
+        'math': math,
+        'polygon_centroid': fusion.polygon_centroid,
+        'approach_longitudinal': vehicle_entry.approach_longitudinal,
+        'plan_peer_safe_approach': vehicle_entry.plan_peer_safe_approach,
+        'vehicle_to_world': vehicle_entry.vehicle_to_world,
+        'world_to_vehicle': vehicle_entry.world_to_vehicle,
+        'ROBOT_LENGTH_M': vehicle_entry.ROBOT_LENGTH_M,
+        'ROBOT_WIDTH_M': vehicle_entry.ROBOT_WIDTH_M,
+    }
     methods = []
     for node in tree.body:
         if isinstance(node, ast.FunctionDef) and node.name in FUNCTIONS:
@@ -61,6 +72,7 @@ def _load():
 
 NS = _load()
 parse_robot_markers = NS['parse_robot_markers']
+compute_approach_paths = NS['compute_approach_paths']
 PARK = NS['MISSION_PARK']
 RETRIEVE = NS['MISSION_RETRIEVE']
 
@@ -80,6 +92,7 @@ def _preview(mission='', markers=None, marker_wall=NOW,
     preview.robot_marker_ids = {'front': 2, 'rear': 1}
     preview.robot_marker_stale_s = 2.0
     preview.production_marker_visible_stale_s = 1.0
+    preview.robot_marker_display_hold_s = 1.0
     preview.guidance_forced_mission = ''
     preview._mission_type = mission
     preview._destination_slot_id = ''
@@ -96,6 +109,7 @@ def _preview(mission='', markers=None, marker_wall=NOW,
         preview.production_marker_visibility[role] = {
             'visible': marker is not None,
             'wall': marker_wall,
+            'last_visible_wall': marker_wall if marker is not None else 0.0,
             'pose': (None if world is None else {
                 'x_m': world[0], 'y_m': world[1], 'yaw_deg': 0.0,
                 'frame_id': 'map',
@@ -106,6 +120,11 @@ def _preview(mission='', markers=None, marker_wall=NOW,
     # use only the production pose/visible contract above.
     preview.cameras = [{'label': 'cctv0', 'markers': list(markers or []),
                         'marker_wall': marker_wall}]
+    preview.parking_target = None
+    preview.parking_target_wall = 0.0
+    preview.parking_target_stale_s = 2.0
+    preview.approach_entry_standoff_m = 0.85
+    preview.approach_wheelbase_m = 0.785
     return preview
 
 
@@ -157,10 +176,58 @@ def test_marker_without_world_coordinate_is_ignored():
     assert preview._robot_marker_world(NOW) == {}
 
 
-def test_preview_detection_cannot_override_production_visibility():
+def test_transient_production_marker_loss_holds_ui_path_only():
     preview = _preview(markers=BOTH)
     preview.production_marker_visibility['front']['visible'] = False
+    assert preview._robot_marker_world(NOW) == {
+        'front': (1.0, 0.5), 'rear': (2.0, 0.5)}
+
+
+def test_sustained_production_marker_loss_removes_ui_path():
+    preview = _preview(markers=BOTH)
+    preview.production_marker_visibility['front']['visible'] = False
+    preview.production_marker_visibility['front']['last_visible_wall'] = NOW - 1.1
     assert preview._robot_marker_world(NOW) == {'rear': (2.0, 0.5)}
+
+
+def test_individual_paths_match_controller_staging_geometry():
+    paths = compute_approach_paths(
+        {'front': (3.583670, 0.869883),
+         'rear': (3.593406, 0.370300)},
+        {'x_m': 0.694188, 'y_m': 0.369548, 'yaw_deg': 180.0},
+        0.85, 0.785)
+    assert paths['target'] == pytest.approx([0.694, 0.370, 180.0])
+    assert paths['paths']['front']['staging'] == pytest.approx(
+        [1.544, 0.370], abs=1e-3)
+    assert paths['paths']['rear']['staging'] == pytest.approx(
+        [2.329, 0.370], abs=1e-3)
+    assert paths['paths']['front']['from'] != paths['paths']['rear']['from']
+    assert len(paths['paths']['front']['waypoints']) == 2
+    assert paths['paths']['front']['waypoints'][0] == pytest.approx(
+        [2.969, 0.870], abs=2e-3)
+    assert len(paths['paths']['rear']['waypoints']) == 1
+
+
+def test_preview_approach_paths_require_fresh_target_and_robot_poses():
+    markers = [
+        _marker(2, 3.583670, 0.869883),
+        _marker(1, 3.593406, 0.370300),
+    ]
+    preview = _preview(markers=markers)
+    assert preview._approach_paths(NOW)['ready'] is False
+
+    preview.parking_target = {
+        'x_m': 0.694188, 'y_m': 0.369548,
+        'yaw_deg': -179.291, 'frame_id': 'map'}
+    preview.parking_target_wall = NOW
+    result = preview._approach_paths(NOW)
+    assert result['ready'] is True
+    assert set(result['paths']) == {'front', 'rear'}
+
+    preview.parking_target_wall = NOW - 3.0
+    stale = preview._approach_paths(NOW)
+    assert stale['ready'] is False
+    assert '만료' in stale['reason']
 
 
 # ------------------------------------------------------------------ 입차

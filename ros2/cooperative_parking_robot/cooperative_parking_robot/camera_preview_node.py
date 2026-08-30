@@ -104,11 +104,22 @@ from cooperative_parking_robot.latest_qos import (
     STATE_LATEST_QOS,
 )
 from cooperative_parking_robot.freshness import StampGate, stamp_to_ns
+from cooperative_parking_robot.vehicle_entry import (
+    ROBOT_LENGTH_M,
+    ROBOT_WIDTH_M,
+    approach_longitudinal,
+    plan_peer_safe_approach,
+    vehicle_to_world,
+    world_to_vehicle,
+)
 # 런타임(cctv_merge)이 쓰는 것과 **같은** 점유 판정 로직을 그대로 쓴다.
 # 프리뷰가 자체 규칙으로 판정하면 화면과 실제 발행값이 어긋난다.
 # 바닥 homography 는 바닥 위의 점만 맞는다. 높이가 있는 점을 되돌리는
 # 역변환은 런타임 yolo_bev_map 이 쓰는 것과 **같은 함수**를 쓴다.
-from cooperative_parking_robot.vision_utils import correct_floor_projection
+from cooperative_parking_robot.vision_utils import (
+    correct_floor_projection,
+    object_point_to_floor_ray,
+)
 from cooperative_parking_robot.bev_fusion_core import (
     SlotOccupancyTracker,
     # 런타임 merge_detections 와 **같은** 중복 판정을 쓰기 위해 가져온다.
@@ -379,9 +390,10 @@ function renderTower(info){
   const unk  = items.filter(x => !x.observed);
   const y = info.yolo || {};
   const g = info.guidance || {};
+  const ap = info.approach_paths || {};
   const rp = info.relative_pose || {};
   const driveMarkers = info.drive_markers || [];
-  const roles = Object.keys(g.robots || {});
+  const approachRoles = Object.keys(ap.paths || {});
 
   // ---- 상태 타일 ----
   let tiles = '';
@@ -462,6 +474,9 @@ function renderTower(info){
     sl.ready ? (items.length - unk.length) + '/' + items.length + ' 관측'
              : '없음',
     !sl.ready ? 'bad' : (unk.length ? 'warn' : 'good')]);
+  steps.push(['개별 진입경로',
+    approachRoles.length + '/2',
+    approachRoles.length === 2 ? 'good' : 'warn']);
   steps.push(['안내',
     (g.distance_m !== null && g.distance_m !== undefined) ? '산출됨' : '대기',
     (g.distance_m !== null && g.distance_m !== undefined) ? 'good'
@@ -500,7 +515,27 @@ function renderTower(info){
               + (marker.pose ? ' · ' + marker.pose.yaw_deg.toFixed(1) + '°' : '')
             : '<span class="' + statusClass + '">'
               + esc(marker.status || '수신 대기') + '</span>') + '</div>';
+    const path = (ap.paths || {})[role];
+    const via = path && (path.waypoints || []).length > 1
+      ? ' · 경유 ' + path.waypoints[0][0].toFixed(2) + ', '
+        + path.waypoints[0][1].toFixed(2)
+      : '';
+    kv += '<div class="k">' + (ko[role] || role) + ' 진입 경로</div>'
+       + '<div class="v">'
+       + (path
+          ? path.from[0].toFixed(2) + ', ' + path.from[1].toFixed(2)
+            + ' → <b>' + path.staging[0].toFixed(2) + ', '
+            + path.staging[1].toFixed(2) + ' m</b> · '
+            + (path.distance_m * 100).toFixed(0) + ' cm' + via
+          : '<span class="warn">' + esc(ap.reason || '산출 대기')
+            + '</span>')
+       + '</div>';
   });
+  if(ap.target){
+    kv += '<div class="k">차량 기준 pose</div><div class="v">'
+       + ap.target[0].toFixed(3) + ', ' + ap.target[1].toFixed(3)
+       + ' m · ' + ap.target[2].toFixed(1) + '°</div>';
+  }
   if(rp.configured){
     kv += '<div class="k">ID0 Rear→Front</div><div class="v">'
        + (rp.fresh && rp.visible === true
@@ -529,7 +564,7 @@ function renderTower(info){
   }
   document.getElementById('twRobots').innerHTML = kv;
   document.getElementById('twRobotSub').textContent =
-    roles.length + ' / 2 마커';
+    approachRoles.length + ' / 2 경로';
 }
 
 async function tick(){
@@ -1417,6 +1452,11 @@ REGION_COLOURS = [(255, 220, 90), (90, 120, 255), (120, 255, 120)]
 # 로봇 안내 화살표 색 (BGR)
 GUIDANCE_COLOUR = (0, 215, 255)      # 주황 — 이동해야 할 방향
 ROBOT_AXIS_COLOUR = (255, 160, 60)   # 하늘 — 두 로봇을 잇는 축
+APPROACH_COLOURS = {
+    'front': (80, 225, 100),         # 초록 — Front staging 경로
+    'rear': (225, 90, 230),          # 자홍 — Rear observation queue 경로
+}
+VEHICLE_TARGET_COLOUR = (245, 245, 245)
 
 ROBOT_ROLES = ('front', 'rear')
 
@@ -1697,6 +1737,88 @@ def map_pose_metrics(msg):
     }
 
 
+def compute_approach_paths(
+        robots, target, entry_standoff_m, wheelbase_m,
+        robot_length_m=ROBOT_LENGTH_M,
+        robot_width_m=ROBOT_WIDTH_M,
+        peer_clearance_m=0.06):
+    """Compute the exact per-role staging routes used by individual_move.
+
+    ``robots`` maps roles to current map ``(x, y)`` positions. ``target`` is
+    the production vehicle pose returned by :func:`map_pose_metrics`.
+    Keeping this part ROS-independent lets the UI calculation be checked
+    against the controller geometry without launching a robot.
+    """
+    entry_standoff_m = float(entry_standoff_m)
+    wheelbase_m = float(wheelbase_m)
+    if (not math.isfinite(entry_standoff_m) or entry_standoff_m <= 0.0 or
+            not math.isfinite(wheelbase_m) or wheelbase_m <= 0.0):
+        raise ValueError('approach standoff and wheelbase must be positive')
+    tx = float(target['x_m'])
+    ty = float(target['y_m'])
+    yaw_deg = float(target['yaw_deg'])
+    if not all(math.isfinite(value) for value in (tx, ty, yaw_deg)):
+        raise ValueError('approach target must be finite')
+    yaw = math.radians(yaw_deg)
+    goals = {
+        role: (approach_longitudinal(
+            role, entry_standoff_m, wheelbase_m), 0.0)
+        for role in ROBOT_ROLES
+    }
+    paths = {}
+    errors = {}
+    for role in ROBOT_ROLES:
+        if role not in robots:
+            continue
+        start = (float(robots[role][0]), float(robots[role][1]))
+        if not all(math.isfinite(value) for value in start):
+            continue
+        start_sd = world_to_vehicle(start[0], start[1], tx, ty, yaw)
+        peer_sd = None
+        if role == 'front' and 'rear' in robots:
+            peer_sd = world_to_vehicle(
+                robots['rear'][0], robots['rear'][1], tx, ty, yaw)
+        elif role == 'rear' and 'front' in robots:
+            # Rear moves only after Front has reached its staging point.
+            peer_sd = goals['front']
+        try:
+            route_sd = ([goals[role]] if peer_sd is None else
+                        plan_peer_safe_approach(
+                            start_sd, goals[role], peer_sd,
+                            robot_length_m, robot_width_m, peer_clearance_m))
+        except ValueError as exc:
+            errors[role] = str(exc)
+            continue
+        waypoints = [
+            vehicle_to_world(s, d, tx, ty, yaw) for s, d in route_sd]
+        staging = waypoints[-1]
+        route_points = [start, *waypoints]
+        distance = sum(
+            math.dist(route_points[index - 1], route_points[index])
+            for index in range(1, len(route_points)))
+        dx = waypoints[0][0] - start[0]
+        dy = waypoints[0][1] - start[1]
+        paths[role] = {
+            'from': [round(start[0], 3), round(start[1], 3)],
+            'staging': [round(staging[0], 3), round(staging[1], 3)],
+            'waypoints': [[round(point[0], 3), round(point[1], 3)]
+                          for point in waypoints],
+            'distance_m': round(distance, 3),
+            'heading_deg': round(math.degrees(math.atan2(dy, dx)), 1),
+            'phase': ('front_staging' if role == 'front'
+                      else 'rear_observation_queue'),
+        }
+    return {
+        'ready': bool(paths),
+        'reason': ('' if paths and not errors else
+                   ('경로 안전성 실패: ' + ', '.join(sorted(errors))
+                    if errors else 'Production 로봇 pose 대기')),
+        'target': [round(tx, 3), round(ty, 3), round(yaw_deg, 1)],
+        'paths': paths,
+        'errors': errors,
+    }
+
+
 class CameraPreviewNode(Node):
     def __init__(self):
         super().__init__('camera_preview_node')
@@ -1816,6 +1938,14 @@ class CameraPreviewNode(Node):
         # 실제 주행용 cctv_robot_marker_node의 Bool gate가 이보다 오래되면
         # FALSE로 단정하지 않고 '주행 노드 미수신'으로 표시한다.
         self.declare_parameter('production_marker_visible_stale_s', 1.0)
+        # 안전 gate는 즉시 FALSE를 유지하되, UI만 마지막 정상 pose를 잠깐
+        # 유지해 한두 프레임 ArUco 누락 때 경로가 깜빡이지 않게 한다.
+        self.declare_parameter('robot_marker_display_hold_s', 1.0)
+        # individual_move의 접근 geometry와 같아야 UI 선과 실제 목표가 같다.
+        self.declare_parameter('parking_target_topic', '/parking/target_pose')
+        self.declare_parameter('parking_target_stale_s', 2.0)
+        self.declare_parameter('approach_entry_standoff_m', 0.85)
+        self.declare_parameter('approach_wheelbase_m', 0.785)
         # --- 검출 깜빡임 완화 ---
         # 추론 한 번이 아무것도 못 찾았다고 바로 박스를 지우면, 다음 추론까지
         # (yolo_every_n / fps) 초 동안 화면이 빈다. 신뢰도가 문턱 근처에서
@@ -2015,8 +2145,26 @@ class CameraPreviewNode(Node):
             self.get_parameter('robot_marker_stale_s').value)
         self.production_marker_visible_stale_s = float(
             self.get_parameter('production_marker_visible_stale_s').value)
+        self.robot_marker_display_hold_s = float(
+            self.get_parameter('robot_marker_display_hold_s').value)
         if self.production_marker_visible_stale_s <= 0.0:
             raise ValueError('production_marker_visible_stale_s must be positive')
+        if self.robot_marker_display_hold_s <= 0.0:
+            raise ValueError('robot_marker_display_hold_s must be positive')
+        self.parking_target_topic = str(
+            self.get_parameter('parking_target_topic').value).strip()
+        self.parking_target_stale_s = float(
+            self.get_parameter('parking_target_stale_s').value)
+        self.approach_entry_standoff_m = float(
+            self.get_parameter('approach_entry_standoff_m').value)
+        self.approach_wheelbase_m = float(
+            self.get_parameter('approach_wheelbase_m').value)
+        if not self.parking_target_topic:
+            raise ValueError('parking_target_topic must not be empty')
+        if (self.parking_target_stale_s <= 0.0 or
+                self.approach_entry_standoff_m <= 0.0 or
+                self.approach_wheelbase_m <= 0.0):
+            raise ValueError('parking target/path timing and geometry must be positive')
         self.detection_hold_s = float(
             self.get_parameter('detection_hold_s').value)
         if self.detection_hold_s < 0.0:
@@ -2054,6 +2202,7 @@ class CameraPreviewNode(Node):
                 'topic': f'/{role}/cctv_marker_visible',
                 'visible': None,
                 'wall': 0.0,
+                'last_visible_wall': 0.0,
                 'pose_topic': f'/{role}/cctv_pose',
                 'pose': None,
                 'pose_wall': 0.0,
@@ -2072,6 +2221,11 @@ class CameraPreviewNode(Node):
                 SENSOR_LATEST_QOS)
             self._production_marker_subscriptions.extend(
                 (visible_subscription, pose_subscription))
+        self.parking_target = None
+        self.parking_target_wall = 0.0
+        self._parking_target_subscription = self.create_subscription(
+            PoseStamped, self.parking_target_topic,
+            self.parking_target_cb, SENSOR_LATEST_QOS)
         self._mask_shape = None
         self.relative_pose_topic = str(
             self.get_parameter('relative_pose_topic').value).strip()
@@ -2229,6 +2383,8 @@ class CameraPreviewNode(Node):
                 return
             runtime['visible'] = bool(msg.data)
             runtime['wall'] = time.monotonic()
+            if runtime['visible']:
+                runtime['last_visible_wall'] = runtime['wall']
 
     def production_marker_pose_cb(self, role, msg):
         """Store the exact map pose selected by the production marker node."""
@@ -2251,6 +2407,23 @@ class CameraPreviewNode(Node):
                 return
             runtime['pose'] = metrics
             runtime['pose_wall'] = time.monotonic()
+
+    def parking_target_cb(self, msg):
+        """Store the exact production vehicle pose used by both controllers."""
+        if msg.header.frame_id != 'map':
+            self.get_logger().warn(
+                f'진입 target frame 무시: {msg.header.frame_id!r}',
+                throttle_duration_sec=5.0)
+            return
+        try:
+            metrics = map_pose_metrics(msg)
+        except ValueError as exc:
+            self.get_logger().warn(
+                f'진입 target pose 무시: {exc}', throttle_duration_sec=5.0)
+            return
+        with self._lock:
+            self.parking_target = metrics
+            self.parking_target_wall = time.monotonic()
 
     def image_cb(self, state, msg):
         try:
@@ -2977,8 +3150,8 @@ class CameraPreviewNode(Node):
         self.get_logger().info(f'yolo_switch_mode -> {mode}')
         return mode
 
-    def _world_to_pixel(self, label, x, y):
-        """Map 좌표(m)를 그 카메라의 영상 픽셀로. 바닥 평면 기준이다."""
+    def _world_to_pixel(self, label, x, y, height=0.0):
+        """Map point to pixels, undoing marker-height correction if needed."""
         inverse = self._world_to_pixel_H.get(label)
         if inverse is None:
             matrix = self.pixel_to_world_H.get(label)
@@ -2989,7 +3162,16 @@ class CameraPreviewNode(Node):
             except np.linalg.LinAlgError:
                 return None
             self._world_to_pixel_H[label] = inverse
-        vector = inverse @ np.array([float(x), float(y), 1.0])
+        project_x, project_y = float(x), float(y)
+        optics = getattr(self, 'camera_optics', {}).get(label)
+        if optics is not None and float(height) > 0.0:
+            try:
+                project_x, project_y = object_point_to_floor_ray(
+                    project_x, project_y,
+                    optics[0], optics[1], optics[2], float(height))
+            except ValueError:
+                pass
+        vector = inverse @ np.array([project_x, project_y, 1.0])
         w = float(vector[2])
         # w <= 0 이면 카메라 뒤쪽이다. 그대로 나누면 엉뚱한 곳에 찍힌다.
         if w <= 1e-9:
@@ -3070,6 +3252,8 @@ class CameraPreviewNode(Node):
                 role: {
                     'visible': runtime.get('visible'),
                     'visible_wall': runtime.get('wall', 0.0),
+                    'last_visible_wall': runtime.get(
+                        'last_visible_wall', 0.0),
                     'pose': (None if runtime.get('pose') is None
                              else dict(runtime['pose'])),
                     'pose_wall': runtime.get('pose_wall', 0.0),
@@ -3079,10 +3263,16 @@ class CameraPreviewNode(Node):
         found = {}
         for role, runtime in snapshot.items():
             visible_wall = float(runtime['visible_wall'])
+            last_visible_wall = float(runtime['last_visible_wall'])
             pose_wall = float(runtime['pose_wall'])
-            if (runtime['visible'] is not True or visible_wall <= 0.0 or
-                    now - visible_wall >
-                    self.production_marker_visible_stale_s):
+            visible_now = (
+                runtime['visible'] is True and visible_wall > 0.0 and
+                now - visible_wall <=
+                self.production_marker_visible_stale_s)
+            display_held = (
+                last_visible_wall > 0.0 and
+                now - last_visible_wall <= self.robot_marker_display_hold_s)
+            if not (visible_now or display_held):
                 continue
             pose = runtime['pose']
             if (pose is None or pose_wall <= 0.0 or
@@ -3185,13 +3375,92 @@ class CameraPreviewNode(Node):
         })
         return info
 
-    def _draw_guidance(self, canvas, to_px, scale=1.0):
+    def _approach_paths(self, now):
+        """Return Front/Rear's independent pre-entry routes for the UI."""
+        robots = self._robot_marker_world(now)
+        with self._lock:
+            target = (None if self.parking_target is None
+                      else dict(self.parking_target))
+            target_wall = float(self.parking_target_wall)
+        if target is None or target_wall <= 0.0:
+            return {
+                'ready': False, 'reason': '차량 목표 pose 대기',
+                'target': None, 'paths': {},
+            }
+        age = max(0.0, now - target_wall)
+        if age > self.parking_target_stale_s:
+            return {
+                'ready': False,
+                'reason': f'차량 목표 pose 만료 ({age:.1f}s)',
+                'target': [round(target['x_m'], 3),
+                           round(target['y_m'], 3),
+                           round(target['yaw_deg'], 1)],
+                'paths': {}, 'target_age_s': round(age, 2),
+            }
+        result = compute_approach_paths(
+            robots, target, self.approach_entry_standoff_m,
+            self.approach_wheelbase_m)
+        result['target_age_s'] = round(age, 2)
+        result['robot_source'] = 'production_cctv_pose'
+        missing = [role for role in ROBOT_ROLES if role not in robots]
+        if missing:
+            result['reason'] = '마커 대기: ' + ', '.join(missing)
+        return result
+
+    def _draw_approach_paths(
+            self, canvas, to_px, scale=1.0, robot_to_px=None):
+        """Draw the two controller staging routes with distinct colours."""
+        info = self._approach_paths(time.monotonic())
+        target = info.get('target')
+        if target is not None:
+            center = to_px(target[0], target[1])
+            nose = to_px(
+                target[0] + 0.25 * math.cos(math.radians(target[2])),
+                target[1] + 0.25 * math.sin(math.radians(target[2])))
+            if center is not None:
+                cv2.circle(canvas, center, max(4, int(7 * scale)),
+                           VEHICLE_TARGET_COLOUR, 2)
+            if center is not None and nose is not None:
+                cv2.arrowedLine(
+                    canvas, center, nose, VEHICLE_TARGET_COLOUR,
+                    max(1, int(2 * scale)), cv2.LINE_AA, tipLength=0.25)
+        for role, path in info.get('paths', {}).items():
+            colour = APPROACH_COLOURS[role]
+            route = [path['from'], *path.get('waypoints', [path['staging']])]
+            pixels = [
+                (robot_to_px(route[0][0], route[0][1])
+                 if robot_to_px is not None else
+                 to_px(route[0][0], route[0][1])),
+                *[to_px(point[0], point[1]) for point in route[1:]],
+            ]
+            for start, end in zip(pixels, pixels[1:]):
+                if start is None or end is None:
+                    continue
+                cv2.arrowedLine(canvas, start, end, colour,
+                                max(2, int(3 * scale)), cv2.LINE_AA,
+                                tipLength=0.12)
+            staging = pixels[-1]
+            if staging is None:
+                continue
+            cv2.circle(canvas, staging, max(4, int(7 * scale)), colour, 2)
+            tag = 'FRONT STAGE' if role == 'front' else 'REAR QUEUE'
+            text = f"{tag} {path['distance_m']:.2f}m"
+            origin = (staging[0] + 8, staging[1] - 8)
+            cv2.putText(canvas, text, origin, cv2.FONT_HERSHEY_SIMPLEX,
+                        0.43 * scale, (0, 0, 0), 3, cv2.LINE_AA)
+            cv2.putText(canvas, text, origin, cv2.FONT_HERSHEY_SIMPLEX,
+                        0.43 * scale, colour, 1, cv2.LINE_AA)
+        return info
+
+    def _draw_guidance(
+            self, canvas, to_px, scale=1.0, robot_to_px=None):
         """안내 화살표를 그린다. ``to_px`` 는 map(m) -> 픽셀 변환."""
         guidance = self._guidance(time.monotonic())
         robots = guidance['robots']
         points = {}
         for role, world in robots.items():
-            pixel = to_px(world[0], world[1])
+            projector = robot_to_px or to_px
+            pixel = projector(world[0], world[1])
             if pixel is None:
                 continue
             points[role] = pixel
@@ -3207,7 +3476,8 @@ class CameraPreviewNode(Node):
                      ROBOT_AXIS_COLOUR, max(1, int(2 * scale)), cv2.LINE_AA)
         if guidance['from'] is None or guidance['to'] is None:
             return guidance
-        start = to_px(guidance['from'][0], guidance['from'][1])
+        projector = robot_to_px or to_px
+        start = projector(guidance['from'][0], guidance['from'][1])
         end = to_px(guidance['to'][0], guidance['to'][1])
         if start is None or end is None:
             return guidance
@@ -3616,6 +3886,8 @@ class CameraPreviewNode(Node):
             cv2.putText(canvas, f'{slot_id} {tag}', (cx - 26, cy),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 1,
                         cv2.LINE_AA)
+        self._draw_approach_paths(
+            canvas, lambda x, y: to_px(x, y), scale=1.0)
         self._draw_guidance(canvas, lambda x, y: to_px(x, y), scale=1.0)
 
         if self.waiting:
@@ -3816,7 +4088,20 @@ class CameraPreviewNode(Node):
                 return None
             return (px, py)
 
-        self._draw_guidance(canvas, to_px, scale=1.0)
+        def robot_to_px(x, y):
+            point = self._world_to_pixel(
+                label, x, y, height=self.marker_height)
+            if point is None:
+                return None
+            px, py = int(round(point[0])), int(round(point[1]))
+            if not (-width <= px <= 2 * width and -height <= py <= 2 * height):
+                return None
+            return (px, py)
+
+        self._draw_approach_paths(
+            canvas, to_px, scale=1.0, robot_to_px=robot_to_px)
+        self._draw_guidance(
+            canvas, to_px, scale=1.0, robot_to_px=robot_to_px)
 
     def _draw_slots_on_camera(self, canvas, label):
         """슬롯 사각형을 카메라 원본 화면에 되짚어 그린다.
@@ -4138,6 +4423,7 @@ class CameraPreviewNode(Node):
                     'marker_disagreement_m': self._marker_disagreement(),
                 },
                 'guidance': self._guidance(time.monotonic()),
+                'approach_paths': self._approach_paths(time.monotonic()),
                 'bev': {
                     'ready': self.bev_ready,
                     'error': self.bev_error,

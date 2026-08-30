@@ -40,6 +40,7 @@ from cooperative_parking_robot.vehicle_entry import (
     ROBOT_LENGTH_M,
     ROBOT_WIDTH_M,
     angle_norm,
+    approach_motion_metrics,
     approach_longitudinal,
     axle_longitudinal,
     exit_longitudinal_translation,
@@ -47,6 +48,7 @@ from cooperative_parking_robot.vehicle_entry import (
     initial_approach_phase,
     marker_loss_speed_scale,
     plan_around_vehicle,
+    plan_peer_safe_approach,
     rear_scan_speed_from_relative,
     relative_alignment_is_consistent,
     scan_direction,
@@ -86,14 +88,14 @@ class IndividualMoveNode(Node):
         # Measured vehicle/robot envelope. The standoff and side lane must lie
         # outside this envelope; invalid launch values fail at startup.
         self.declare_parameter("vehicle_half_length_m", 0.45)
-        self.declare_parameter("vehicle_half_width_m", 0.175)
+        self.declare_parameter("vehicle_half_width_m", 0.310)
         self.declare_parameter("robot_length_m", ROBOT_LENGTH_M)
         self.declare_parameter("robot_width_m", ROBOT_WIDTH_M)
         self.declare_parameter(
             "minimum_inter_robot_gap_m", MIN_INTER_ROBOT_GAP_M)
         self.declare_parameter("robot_clearance_m", 0.06)
         self.declare_parameter("entry_standoff_m", 0.85)
-        self.declare_parameter("entry_side_offset_m", 0.40)
+        self.declare_parameter("entry_side_offset_m", 0.60)
         self.declare_parameter("entry_side", -1)
         self.declare_parameter("exit_distance_m", 0.50)
         self.declare_parameter("same_direction_exit", False)
@@ -150,6 +152,13 @@ class IndividualMoveNode(Node):
         self.declare_parameter("mission_data_timeout_s", 5.0)
         self.declare_parameter("future_tolerance_s", 0.10)
         self.declare_parameter("odom_timeout_s", 0.50)
+        # Verify the observed map displacement before allowing a bad
+        # marker-to-base yaw transform to continue toward the vehicle.
+        self.declare_parameter("approach_direction_check_distance_m", 0.05)
+        self.declare_parameter("approach_min_alignment_cosine", 0.50)
+        self.declare_parameter("approach_cross_track_abort_m", 0.10)
+        self.declare_parameter("peer_approach_clearance_m", 0.06)
+        self.declare_parameter("peer_odom_timeout_s", 0.50)
 
         gp = self.get_parameter
         self.role = str(gp("role").value)
@@ -237,6 +246,15 @@ class IndividualMoveNode(Node):
             gp("mission_data_timeout_s").value)
         self.future_tolerance = float(gp("future_tolerance_s").value)
         self.odom_timeout = float(gp("odom_timeout_s").value)
+        self.approach_direction_check_distance = float(
+            gp("approach_direction_check_distance_m").value)
+        self.approach_min_alignment_cosine = float(
+            gp("approach_min_alignment_cosine").value)
+        self.approach_cross_track_abort = float(
+            gp("approach_cross_track_abort_m").value)
+        self.peer_approach_clearance = float(
+            gp("peer_approach_clearance_m").value)
+        self.peer_odom_timeout = float(gp("peer_odom_timeout_s").value)
         self._validate_parameters()
         self.target_gate = StampGate(
             self.target_timeout, self.future_tolerance)
@@ -260,6 +278,12 @@ class IndividualMoveNode(Node):
         self.active_target = None
         self.slot_target = None
         self.route = []
+        self.approach_start = None
+        self.approach_goal = None
+        self.approach_direction_checked = False
+        self.peer_x = self.peer_y = 0.0
+        self.peer_odom_ready = False
+        self.last_peer_odom_time = 0.0
         self.scan_origin_s = None
         self.exit_yaw = None
         self.exit_goal = None
@@ -318,6 +342,9 @@ class IndividualMoveNode(Node):
             self.peer_phase_cb, 10)
         self.create_subscription(
             Odometry, f"/{self.role}/odom", self.odom_cb,
+            SENSOR_LATEST_QOS)
+        self.create_subscription(
+            Odometry, f"/{self.other_role}/odom", self.peer_odom_cb,
             SENSOR_LATEST_QOS)
         self.create_subscription(
             PoseStamped, "/parking/target_pose", self.target_cb, 10)
@@ -439,6 +466,11 @@ class IndividualMoveNode(Node):
             "target_timeout_s": self.target_timeout,
             "mission_data_timeout_s": self.mission_data_timeout,
             "odom_timeout_s": self.odom_timeout,
+            "approach_direction_check_distance_m":
+                self.approach_direction_check_distance,
+            "approach_cross_track_abort_m": self.approach_cross_track_abort,
+            "peer_approach_clearance_m": self.peer_approach_clearance,
+            "peer_odom_timeout_s": self.peer_odom_timeout,
         }
         for name, value in positive.items():
             if not math.isfinite(value) or value <= 0.0:
@@ -446,6 +478,10 @@ class IndividualMoveNode(Node):
         if (not math.isfinite(self.future_tolerance) or
                 self.future_tolerance < 0.0):
             raise ValueError("future_tolerance_s must be finite and non-negative")
+        if (not math.isfinite(self.approach_min_alignment_cosine) or
+                not -1.0 <= self.approach_min_alignment_cosine <= 1.0):
+            raise ValueError(
+                "approach_min_alignment_cosine must be finite and in [-1,1]")
         if self.entry_side not in (-1, 1):
             raise ValueError("entry_side must be -1 or 1")
         if self.same_direction_exit_sign not in (-1, 1):
@@ -534,6 +570,9 @@ class IndividualMoveNode(Node):
             self.last_visual_observation_time = None
             self.active_target = None
             self.route = []
+            self.approach_start = None
+            self.approach_goal = None
+            self.approach_direction_checked = False
             self.scan_origin_s = None
             self.relative_lost_since = None
             self.relative_mismatch_since = None
@@ -581,6 +620,15 @@ class IndividualMoveNode(Node):
             math.isfinite(value) for value in (self.x, self.y, self.theta))
         if self.odom_ready:
             self.last_odom_time = time.monotonic()
+
+    def peer_odom_cb(self, msg):
+        p = msg.pose.pose.position
+        values = (float(p.x), float(p.y))
+        if not all(math.isfinite(value) for value in values):
+            return
+        self.peer_x, self.peer_y = values
+        self.peer_odom_ready = True
+        self.last_peer_odom_time = time.monotonic()
 
     def peer_state_cb(self, msg):
         self.peer_robot_state = str(msg.data)
@@ -778,8 +826,14 @@ class IndividualMoveNode(Node):
         age = time.monotonic() - self.relative_receipt_time
         return 0.0 <= age < self.aruco_timeout
 
-    def underbody_visual_required(self):
+    def bounded_visual_fallback_required(self):
+        # The staging route is latched before motion starts.  Keep following
+        # that route through a brief CCTV dropout using encoder prediction,
+        # but never let a sustained loss continue unchecked toward the car.
+        # WAIT_TARGET/WAIT_FRONT_STAGED are stationary, so they do not need
+        # this motion gate.
         return self.phase in (
+            "TO_REAR_STAGING",
             "READY_TO_SCAN", "PRE_ALIGN", "WAIT_ULTRASONIC_READY",
             "PREALIGNED",
             "SCAN_IN", "RETREAT",
@@ -820,8 +874,8 @@ class IndividualMoveNode(Node):
         return True
 
     def update_visual_fallback(self):
-        """Prefer top pose outside and ID0 inside, then bound encoder fallback."""
-        if not self.underbody_visual_required():
+        """Prefer top pose/ID0, then bound encoder-only route tracking."""
+        if not self.bounded_visual_fallback_required():
             self.relative_lost_since = None
             self.motion_speed_scale = 1.0
             return True
@@ -968,6 +1022,13 @@ class IndividualMoveNode(Node):
         self.active_target = self.latest_target
         tx, ty, yaw = self.active_target
         start = world_to_vehicle(self.x, self.y, tx, ty, yaw)
+        if (not self.peer_odom_ready or
+                time.monotonic() - self.last_peer_odom_time >
+                self.peer_odom_timeout):
+            self.fault("PEER_ODOM_STALE_FOR_APPROACH")
+            return False
+        peer = world_to_vehicle(
+            self.peer_x, self.peer_y, tx, ty, yaw)
         goal = (
             approach_longitudinal(
                 self.role, self.entry_standoff, self.wheelbase),
@@ -984,12 +1045,80 @@ class IndividualMoveNode(Node):
                 "APPROACH_START_NOT_BEHIND_VEHICLE:"
                 f"s={start[0]:.3f},limit={-protected_s:.3f}")
             return False
-        if segment_intersects_open_rect(
-                start, goal, protected_s, protected_d):
-            self.fault("APPROACH_NOT_LONGITUDINAL_SAFE")
+        try:
+            route_sd = plan_peer_safe_approach(
+                start, goal, peer,
+                self.robot_length, self.robot_width,
+                self.peer_approach_clearance)
+        except ValueError as exc:
+            self.fault(f"APPROACH_PEER_ROUTE_INVALID:{exc}")
             return False
-        self.route = [vehicle_to_world(goal[0], goal[1], tx, ty, yaw)]
+        previous = start
+        for waypoint in route_sd:
+            if segment_intersects_open_rect(
+                    previous, waypoint, protected_s, protected_d):
+                self.fault("APPROACH_NOT_LONGITUDINAL_SAFE")
+                return False
+            previous = waypoint
+        self.route = [
+            vehicle_to_world(s, d, tx, ty, yaw) for s, d in route_sd]
+        self.approach_start = (self.x, self.y)
+        self.approach_goal = self.route[0]
+        self.approach_direction_checked = False
         self.set_phase("TO_REAR_STAGING")
+        return True
+
+    def peer_approach_is_safe(self):
+        """Fail closed if peer localization is stale or bodies overlap."""
+        if (not self.peer_odom_ready or
+                time.monotonic() - self.last_peer_odom_time >
+                self.peer_odom_timeout):
+            self.fault("PEER_ODOM_STALE_DURING_APPROACH")
+            return False
+        tx, ty, yaw = self.active_target
+        here = world_to_vehicle(self.x, self.y, tx, ty, yaw)
+        peer = world_to_vehicle(
+            self.peer_x, self.peer_y, tx, ty, yaw)
+        relative = (here[0] - peer[0], here[1] - peer[1])
+        if (abs(relative[0]) < self.robot_length and
+                abs(relative[1]) < self.robot_width):
+            self.fault(
+                "PEER_COLLISION_ENVELOPE:"
+                f"ds={relative[0]:.3f},dd={relative[1]:.3f}")
+            return False
+        return True
+
+    def approach_direction_is_safe(self):
+        if self.approach_start is None or self.approach_goal is None:
+            self.fault("APPROACH_DIRECTION_REFERENCE_MISSING")
+            return False
+        if math.dist(self.approach_start, self.approach_goal) <= \
+                self.position_tolerance:
+            # 이미 staging 허용오차 안에서 시작했으면 방향을 판정할 이동 자체가
+            # 없다. advance_route가 즉시 도착 처리하도록 그대로 통과시킨다.
+            self.approach_direction_checked = True
+            return True
+        travelled, progress, cross_track, alignment = \
+            approach_motion_metrics(
+                self.approach_start, (self.x, self.y), self.approach_goal)
+        if cross_track >= self.approach_cross_track_abort:
+            self.fault(
+                "APPROACH_CROSS_TRACK:"
+                f"travel={travelled:.3f},progress={progress:.3f},"
+                f"cross={cross_track:.3f}")
+            return False
+        if (not self.approach_direction_checked and
+                travelled >= self.approach_direction_check_distance):
+            if alignment < self.approach_min_alignment_cosine:
+                self.fault(
+                    "APPROACH_WRONG_DIRECTION:"
+                    f"travel={travelled:.3f},progress={progress:.3f},"
+                    f"cross={cross_track:.3f},cos={alignment:.3f}")
+                return False
+            self.approach_direction_checked = True
+            self.get_logger().info(
+                f"[{self.role}] approach direction verified: "
+                f"travel={travelled:.3f}m cos={alignment:.3f}")
         return True
 
     def advance_route(self, speed, goal_yaw=None):
@@ -1001,6 +1130,10 @@ class IndividualMoveNode(Node):
         if arrived:
             self.route.pop(0)
             self.phase_enter_time = time.monotonic()
+            if self.phase == "TO_REAR_STAGING" and self.route:
+                self.approach_start = (self.x, self.y)
+                self.approach_goal = self.route[0]
+                self.approach_direction_checked = False
         return not self.route
 
     def move_pose_toward(self, gx, gy, goal_yaw, speed, position_tolerance):
@@ -1173,6 +1306,10 @@ class IndividualMoveNode(Node):
         if self.phase_timed_out():
             return
         if self.phase == "TO_REAR_STAGING":
+            if not self.peer_approach_is_safe():
+                return
+            if not self.approach_direction_is_safe():
+                return
             yaw = self.active_target[2]
             if self.advance_route(self.centerline_speed, goal_yaw=yaw):
                 self.stop()

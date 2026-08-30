@@ -31,7 +31,13 @@ def _load():
     with open(SOURCE, encoding='utf-8') as handle:
         tree = ast.parse(handle.read())
     # 꺼낸 함수들이 쓰는 표준 모듈만 넣어준다.
-    namespace = {'math': math, 'os': os, 'json': json, 'time': time}
+    from cooperative_parking_robot.vision_utils import (
+        correct_floor_projection,
+        object_point_to_floor_ray,
+    )
+    namespace = {'math': math, 'os': os, 'json': json, 'time': time,
+                 'correct_floor_projection': correct_floor_projection,
+                 'object_point_to_floor_ray': object_point_to_floor_ray}
     try:
         import numpy
         namespace['np'] = numpy
@@ -387,6 +393,16 @@ def test_world_to_pixel_reuses_the_cached_inverse():
     cached = preview._world_to_pixel_H['cctv0']
     preview._world_to_pixel('cctv0', 2.0, 2.0)
     assert preview._world_to_pixel_H['cctv0'] is cached
+
+
+def test_height_corrected_world_point_returns_to_visual_marker_pixel():
+    preview = _with_homography()
+    preview.camera_optics = {'cctv0': (0.4, 0.6, 2.61)}
+    px, py = 410, 180
+    world = preview._pixel_to_world('cctv0', px, py, height=0.12)
+    back = preview._world_to_pixel('cctv0', *world, height=0.12)
+    assert back[0] == pytest.approx(px, abs=0.2)
+    assert back[1] == pytest.approx(py, abs=0.2)
 
 
 def test_world_to_pixel_without_homography_returns_none():

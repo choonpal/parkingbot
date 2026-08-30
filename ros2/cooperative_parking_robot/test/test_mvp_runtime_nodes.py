@@ -4,8 +4,8 @@ from cooperative_parking_robot.mvp_runtime_nodes import (
 )
 
 
-def test_default_geometry_uses_046_m_side_lane():
-    assert minimum_entry_side_offset(0.175, 0.420, 0.060) == 0.460
+def test_measured_vehicle_geometry_requires_0595_m_side_lane():
+    assert minimum_entry_side_offset(0.310, 0.420, 0.060) == 0.595
 
 
 def test_rigid_controller_owns_only_active_drive():

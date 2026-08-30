@@ -226,3 +226,32 @@ def correct_floor_projection(
         camera_x + scale * (float(floor_x) - camera_x),
         camera_y + scale * (float(floor_y) - camera_y),
     )
+
+
+def object_point_to_floor_ray(
+        object_x: float, object_y: float,
+        camera_ground_x: float, camera_ground_y: float,
+        camera_height: float, object_height: float) -> Tuple[float, float]:
+    """Inverse of :func:`correct_floor_projection` for image overlays.
+
+    A floor-calibrated homography can only project a floor-ray intersection
+    back to pixels.  Production robot poses, however, have already been moved
+    from that intersection to the elevated marker plane.  Convert them back
+    along the same camera ray before applying the inverse homography so the UI
+    dot lands on the visual centre of the ArUco marker.
+    """
+    height = float(object_height)
+    if height < 0.0:
+        raise ValueError('object_height must be non-negative')
+    if height == 0.0:
+        return float(object_x), float(object_y)
+    camera_height = float(camera_height)
+    if camera_height <= height:
+        raise ValueError('camera_height must exceed object_height')
+    scale = camera_height / (camera_height - height)
+    camera_x = float(camera_ground_x)
+    camera_y = float(camera_ground_y)
+    return (
+        camera_x + scale * (float(object_x) - camera_x),
+        camera_y + scale * (float(object_y) - camera_y),
+    )

@@ -22,9 +22,9 @@ from cooperative_parking_robot.ultrasonic_edge_node import UltrasonicEdgeNode
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _individual_move_for_visual_fallback():
+def _individual_move_for_visual_fallback(phase="SCAN_IN"):
     node = object.__new__(IndividualMoveNode)
-    node.phase = "SCAN_IN"
+    node.phase = phase
     node.cctv_marker_timeout = 0.50
     node.aruco_timeout = 0.30
     node.marker_slowdown = 0.75
@@ -69,6 +69,35 @@ def test_last_top_marker_true_then_silence_slows_and_holds_without_fault(
     node.top_marker_cb(SimpleNamespace(data=True))
     assert node.update_visual_fallback()
     assert node.motion_speed_scale == 1.0
+
+
+def test_approach_marker_loss_holds_latched_route_then_resumes(monkeypatch):
+    node = _individual_move_for_visual_fallback("TO_REAR_STAGING")
+    node.route = [(2.0, 0.8), (1.5, 0.4)]
+    latched_route = list(node.route)
+    now = [200.0]
+    monkeypatch.setattr(move_module.time, "monotonic", lambda: now[0])
+
+    node.top_marker_cb(SimpleNamespace(data=True))
+    assert node.update_visual_fallback()
+
+    now[0] = 200.80
+    assert node.update_visual_fallback()
+    assert node.motion_speed_scale == 0.35
+    assert node.route == latched_route
+
+    now[0] = 201.60
+    assert not node.update_visual_fallback()
+    assert node.motion_speed_scale == 0.0
+    assert node.stop_calls == 1
+    assert node.fault_reasons == []
+    assert node.route == latched_route
+
+    now[0] = 201.61
+    node.top_marker_cb(SimpleNamespace(data=True))
+    assert node.update_visual_fallback()
+    assert node.motion_speed_scale == 1.0
+    assert node.route == latched_route
 
 
 def _pose(frame_id, stamp_ns, x=0.215, y=0.0, yaw=0.0, scale=1.0):

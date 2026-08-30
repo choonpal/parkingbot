@@ -17,10 +17,9 @@ def test_required_fault_matrix_classification():
         assert policy.manual_reset_required is False
 
 
-def test_only_explicit_physical_conditions_request_hard_estop():
+def test_only_explicit_latched_conditions_request_hard_estop():
     for reason in ('ESTOP', 'ERR,ESTOP_LATCHED',
-                   'ERR,WHEEL_DIR_MISMATCH',
-                   'SYNC,DIST_ERROR_FATAL 250mm'):
+                   'ERR,WHEEL_DIR_MISMATCH'):
         policy = classify_fault(reason)
         assert policy.classification is FaultClass.EMERGENCY
         assert policy.motion_stop_required
@@ -28,7 +27,36 @@ def test_only_explicit_physical_conditions_request_hard_estop():
         assert policy.manual_reset_required
 
 
-def test_recoverable_faults_are_safe_stop_not_ignored():
+def test_lateral_payload_limit_stops_motion_without_estop_latch():
+    policy = classify_fault('SYNC,LATERAL_ERROR_FATAL +41mm')
+    assert policy.classification is FaultClass.RECOVERABLE
+    assert policy.motion_stop_required
+    assert policy.mission_abort_required
+    assert policy.reconnect_allowed
+    assert policy.estop_required is False
+    assert policy.manual_reset_required is False
+
+
+def test_distance_yaw_and_visual_degradation_do_not_stop_or_abort():
+    reasons = (
+        'SYNC,YAW_ERROR +12.0deg',
+        'SYNC,DIST_ERROR_FATAL +90mm',
+        'SYNC,RELATIVE_X_ERROR_TIMEOUT +45mm',
+        'SYNC,MARKER_HOLD 3.0s',
+        'SYNC,ID0_LOSS_HOLD 3.0s',
+        'SYNC,CORRECTION_STALE 2.0s',
+        'SYNC,SYNC_DEGRADED dist=+0.090m',
+    )
+    for reason in reasons:
+        policy = classify_fault(reason)
+        assert policy.classification is FaultClass.AVAILABILITY
+        assert policy.motion_stop_required is False
+        assert policy.mission_abort_required is False
+        assert policy.estop_required is False
+        assert policy.manual_reset_required is False
+
+
+def test_recoverable_communication_faults_still_stop_safely():
     policy = classify_fault('ERR,HEARTBEAT_TIMEOUT')
     assert policy.motion_stop_required
     assert policy.hardware_ready_false

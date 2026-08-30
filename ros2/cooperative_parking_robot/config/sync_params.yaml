@@ -11,7 +11,9 @@ rigid_body_sync_node:
     hold_initial_yaw: true
     yaw_hold_kp: 1.0
 
-    # 상대 x/yaw 안전 한계
+    # 상대 x/yaw 기준. production entry point에서는 limit부터 feed-forward를
+    # 완만하게 낮추되 PID correction과 path를 유지한다. stop/timeout 값은
+    # legacy/baseline 호환 및 진단용이며 자동 E-stop 기준으로 사용하지 않는다.
     dist_error_limit: 0.03
     dist_stop_limit: 0.08
     dist_error_timeout_s: 2.0
@@ -19,8 +21,11 @@ rigid_body_sync_node:
     odom_timeout_s: 0.50
     marker_slowdown_s: 1.0
     marker_stop_s: 2.0
+    continuous_drive_min_speed_scale: 0.20
+    continuous_drive_visual_full_degrade_s: 10.0
 
-    # 상대 lateral은 기계적 횡하중과 직결되므로 x와 별도로 제한한다.
+    # 상대 lateral은 인양 기구의 실제 횡하중과 직결되므로 x/yaw와 다르게
+    # 기존 물리 한계를 유지한다.
     sync_lateral_error_limit_m: 0.020
     sync_lateral_stop_limit_m: 0.040
     sync_lateral_error_timeout_s: 1.0
@@ -40,6 +45,9 @@ rigid_body_sync_node:
     use_raw_wheel_relative_predictor: true
     wheel_relative_timeout_s: 0.50
     wheel_pair_sync_slop_s: 0.05
+
+    # 아래 CCTV pair 설정은 baseline 클래스 호환을 위해 남겨 두지만 production
+    # rigid_body_sync는 해당 topic을 구독하지 않고 relative fusion에 사용하지 않는다.
     cctv_pair_timeout_s: 0.50
     cctv_pair_sync_slop_s: 0.12
 
@@ -73,8 +81,8 @@ rigid_body_sync_node:
     sync_lateral_measurement_sigma_m: 0.015
     sync_initial_covariance_scale: 4.0
 
-    # ID0 또는 상판 marker pair의 innovation/outlier gate.
-    # 단발 오측정은 폐기하고, 제한 범위 안에서 서로 일관된 관측 4개가
+    # Rear ID0 innovation/outlier gate. 단발 오측정은 해당 measurement만
+    # 폐기하고 wheel odom prediction과 주행은 계속한다. 서로 일관된 관측 4개가
     # 연속되면 필터 drift로 판단해 명시적으로 재획득한다.
     aruco_distance_innovation_gate_m: 0.04
     aruco_yaw_innovation_gate_deg: 5.0

@@ -26,6 +26,29 @@ from cooperative_parking_robot.vehicle_entry import marker_loss_speed_scale
 
 SIDE_OFFSET_MARGIN_M = 0.015
 
+# These topics describe overhead Front/Rear marker observations.  They may
+# remain available to global perception and approach logic, but the production
+# rigid-body controller must not subscribe to them or use them as a relative
+# distance/yaw correction source.
+_RELATIVE_CCTV_TOPICS = frozenset({
+    '/front/cctv_marker_visible',
+    '/rear/cctv_marker_visible',
+    '/front/cctv_pose',
+    '/rear/cctv_pose',
+    '/front/cctv_observation',
+    '/rear/cctv_observation',
+})
+
+_NON_LATCHING_SYNC_PREFIXES = (
+    'YAW_ERROR',
+    'DIST_ERROR',
+    'RELATIVE_X_ERROR',
+    'MARKER_',
+    'ID0_',
+    'CORRECTION_',
+    'YAW_VISUAL_DISAGREEMENT',
+)
+
 
 def minimum_entry_side_offset(
         vehicle_half_width_m: float,
@@ -195,33 +218,43 @@ class MvpIndividualMoveNode(BaseIndividualMoveNode):
 
 
 class MvpRigidBodySyncNode(BaseRigidBodySyncNode):
-    """Own DRIVE only and harden final insertion/visual fallback behavior."""
+    """Own DRIVE and prefer re-convergence over automatic mission abort."""
 
     def __init__(self, **kwargs):
         self._drive_command_owned = False
-        self._verified_cctv_fallback_time = None
-        self._yaw_visual_disagreement_since = None
+        self._blocked_relative_cctv_topics = set()
         super().__init__(**kwargs)
         self.declare_parameter('final_max_omega', 0.15)
-        self.declare_parameter('id0_verified_fallback_stop_s', 10.0)
-        self.declare_parameter('id0_verified_fallback_speed_scale', 0.30)
-        self.declare_parameter('yaw_visual_disagreement_grace_s', 0.50)
+        self.declare_parameter('continuous_drive_min_speed_scale', 0.20)
+        self.declare_parameter('continuous_drive_visual_full_degrade_s', 10.0)
         gp = self.get_parameter
         self.final_max_omega = float(gp('final_max_omega').value)
-        self.id0_verified_fallback_stop = float(
-            gp('id0_verified_fallback_stop_s').value)
-        self.id0_verified_fallback_scale = float(
-            gp('id0_verified_fallback_speed_scale').value)
-        self.yaw_visual_disagreement_grace = float(
-            gp('yaw_visual_disagreement_grace_s').value)
+        self.continuous_drive_min_scale = float(
+            gp('continuous_drive_min_speed_scale').value)
+        self.continuous_drive_visual_full_degrade = float(
+            gp('continuous_drive_visual_full_degrade_s').value)
         if (not 0.0 < self.final_max_omega <= self.max_omega or
-                self.id0_verified_fallback_stop <= self.marker_stop or
-                not 0.0 < self.id0_verified_fallback_scale <= 0.5 or
-                self.yaw_visual_disagreement_grace <= 0.0):
-            raise ValueError('invalid MVP rigid-body hardening parameters')
+                not 0.0 < self.continuous_drive_min_scale <= 1.0 or
+                self.continuous_drive_visual_full_degrade <=
+                self.marker_slowdown):
+            raise ValueError('invalid continuous-drive parameters')
         self.get_logger().info(
             'cmd_vel ownership active | individual=APPROACH/ALIGN/RETURN, '
             'rigid=DRIVE')
+        self.get_logger().info(
+            'relative fusion source policy | RAW_WHEEL_ODOM predict + '
+            'Rear ID0 update only | CCTV relative inputs blocked: ' +
+            ','.join(sorted(self._blocked_relative_cctv_topics)))
+
+    def create_subscription(self, msg_type, topic, callback, qos_profile,
+                            *args, **kwargs):
+        """Do not connect overhead marker observations to rigid-body fusion."""
+        topic_name = str(topic)
+        if topic_name in _RELATIVE_CCTV_TOPICS:
+            self._blocked_relative_cctv_topics.add(topic_name)
+            return None
+        return super().create_subscription(
+            msg_type, topic, callback, qos_profile, *args, **kwargs)
 
     def _owns_drive_command_now(self) -> bool:
         return rigid_drive_owns_command(
@@ -256,7 +289,8 @@ class MvpRigidBodySyncNode(BaseRigidBodySyncNode):
         yaw_error = self.angle_norm(slot_yaw - ct)
         rotation_radius = (
             self.kinematics.half_L + math.hypot(
-                self.vehicle_offset_body[0], self.vehicle_offset_body[1]))
+                self.vehicle_offset_body[0],
+                self.vehicle_offset_body[1]))
         command = final_slot_command(
             base_command=base_command,
             yaw_error=yaw_error,
@@ -270,66 +304,156 @@ class MvpRigidBodySyncNode(BaseRigidBodySyncNode):
         return False, command, info
 
     def _new_cctv_pair(self, now):
-        pair = super()._new_cctv_pair(now)
-        if pair is not None:
-            self._verified_cctv_fallback_time = now
-        return pair
+        """CCTV remains global feedback and never corrects relative x/y/yaw."""
+        self._last_visual_reason = 'CCTV_RELATIVE_DISABLED'
+        return None
 
-    def apply_sync_and_publish(self, vx, vy, omega, now, *, mode,
-                               linear_limit, angular_limit, extra_info=None):
-        fallback_recent = (
-            self._verified_cctv_fallback_time is not None and
-            now - self._verified_cctv_fallback_time <= self.cctv_pair_timeout)
-        old_marker_stop = self.marker_stop
+    @staticmethod
+    def _error_speed_scale(error, onset, minimum):
+        if error is None:
+            return 1.0
+        value = float(error)
+        threshold = float(onset)
+        if not math.isfinite(value):
+            return minimum
+        magnitude = abs(value)
+        if magnitude <= threshold:
+            return 1.0
+        return max(minimum, min(1.0, threshold / magnitude))
+
+    def _visual_speed_scale(self, id0_age):
+        if id0_age is None or not math.isfinite(id0_age) or id0_age < 0.0:
+            return self.continuous_drive_min_scale
+        if id0_age <= self.marker_slowdown:
+            return 1.0
+        if id0_age >= self.continuous_drive_visual_full_degrade:
+            return self.continuous_drive_min_scale
+        progress = (
+            (id0_age - self.marker_slowdown) /
+            (self.continuous_drive_visual_full_degrade -
+             self.marker_slowdown))
+        return 1.0 - progress * (1.0 - self.continuous_drive_min_scale)
+
+    def _continuous_drive_scale(self, now):
+        reference = self.reference_capture.reference
+        distance_error = None
+        yaw_error = None
+        if reference is not None:
+            if reference.relative_x is not None:
+                distance_error = (
+                    self.relative_x_kalman.x - reference.relative_x)
+            yaw_error = self.angle_norm(
+                self.yaw_kalman.x - reference.relative_yaw)
+
         id0_age = (
             None if self.aruco_receipt_time is None else
             max(0.0, now - self.aruco_receipt_time))
-        if fallback_recent:
-            self.marker_stop = max(
-                self.marker_stop, self.id0_verified_fallback_stop)
-            if id0_age is not None and id0_age > self.marker_slowdown:
-                # Parent CCTV fallback applies 0.5. Pre-scale so the effective
-                # verified-fallback motion is the configured conservative rate.
-                pre_scale = min(
-                    1.0, self.id0_verified_fallback_scale / 0.5)
-                vx *= pre_scale
-                vy *= pre_scale
-                omega *= pre_scale
+        distance_scale = self._error_speed_scale(
+            distance_error, self.dist_limit,
+            self.continuous_drive_min_scale)
+        yaw_scale = self._error_speed_scale(
+            yaw_error, self.yaw_limit,
+            self.continuous_drive_min_scale)
+        visual_scale = self._visual_speed_scale(id0_age)
+        scale = min(distance_scale, yaw_scale, visual_scale)
+        return scale, {
+            'continuous_drive_scale': round(scale, 3),
+            'distance_feedforward_scale': round(distance_scale, 3),
+            'yaw_feedforward_scale': round(yaw_scale, 3),
+            'visual_feedforward_scale': round(visual_scale, 3),
+            'id0_predict_only': (
+                id0_age is None or id0_age >= self.aruco_timeout),
+            'id0_age_s': (
+                None if id0_age is None else round(id0_age, 3)),
+            'continuous_distance_error_m': (
+                None if distance_error is None else
+                round(distance_error, 4)),
+            'continuous_yaw_error_deg': (
+                None if yaw_error is None else
+                round(math.degrees(yaw_error), 2)),
+        }
+
+    def apply_sync_and_publish(self, vx, vy, omega, now, *, mode,
+                               linear_limit, angular_limit, extra_info=None):
+        # Reduce only the virtual-body feed-forward.  The parent adds distance,
+        # lateral and yaw corrections afterwards, so correction authority is
+        # not weakened while path motion is slowed for re-convergence.
+        feedforward_scale, continuous_info = self._continuous_drive_scale(now)
+        vx *= feedforward_scale
+        vy *= feedforward_scale
+        omega *= feedforward_scale
+
+        # The inherited estimator/control implementation is retained, but its
+        # legacy distance/yaw/visual stop thresholds are converted into
+        # diagnostics for this production entry point.  The physical lateral
+        # load limit in rigid_body_sync_production_node is intentionally not
+        # changed here.
+        old_limits = (
+            self.marker_slowdown,
+            self.marker_stop,
+            self.dist_limit,
+            self.dist_stop_limit,
+            self.dist_error_timeout,
+            self.yaw_limit,
+        )
+        self.marker_slowdown = 1.0e8
+        self.marker_stop = 2.0e8
+        self.dist_limit = 1.0e8
+        self.dist_stop_limit = 2.0e8
+        self.dist_error_timeout = 1.0e8
+        self.yaw_limit = math.pi + 0.1
+        merged_info = dict(extra_info or {})
+        merged_info.update(continuous_info)
         try:
             result = super().apply_sync_and_publish(
                 vx, vy, omega, now,
-                mode=mode, linear_limit=linear_limit,
-                angular_limit=angular_limit, extra_info=extra_info)
+                mode=mode,
+                linear_limit=linear_limit,
+                angular_limit=angular_limit,
+                extra_info=merged_info)
         finally:
-            self.marker_stop = old_marker_stop
-        if result:
-            reference = self.reference_capture.reference
-            if reference is not None:
-                fused_error = self.angle_norm(
-                    self.yaw_kalman.x - reference.relative_yaw)
-                if abs(fused_error) <= self.yaw_limit:
-                    self._yaw_visual_disagreement_since = None
-        return result
+            (self.marker_slowdown,
+             self.marker_stop,
+             self.dist_limit,
+             self.dist_stop_limit,
+             self.dist_error_timeout,
+             self.yaw_limit) = old_limits
+
+        if not result:
+            return False
+
+        distance_error = continuous_info['continuous_distance_error_m']
+        yaw_error_deg = continuous_info['continuous_yaw_error_deg']
+        id0_predict_only = continuous_info['id0_predict_only']
+        degraded = []
+        if (distance_error is not None and
+                abs(distance_error) > old_limits[2]):
+            degraded.append(f'dist={distance_error:+.3f}m')
+        if (yaw_error_deg is not None and
+                abs(math.radians(yaw_error_deg)) > old_limits[5]):
+            degraded.append(f'yaw={yaw_error_deg:+.1f}deg')
+        if id0_predict_only:
+            degraded.append('ID0_LOSS_ODOM_PREDICT')
+        if degraded:
+            self._err = 'SYNC_DEGRADED ' + ' '.join(degraded)
+            self.get_logger().warn(
+                self._err +
+                f' | feed-forward scale={feedforward_scale:.2f}',
+                throttle_duration_sec=2.0)
+        return True
 
     def fatal_stop(self, reason):
-        if str(reason).startswith('YAW_ERROR'):
-            now = time.monotonic()
-            reference = self.reference_capture.reference
-            raw = self._raw_wheel_relative(now)
-            if reference is not None and raw is not None:
-                wheel_yaw_error = self.angle_norm(
-                    raw[1] - reference.relative_yaw)
-                if abs(wheel_yaw_error) <= self.yaw_limit:
-                    if self._yaw_visual_disagreement_since is None:
-                        self._yaw_visual_disagreement_since = now
-                    age = now - self._yaw_visual_disagreement_since
-                    if age < self.yaw_visual_disagreement_grace:
-                        self.recoverable_hold(
-                            'YAW_VISUAL_DISAGREEMENT '
-                            f'{math.degrees(wheel_yaw_error):+.1f}deg')
-                        return
-                else:
-                    self._yaw_visual_disagreement_since = None
+        """Do not turn ordinary distance/yaw/vision errors into mission abort."""
+        value = str(reason).strip()
+        if value.upper().startswith(_NON_LATCHING_SYNC_PREFIXES):
+            self._err = f'SYNC_DEGRADED {value}'
+            if isinstance(self._info, dict):
+                self._info['non_latching_reason'] = value
+            self.publish_status_now()
+            self.get_logger().warn(
+                f'{value}; keeping path and retrying on the next control cycle',
+                throttle_duration_sec=2.0)
+            return
         return super().fatal_stop(reason)
 
 

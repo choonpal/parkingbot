@@ -1,9 +1,10 @@
 """Shared classification for production rigid-body synchronization faults."""
 
+# These faults mean the controller no longer has a usable control basis or the
+# lifted payload can be mechanically overloaded.  Ordinary distance/yaw error,
+# ID0 loss and correction staleness remain telemetry/degraded-motion states.
 SYNC_FATAL_PREFIXES = (
-    'ODOM_TIMEOUT', 'MARKER_LOST', 'YAW_ERROR',
-    'DIST_ERROR_FATAL', 'DIST_ERROR_TIMEOUT',
-    'RELATIVE_X_ERROR_FATAL', 'RELATIVE_X_ERROR_TIMEOUT',
+    'ODOM_TIMEOUT',
     'LATERAL_ERROR_FATAL', 'LATERAL_ERROR_TIMEOUT',
     'SYNC_FILTER_INIT_FAILED', 'REFERENCE_CAPTURE_FAILED',
 )

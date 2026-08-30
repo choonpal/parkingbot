@@ -26,12 +26,60 @@ def test_waiting_heading_resolves_pca_axis_and_wraparound(
     assert math.degrees(resolved) == pytest.approx(result_deg)
 
 
-def test_lateral_and_reference_faults_propagate_as_fatal():
+def test_only_control_basis_and_lateral_load_faults_propagate_as_fatal():
     assert is_fatal_sync_error('LATERAL_ERROR_FATAL +41mm')
     assert is_fatal_sync_error('LATERAL_ERROR_TIMEOUT +22mm')
     assert is_fatal_sync_error('REFERENCE_CAPTURE_FAILED sample_dispersion')
-    assert not is_fatal_sync_error('LATERAL_ERROR +21mm')
+    assert is_fatal_sync_error('ODOM_TIMEOUT')
+
+    assert not is_fatal_sync_error('YAW_ERROR +12deg')
+    assert not is_fatal_sync_error('DIST_ERROR_FATAL +90mm')
+    assert not is_fatal_sync_error('RELATIVE_X_ERROR_TIMEOUT +45mm')
+    assert not is_fatal_sync_error('MARKER_LOST 3.0s')
+    assert not is_fatal_sync_error('SYNC_DEGRADED dist=+0.090m')
     assert not is_fatal_sync_error('ARRIVED')
+
+
+def test_production_rigid_runtime_blocks_all_relative_cctv_inputs():
+    runtime = (ROOT / 'cooperative_parking_robot' /
+               'mvp_runtime_nodes.py').read_text()
+    vision = (ROOT / 'cooperative_parking_robot' /
+              'rigid_body_sync_vision_node.py').read_text()
+
+    for topic in (
+            '/front/cctv_marker_visible', '/rear/cctv_marker_visible',
+            '/front/cctv_pose', '/rear/cctv_pose',
+            '/front/cctv_observation', '/rear/cctv_observation'):
+        assert topic in runtime
+    assert 'if topic_name in _RELATIVE_CCTV_TOPICS' in runtime
+    assert "self._last_visual_reason = 'CCTV_RELATIVE_DISABLED'" in runtime
+    assert "def _new_cctv_pair(self, now):" in vision
+    assert 'return None' in vision
+    assert 'create_subscription' not in vision
+    assert 'from std_msgs.msg import String' not in vision
+
+
+def test_completion_first_policy_slows_feedforward_not_pid_correction():
+    runtime = (ROOT / 'cooperative_parking_robot' /
+               'mvp_runtime_nodes.py').read_text()
+    method = runtime.split(
+        '    def apply_sync_and_publish', 1)[1].split(
+        '    def fatal_stop', 1)[0]
+    assert 'vx *= feedforward_scale' in method
+    assert 'vy *= feedforward_scale' in method
+    assert 'omega *= feedforward_scale' in method
+    assert 'result = super().apply_sync_and_publish' in method
+    assert 'self.dist_limit = 1.0e8' in method
+    assert 'self.yaw_limit = math.pi + 0.1' in method
+    assert 'sync_lateral' not in method
+
+
+def test_lateral_physical_limit_remains_configured():
+    config = (ROOT / 'config' / 'sync_params.yaml').read_text()
+    assert 'continuous_drive_min_speed_scale: 0.20' in config
+    assert 'continuous_drive_visual_full_degrade_s: 10.0' in config
+    assert 'sync_lateral_error_limit_m: 0.020' in config
+    assert 'sync_lateral_stop_limit_m: 0.040' in config
 
 
 def test_wait_target_does_not_create_mission_in_target_callback():

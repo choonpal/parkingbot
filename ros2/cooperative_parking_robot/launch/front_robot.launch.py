@@ -147,6 +147,9 @@ def generate_launch_description():
             "simultaneous_entry", default_value="false",
             description="Use the validated Front-first staging by default"),
         DeclareLaunchArgument(
+            "stop_after_approach", default_value="false",
+            description="Hold at the outside staging point before ALIGN"),
+        DeclareLaunchArgument(
             "stop_after_align", default_value="false",
             description="Hold after axle alignment and never commit LIFT"),
         DeclareLaunchArgument(
@@ -255,6 +258,7 @@ def generate_launch_description():
                 "drive_timeout_s": 120.0,
                 "return_timeout_s": _float("return_timeout_s"),
                 "require_hardware_ready": require_hardware_ready,
+                "stop_after_approach": _bool("stop_after_approach"),
                 "stop_after_align": _bool("stop_after_align"),
             }],
             output="screen")]),

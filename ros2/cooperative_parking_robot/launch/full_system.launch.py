@@ -176,6 +176,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'simultaneous_entry', default_value='false'),
         DeclareLaunchArgument(
+            'stop_after_approach', default_value='false',
+            description=(
+                'Hold both robots at outside staging before ALIGN')),
+        DeclareLaunchArgument(
             'stop_after_align', default_value='false',
             description=(
                 'Hold both robots after axle alignment; never commit LIFT')),
@@ -513,6 +517,7 @@ def generate_launch_description():
                 'align_timeout_s': 120.0,
                 'drive_timeout_s': 120.0,
                 'require_hardware_ready': _bool('require_hardware_ready'),
+                'stop_after_approach': _bool('stop_after_approach'),
                 'stop_after_align': _bool('stop_after_align'),
             }],
             output='screen'),
@@ -577,6 +582,7 @@ def generate_launch_description():
                 'align_timeout_s': 120.0,
                 'drive_timeout_s': 120.0,
                 'require_hardware_ready': _bool('require_hardware_ready'),
+                'stop_after_approach': _bool('stop_after_approach'),
                 'stop_after_align': _bool('stop_after_align'),
             }],
             output='screen'),

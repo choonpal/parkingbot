@@ -29,6 +29,7 @@ class RobotStateMachineNode(Node):
         self.declare_parameter("coordination_timeout_s", 1.5)
         self.declare_parameter("fleet_timeout_s", 2.5)
         self.declare_parameter("future_tolerance_s", 0.25)
+        self.declare_parameter("stop_after_approach", False)
         self.declare_parameter("stop_after_align", False)
 
         gp = self.get_parameter
@@ -47,6 +48,8 @@ class RobotStateMachineNode(Node):
             gp("coordination_timeout_s").value)
         self.fleet_timeout = float(gp("fleet_timeout_s").value)
         self.future_tolerance = float(gp("future_tolerance_s").value)
+        self.stop_after_approach = bool(
+            gp("stop_after_approach").value)
         self.stop_after_align = bool(gp("stop_after_align").value)
         if any(value <= 0.0 for value in (
                 self.approach_timeout, self.align_timeout,
@@ -69,6 +72,7 @@ class RobotStateMachineNode(Node):
         self.release_announced = False
         self.arrived = False
         self.approach_done = False
+        self.approach_hold = False
         self.return_done = False
         self.hardware_ready = False
         self.hardware_fault = None
@@ -171,6 +175,7 @@ class RobotStateMachineNode(Node):
             f"drive:{self.drive_timeout:.1f}s/"
             f"return:{self.return_timeout:.1f}s | "
             f"coordination_timeout={self.coordination_timeout:.1f}s | "
+            f"stop_after_approach={self.stop_after_approach} | "
             f"stop_after_align={self.stop_after_align}")
 
     def aligned_cb(self, msg):
@@ -434,6 +439,13 @@ class RobotStateMachineNode(Node):
 
         elif self.state == "APPROACH":
             if self.approach_done:
+                if self.stop_after_approach:
+                    if not self.approach_hold:
+                        self.get_logger().warn(
+                            f"[{self.role}] approach complete; holding at "
+                            "the outside staging point")
+                    self.approach_hold = True
+                    return
                 self.transition("ALIGN")
             elif self.elapsed() > self.approach_timeout:
                 self.fail("APPROACH_TIMEOUT")
@@ -583,6 +595,7 @@ class RobotStateMachineNode(Node):
         self.release_announced = False
         self.arrived = False
         self.approach_done = False
+        self.approach_hold = False
         self.return_done = False
         self.local_lifted = False
         self.aggregate_lifted = False

@@ -106,3 +106,45 @@ def test_launches_expose_and_forward_stop_after_align():
         assert '"stop_after_align"' in source or "'stop_after_align'" in source
         assert '_bool("stop_after_align")' in source or (
             "_bool('stop_after_align')" in source)
+
+
+def test_approach_only_mode_holds_before_align():
+    machine = RobotStateMachineNode.__new__(RobotStateMachineNode)
+    machine.role = "front"
+    machine.active_mission_id = "mission-1"
+    machine.state = "APPROACH"
+    machine.hardware_fault = None
+    machine.fleet_receipt_time = time.monotonic()
+    machine.fleet_timeout = 2.5
+    machine.approach_done = True
+    machine.approach_hold = False
+    machine.stop_after_approach = True
+    machine.approach_timeout = 150.0
+    machine.pub_estop = Publisher()
+    machine.get_logger = lambda: Logger()
+    machine.elapsed = lambda: 0.0
+    machine.transitions = []
+    machine.transition = machine.transitions.append
+    machine.failures = []
+    machine.fail = machine.failures.append
+
+    machine.state_machine()
+
+    assert machine.state == "APPROACH"
+    assert machine.approach_hold is True
+    assert machine.transitions == []
+    assert machine.failures == []
+
+
+def test_launches_expose_and_forward_stop_after_approach():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    for relative in (
+            "launch/full_system.launch.py",
+            "launch/front_robot.launch.py",
+            "launch/rear_robot.launch.py"):
+        source = (root / relative).read_text(encoding="utf-8")
+        assert 'stop_after_approach' in source
+        assert '_bool("stop_after_approach")' in source or (
+            "_bool('stop_after_approach')" in source)

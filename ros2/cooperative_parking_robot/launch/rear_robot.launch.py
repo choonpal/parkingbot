@@ -150,6 +150,15 @@ def generate_launch_description():
             "rear_camera_fps", default_value="4.0",
             description="OV2710 processing rate; the device still reports 30 fps"),
         DeclareLaunchArgument(
+            "rear_camera_capture_fps", default_value="30.0",
+            description="V4L2 acquisition rate; ROS output stays rear_camera_fps"),
+        DeclareLaunchArgument(
+            "rear_camera_fourcc", default_value="MJPG",
+            description="Rear V4L2 pixel format"),
+        DeclareLaunchArgument("rear_camera_standby_fps", default_value="1.0"),
+        DeclareLaunchArgument(
+            "rear_camera_activation_drop_frames", default_value="2"),
+        DeclareLaunchArgument(
             "camera_calib",
             default_value=str(
                 Path.home() / "ov2710_calib_23mm_white.npz")),
@@ -244,9 +253,9 @@ def generate_launch_description():
         # P0-1: ID0 관측용 rear 전면 카메라 발행자.
         # 이 노드가 없으면 /sync/relative_pose가 영원히 발행되지 않아
         # WAIT_PEER_STAGED에서 ALIGN_TIMEOUT -> FAULT가 확정적으로 발생한다.
-        # Start the serial bridge immediately and stagger cold-start imports so
-        # the 300 ms STM32 heartbeat watchdog remains serviced during launch.
-        TimerAction(period=20.0, actions=[Node(
+        # Open and prewarm UVC before starting the heartbeat session, but keep
+        # it at a 1 Hz drain-only standby until Rear reaches READY_TO_SCAN.
+        Node(
             package="cooperative_parking_robot",
             executable="opencv_camera",
             name="rear_marker_camera_node",
@@ -260,12 +269,21 @@ def generate_launch_description():
                 "width": _int("rear_camera_width"),
                 "height": _int("rear_camera_height"),
                 "fps": _float("rear_camera_fps"),
+                "capture_fps": _float("rear_camera_capture_fps"),
+                "v4l2_fourcc": LaunchConfiguration("rear_camera_fourcc"),
                 "buffer_size": 1,
                 "require_camera": True,
+                "runtime_enable_topic": "/rear/relative_vision_enable",
+                "runtime_ready_topic": "/rear/marker_camera_ready",
+                "start_enabled": False,
+                "standby_fps": _float("rear_camera_standby_fps"),
+                "activation_drop_frames": _int(
+                    "rear_camera_activation_drop_frames"),
             }],
-            output="screen")]),
+            output="screen"),
 
-        TimerAction(period=24.0, actions=[Node(
+        # Import OpenCV/ArUco before opening the STM32 heartbeat session.
+        TimerAction(period=3.0, actions=[Node(
             package="cooperative_parking_robot",
             executable="aruco_tracker",
             name="aruco_tracker_node",
@@ -280,6 +298,9 @@ def generate_launch_description():
                 "gray_gain": gray_gain,
                 "min_marker_distance_rate": aruco_min_marker_distance_rate,
                 "allow_uncalibrated": allow_uncalibrated,
+                "runtime_enable_topic": "/rear/relative_vision_enable",
+                "runtime_ready_topic": "/rear/relative_vision_ready",
+                "start_enabled": False,
             }],
             output="screen")]),
 
@@ -314,7 +335,8 @@ def generate_launch_description():
             }],
             output="screen")]),
 
-        Node(
+        # Open UART only after every heavy Python/CV node has cold-imported.
+        TimerAction(period=22.0, actions=[Node(
             package="cooperative_parking_robot",
             executable="stm32_bridge",
             name="rear_bridge",
@@ -333,7 +355,7 @@ def generate_launch_description():
                 "ultrasonic_frame_timeout_s": ultrasonic_timeout,
                 "require_ultrasonic_for_ready": require_ultrasonic,
             }],
-            output="screen"),
+            output="screen")]),
 
         TimerAction(period=8.0, actions=[Node(
             package="cooperative_parking_robot",

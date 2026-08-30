@@ -205,10 +205,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "use_aruco_distance", default_value="true"),
 
-        # Keep the serial safety path responsive while the remaining Python
-        # processes import and join DDS.  The STM32 watchdog is 300 ms, so a
-        # simultaneous cold start can otherwise starve the bridge long enough
-        # to latch ESTOP before any mission is requested.
+        # Cold-import the motion nodes before opening the STM32 session. The
+        # bridge is deliberately started last below.
         TimerAction(period=20.0, actions=[Node(
             package="cooperative_parking_robot",
             executable="rigid_body_sync",
@@ -263,7 +261,7 @@ def generate_launch_description():
             }],
             output="screen")]),
 
-        Node(
+        TimerAction(period=24.0, actions=[Node(
             package="cooperative_parking_robot",
             executable="stm32_bridge",
             name="front_bridge",
@@ -281,7 +279,7 @@ def generate_launch_description():
                 "ultrasonic_frame_timeout_s": ultrasonic_timeout,
                 "require_ultrasonic_for_ready": require_ultrasonic,
             }],
-            output="screen"),
+            output="screen")]),
 
         TimerAction(period=8.0, actions=[Node(
             package="cooperative_parking_robot",

@@ -38,6 +38,7 @@ from std_msgs.msg import Bool
 MAX_LINEAR_MPS = 0.15
 MAX_ANGULAR_RPS = 0.6
 MAX_SECONDS = 10.0
+STARTUP_TIMEOUT_S = 5.0
 
 # 확인된 정상 구동점(12 rpm). 이보다 낮추면 모터가 스톨 근처에서 덜컥거린다.
 NOMINAL_LINEAR_MPS = 0.0628
@@ -134,6 +135,8 @@ class DrivePulseNode(Node):
             TwistStamped, f'/{self.role}/manual_cmd_vel', 10)
         self.pub_enable = self.create_publisher(
             Bool, f'/{self.role}/manual_enable', 10)
+        self.create_subscription(
+            Bool, f'/{self.role}/manual_active', self.manual_active_cb, 10)
 
         distance = expected_distance_m(
             self.plan['vx'], self.plan['vy'], self.plan['seconds'])
@@ -151,9 +154,13 @@ class DrivePulseNode(Node):
             self.started_at = None
             return
 
-        self.get_logger().warn('주행 시작 — ' + summary)
+        self.get_logger().warn(
+            '주행 준비 — bridge manual ACK를 기다립니다: ' + summary)
         self.finished = False
-        self.started_at = time.monotonic()
+        self.summary = summary
+        self.started_at = None
+        self.startup_started_at = time.monotonic()
+        self.manual_active = False
         self.create_timer(1.0 / ENABLE_HZ, self.publish_enable)
         self.create_timer(1.0 / COMMAND_HZ, self.publish_command)
 
@@ -161,6 +168,16 @@ class DrivePulseNode(Node):
     def publish_enable(self):
         # 정지 절차 중에도 enable 을 유지해야 0 속도가 실제로 전달된다.
         self.pub_enable.publish(Bool(data=not self.finished))
+
+    def manual_active_cb(self, msg):
+        self.manual_active = bool(msg.data)
+
+    def bridge_is_ready(self):
+        """Start timing only after both command paths and manual ACK exist."""
+        return (
+            self.manual_active and
+            self.pub_cmd.get_subscription_count() > 0 and
+            self.pub_enable.get_subscription_count() > 0)
 
     def _send(self, vx, vy, wz):
         msg = TwistStamped()
@@ -176,6 +193,18 @@ class DrivePulseNode(Node):
     def publish_command(self):
         if self.finished:
             return
+        if self.started_at is None:
+            if self.bridge_is_ready():
+                self.started_at = time.monotonic()
+                self.get_logger().warn('주행 시작 — ' + self.summary)
+            elif time.monotonic() - self.startup_started_at > STARTUP_TIMEOUT_S:
+                self.get_logger().error(
+                    'bridge manual ACK/subscriber를 5초 안에 확인하지 '
+                    '못했습니다 — 속도 명령 없이 중단합니다')
+                self.stop()
+                return
+            else:
+                return
         elapsed = time.monotonic() - self.started_at
         velocity = pulse_velocity(
             elapsed, self.plan['seconds'],
@@ -189,14 +218,15 @@ class DrivePulseNode(Node):
 
     def stop(self):
         """0 속도를 잠깐 유지한 뒤 수동 모드를 내린다."""
-        if self.started_at is None:
+        if self.finished:
             return
-        deadline = time.monotonic() + STOP_HOLD_S
-        while time.monotonic() < deadline:
+        if self.started_at is not None:
+            deadline = time.monotonic() + STOP_HOLD_S
+            while time.monotonic() < deadline:
+                self._send(0.0, 0.0, 0.0)
+                self.pub_enable.publish(Bool(data=True))
+                time.sleep(1.0 / COMMAND_HZ)
             self._send(0.0, 0.0, 0.0)
-            self.pub_enable.publish(Bool(data=True))
-            time.sleep(1.0 / COMMAND_HZ)
-        self._send(0.0, 0.0, 0.0)
         self.pub_enable.publish(Bool(data=False))
         self.finished = True
 

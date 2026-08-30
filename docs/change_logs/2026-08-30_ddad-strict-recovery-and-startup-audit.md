@@ -255,6 +255,34 @@ Front 재부팅 뒤 bridge-only로 HELLO/servo attach/hardware ready를 다시 �
 닫힌 context에 publish하며 traceback을 남기는 shutdown race도 확인했다. 실행 중
 heartbeat 장애와는 구분되며 모든 camera/serial 점유는 시험 뒤 해제됐다.
 
+### Front 3축 잭업·빈 바닥 저속 재확인
+
+Front bridge-only와 최신 `drive_pulse`를 domain 42에서 사용했다. 초음파
+offset 수동 왕복은 2026-08-29에 이미 완료했으므로 반복하지 않았다.
+
+공중 0.4초 pulse 중 첫 `+Y`는 node가 bridge DDS discovery 전에 시간을
+소진해 명령의 일부만 전달됐고, 다음 `-Y`는 manual enable ACK가 pulse
+종료 뒤 도착해 속도가 전혀 전달되지 않았다. 모터 불량이 아니라
+시험 producer 시작 순서 문제였다. `drive_pulse`가 `/front/manual_active=true`
+ACK와 command/enable subscriber를 모두 확인한 뒤 실제 pulse 타이머를 시작하고,
+5초 안에 확인하지 못하면 속도 명령 없이 중단하도록 수정했다. 대상
+회귀는 `23 passed`였다.
+
+수정 뒤 공중에서 횡이동·회전 양방향 부호를 확인했고, 회전 왕복 뒤 yaw
+잔차는 약 `+0.33°`였다. Front를 빈 바닥에 내린 뒤 동일한 저속
+조건으로 다음을 확인했다.
+
+- 전진 `+24.96mm`, 후진 `-22.04mm`; X 왕복 잔차 `+2.92mm`
+- 횡이동 `+21.23mm`, 반대 방향 `-15.85mm`; Y 왕복 잔차 `+5.38mm`
+- 회전 `+3.20°`, 반대 방향 복귀; yaw 왕복 잔차 약 `+0.33°`
+- 전체 누적 위치 잔차 X 약 `+3.3mm`, Y 약 `+5.5mm`
+- 종료 후 manual false, FL/FR/RL/RR RPM/PWM 모두 0, hardware ready true
+- heartbeat ACK 13,475, loss/timeout/UART write failure 0, recovery/fault 없음
+
+바닥 횡이동의 양방향 거리 차이는 현재의 짧은 무하중 pulse에서 바닥 마찰과
+미끄럼의 영향을 받은 결과로, 부호·정지 gate는 PASS이지만 자동 차선 보정
+정밀도를 증명하지는 않는다.
+
 ## 다음 작업과 운용 제한
 
 전체 `robotctl start`를 반복하지 않는다. 특히 SSH가 불안정해지는 상태에서 세

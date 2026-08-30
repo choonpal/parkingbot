@@ -126,6 +126,14 @@ def test_pulse_uses_role_scoped_base_frame():
     assert "msg.header.frame_id = f'{self.role}_base'" in source
 
 
+def test_pulse_waits_for_bridge_manual_ack_before_timing():
+    with open(SOURCE, encoding='utf-8') as handle:
+        source = handle.read()
+    assert "f'/{self.role}/manual_active'" in source
+    assert 'self.bridge_is_ready()' in source
+    assert 'self.started_at = time.monotonic()' in source
+
+
 def test_pure_rotation_travels_no_distance():
     assert expected_distance_m(0.0, 0.0, 3.0) == 0.0
 

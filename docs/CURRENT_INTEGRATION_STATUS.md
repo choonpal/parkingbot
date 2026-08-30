@@ -26,10 +26,18 @@
   CCTV ArUco 2-frame decimation, 관제 영상 5fps/BEV 2fps
 - 위 전체 무주행 후보에서 Jetson 코어별 약 47~69%로 개선
   (수정 전 15fps 전체 구성 약 87~96%)
-- Front 바퀴 공중 직진 pulse: 0.0628m/s x 0.8s 정방향에서 wheel odom
-  +4.39cm, 같은 역방향 뒤 원점 잔차 +0.83mm, heartbeat loss 0
-- 현재 실행: 최적화 Jetson 전체 스택과 Front bridge; Rear Wi-Fi 이탈로
-  원격 배포·heartbeat 최종 확인 대기
+- Front 바퀴 공중 pulse: 직진 왕복 원점 잔차 +0.83mm, 횡이동·회전
+  양방향 부호 PASS, 회전 왕복 yaw 잔차 약 +0.33°
+- Front 빈 바닥 0.4초 저속 pulse: 전진 +24.96mm/후진 -22.04mm,
+  횡이동 +21.23mm/-15.85mm, 회전 +3.20°/반대 복귀; 전체 누적
+  잔차 X +3.3mm, Y +5.5mm, yaw +0.33°
+- 위 시험 종료 후 manual false, 네 모터 RPM/PWM 0, heartbeat 13,475 ACK,
+  loss/timeout/UART write failure 0
+- 짧은 `drive_pulse`가 DDS discovery 전에 시간을 소진하는 문제를 발견해
+  bridge `manual_active` ACK와 command subscriber를 확인한 뒤만 타이머를
+  시작하도록 수정
+- 현재 실행: 최적화 Jetson 전체 스택과 Front bridge; Rear는 배터리
+  부족으로 전원 OFF
 - 이번 복구 작업의 차량 이동: 없음
 
 전체 기동 중 RPi heartbeat gap, UART write timeout과 SSH 불안정이 재현됐으므로

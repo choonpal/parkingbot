@@ -52,6 +52,7 @@ from cooperative_parking_robot.vision_utils import (
 from cooperative_parking_robot.latest_qos import (
     SAFETY_STATE_QOS,
     SENSOR_LATEST_QOS,
+    STATE_LATEST_QOS,
 )
 from cooperative_parking_robot.gpu_inference_guard import (
     release_unused_cuda_cache,
@@ -442,7 +443,7 @@ class YoloBevMapNode(Node):
             self.pub_map = self.create_publisher(
                 OccupancyGrid, '/parking/map', 10)
             self.pub_target = self.create_publisher(
-                PoseStamped, '/parking/target_pose', 10)
+                PoseStamped, '/parking/target_pose', STATE_LATEST_QOS)
             self.pub_empty = self.create_publisher(
                 PoseArray, '/parking/empty_slots', 10)
             # 차종 제원 발행 (individual_move가 휠베이스 사용)

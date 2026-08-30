@@ -269,7 +269,8 @@ class RigidBodySyncNode(Node):
             PoseStamped, '/parking/vehicle_pose_feedback',
             self.cctv_feedback_cb, SENSOR_LATEST_QOS)
         self.create_subscription(
-            PoseStamped, '/parking/target_pose', self.target_cb, 10)
+            PoseStamped, '/parking/target_pose', self.target_cb,
+            STATE_LATEST_QOS)
         self.create_subscription(
             PoseStamped, '/parking/slot_pose', self.slot_cb, self.mission_qos)
         self.create_subscription(

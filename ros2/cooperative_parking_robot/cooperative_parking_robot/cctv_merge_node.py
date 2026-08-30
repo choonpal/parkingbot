@@ -410,7 +410,7 @@ class CctvMergeNode(Node):
         self.pub_map = self.create_publisher(
             OccupancyGrid, '/parking/map', 10)
         self.pub_target = self.create_publisher(
-            PoseStamped, '/parking/target_pose', 10)
+            PoseStamped, '/parking/target_pose', STATE_LATEST_QOS)
         self.pub_empty = self.create_publisher(
             PoseArray, '/parking/empty_slots', 10)
         self.pub_spec = self.create_publisher(

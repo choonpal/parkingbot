@@ -374,7 +374,7 @@ class FleetManagerNode(Node):
 
         # 구독
         self.create_subscription(PoseStamped, '/parking/target_pose',
-                                 self.target_cb, 10)
+                                 self.target_cb, STATE_LATEST_QOS)
         self.create_subscription(Bool, '/parking/target_ready',
                                  self.target_ready_cb, 10)
         self.create_subscription(PoseArray, '/parking/empty_slots',
@@ -418,7 +418,7 @@ class FleetManagerNode(Node):
         self.pub_slot_pose = self.create_publisher(
             PoseStamped, '/parking/slot_pose', self.mission_qos)
         self.pub_target_pose = self.create_publisher(
-            PoseStamped, '/parking/target_pose', 10)
+            PoseStamped, '/parking/target_pose', STATE_LATEST_QOS)
         self.pub_vehicle_spec = self.create_publisher(
             String, '/parking/vehicle_spec', self.mission_qos)
 

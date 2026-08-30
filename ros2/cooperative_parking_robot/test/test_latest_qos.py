@@ -60,3 +60,18 @@ def test_fleet_and_safety_state_are_latest_and_retained_as_required():
     assert "'/fleet/state', STATE_LATEST_QOS" in fleet
     assert 'hardware_status", self.hardware_cb,\n            SAFETY_STATE_QOS' in state
     assert "f'/{self.role}/hardware_ready', SAFETY_STATE_QOS" in bridge
+
+
+def test_parking_target_pose_uses_latest_value_contract():
+    """A Wi-Fi pause must supersede old targets instead of replaying them."""
+    publishers = ('cctv_merge_node.py', 'yolo_bev_map_node.py')
+    subscribers = (
+        'fleet_manager_node.py',
+        'individual_move_node.py',
+        'rigid_body_sync_node.py',
+    )
+    for name in publishers + subscribers:
+        source = (PACKAGE / name).read_text(encoding='utf-8')
+        assert 'STATE_LATEST_QOS' in source, name
+        assert "'/parking/target_pose', 10" not in source, name
+        assert '"/parking/target_pose", self.target_cb, 10' not in source, name

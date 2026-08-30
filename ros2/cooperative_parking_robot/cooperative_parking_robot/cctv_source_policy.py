@@ -59,7 +59,8 @@ class SourceSwitchGuard:
         self._candidate_count = 0
 
     def evaluate(self, source: str, measured_pose, predicted_pose, *,
-                 handover_validated: bool) -> SourceDecision:
+                 handover_validated: bool,
+                 pose_initialized: bool = True) -> SourceDecision:
         source = str(source).strip()
         if not source:
             return SourceDecision(False, False, 'missing_source')
@@ -69,6 +70,18 @@ class SourceSwitchGuard:
             return SourceDecision(False, False, 'invalid_pose')
         if not all(math.isfinite(value) for value in (*measurement, *predicted)):
             return SourceDecision(False, False, 'nonfinite_pose')
+        # Before the EKF has accepted its first absolute fix, its nominal
+        # startup pose is not a trusted prediction. Applying the handover jump
+        # gate here can permanently reject every valid camera observation.
+        # PoseEKF.correct() still enforces the broad workspace bound.
+        if not pose_initialized:
+            source_changed = (
+                self.current_source is not None and
+                source != self.current_source)
+            self.current_source = source
+            self._clear_candidate()
+            return SourceDecision(
+                True, source_changed, 'uninitialized_pose')
         position_jump = _distance(measurement, predicted)
         yaw_jump = abs(normalize_angle(measurement[2] - predicted[2]))
         if (position_jump > self.max_position_jump or

@@ -86,6 +86,32 @@ def rate_limited_publish_due(now, last_publish, period):
     return now - last_publish >= period
 
 
+def odom_delta_since(previous_pose, odom):
+    """Return one publishable delta covering every frame since last publish.
+
+    ``EncoderOdometry`` integrates all incoming frames into x/y/theta, while its
+    dx_body fields contain only the most recent frame.  When DDS publication is
+    rate-limited, derive the equivalent body-frame delta from the cumulative
+    poses so skipped frames are not silently lost by pose fusion.
+    """
+    published = dict(odom)
+    if previous_pose is None:
+        return published
+    previous_x, previous_y, previous_theta = previous_pose
+    dtheta = math.atan2(
+        math.sin(float(odom['theta']) - previous_theta),
+        math.cos(float(odom['theta']) - previous_theta))
+    theta_mid = previous_theta + dtheta / 2.0
+    dx_world = float(odom['x']) - previous_x
+    dy_world = float(odom['y']) - previous_y
+    c = math.cos(theta_mid)
+    s = math.sin(theta_mid)
+    published['dx_body'] = dx_world * c + dy_world * s
+    published['dy_body'] = -dx_world * s + dy_world * c
+    published['dtheta'] = dtheta
+    return published
+
+
 class Stm32BridgeNode(Node):
     def __init__(self, **kwargs):
         super().__init__('stm32_bridge_node', **kwargs)
@@ -206,6 +232,7 @@ class Stm32BridgeNode(Node):
             raise ValueError('odom_publish_hz must be in (0, 50]')
         self.odom_publish_period = 1.0 / self.odom_publish_hz
         self.last_odom_publish_time = None
+        self.last_published_odom_pose = None
         self.protocol = UartProtocol()
         self.serial_baud = int(self.get_parameter('serial_baud').value)
         if self.serial_baud != UART_BAUD_RATE:
@@ -1108,8 +1135,12 @@ class Stm32BridgeNode(Node):
             if rate_limited_publish_due(
                     now, self.last_odom_publish_time,
                     self.odom_publish_period):
-                self.publish_odom(odom)
+                publishable_odom = odom_delta_since(
+                    self.last_published_odom_pose, odom)
+                self.publish_odom(publishable_odom)
                 self.last_odom_publish_time = now
+                self.last_published_odom_pose = (
+                    float(odom['x']), float(odom['y']), float(odom['theta']))
         elif parsed['type'] == 'ultrasonic':
             self.publish_ultrasonic(parsed)
         elif parsed['type'] == 'lift':

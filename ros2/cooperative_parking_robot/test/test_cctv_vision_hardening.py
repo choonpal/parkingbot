@@ -91,6 +91,16 @@ def test_implausible_source_jump_is_rejected():
     assert decision.reason == 'source_jump_limit'
 
 
+def test_first_absolute_fix_bypasses_jump_from_untrusted_startup_pose():
+    guard = SourceSwitchGuard(confirmations=2, max_position_jump_m=0.1)
+    decision = guard.evaluate(
+        'cam2', (1.7, 0.56, -1.55), (3.6, 0.5, math.pi),
+        handover_validated=True, pose_initialized=False)
+    assert decision.accepted
+    assert decision.reason == 'uninitialized_pose'
+    assert guard.current_source == 'cam2'
+
+
 def test_delayed_correction_rewinds_then_replays_later_wheel_steps():
     ekf = FakeEkf()
     history = EkfReplayBuffer(ekf, history_s=5.0)

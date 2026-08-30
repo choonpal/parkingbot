@@ -1,6 +1,7 @@
 """Regression tests for the session-bound ROS ↔ STM32 startup handshake."""
 
 from collections import deque
+import math
 from pathlib import Path
 import threading
 
@@ -12,6 +13,7 @@ from cooperative_parking_robot import stm32_bridge_node as bridge_module
 from cooperative_parking_robot.hardware_profile import servo_attach_pulses_for
 from cooperative_parking_robot.stm32_bridge_node import (
     Stm32BridgeNode,
+    odom_delta_since,
     rate_limited_publish_due,
 )
 from cooperative_parking_robot.uart_protocol import UartProtocol
@@ -48,6 +50,31 @@ def test_odom_publish_rate_gate_keeps_first_and_due_samples():
 
 def test_odom_publish_rate_gate_recovers_from_clock_reset():
     assert rate_limited_publish_due(9.0, 10.0, 0.05)
+
+
+def test_rate_limited_odom_delta_includes_skipped_encoder_frames():
+    current = {
+        'x': 0.03, 'y': 0.0, 'theta': 0.0,
+        'dx_body': 0.01, 'dy_body': 0.0, 'dtheta': 0.0,
+        'discontinuity': False,
+    }
+    published = odom_delta_since((0.0, 0.0, 0.0), current)
+    assert published['dx_body'] == pytest.approx(0.03)
+    assert published['dy_body'] == pytest.approx(0.0)
+    assert published['dtheta'] == pytest.approx(0.0)
+
+
+def test_rate_limited_odom_delta_preserves_curved_displacement():
+    half_sqrt = 2.0 ** -0.5
+    current = {
+        'x': half_sqrt, 'y': half_sqrt, 'theta': math.pi / 2.0,
+        'dx_body': 0.01, 'dy_body': 0.0, 'dtheta': 0.01,
+        'discontinuity': False,
+    }
+    published = odom_delta_since((0.0, 0.0, 0.0), current)
+    assert published['dx_body'] == pytest.approx(1.0)
+    assert published['dy_body'] == pytest.approx(0.0)
+    assert published['dtheta'] == pytest.approx(math.pi / 2.0)
 
 
 class FakeSerial:

@@ -110,7 +110,8 @@ class PoseFusionNode(BaselinePoseFusionNode):
         predicted = self.ekf.pose()
         decision = self.source_guard.evaluate(
             observation.camera_id, observation.pose, predicted,
-            handover_validated=observation.handover_validated)
+            handover_validated=observation.handover_validated,
+            pose_initialized=self.ekf.initialized)
         if not decision.accepted:
             self._last_source = f'CCTV_SOURCE_REJECT:{decision.reason}'
             return

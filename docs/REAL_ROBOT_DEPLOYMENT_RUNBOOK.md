@@ -143,7 +143,8 @@ camera driver로 열고 `enable_rear_camera:=false`로 연결한다.
 `${HOME}/ov2710_calib_23mm_*.npz`이고, 로봇에서 실행할 때는 각 로봇
 사용자의 `$HOME`에 필요한 파일을 복사한다.
 
-- Rear `robot-1`: 흰색 OV2710, 제어용 1280x720 @ 8 fps,
+- Rear `robot-1`: 흰색 OV2710, 제어용 1280x720 @ 4 fps 처리 타이머
+  (V4L2 장치는 30 fps로 보고하지만 노드는 4 Hz로 read/publish),
   `$HOME/ov2710_calib_23mm_white.npz` 배포·존재 확인 완료
 - Front `robot-2`: 검은색 OV2710, 640x480,
   원본 `ov2710_calib_23mm_black.npz` (현재 상대 pose 제어에는 미사용·미배포)
@@ -256,6 +257,11 @@ Homography와 등록 layout이 준비되기 전에는 motion을 허용하지 않
 Front와 Rear의 Sonix 문자열이 같은 것은 두 카메라가 **서로 다른 호스트**에 있기
 때문에 허용된다. 따라서 Sonix 경로만 보고 장비를 판단하면 안 된다. Rear launch의
 경로는 반드시 Rear 호스트에서 검사한다.
+
+Rear bridge는 STM32 encoder frame을 50 Hz로 계속 적분하되 `/rear/wheel_odom`의
+ROS/DDS 발행만 20 Hz로 제한한다. 2026-08-30 실기에서 상태머신, 초음파,
+pose fusion, individual move, 4 Hz 내부 카메라와 ArUco를 순차 기동한 뒤에도
+heartbeat loss/timeout/UART write failure가 모두 0임을 확인했다.
 
 장비 inventory는 실제 호스트 shell에서 아래처럼 확인한다. 제한된 container나
 agent sandbox의 `/dev`는 host device가 보이지 않아 false negative를 낼 수 있으므로

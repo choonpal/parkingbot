@@ -146,7 +146,9 @@ def generate_launch_description():
             description="비우면 V4L2, 채우면 GStreamer 파이프라인 사용"),
         DeclareLaunchArgument("rear_camera_width", default_value="1280"),
         DeclareLaunchArgument("rear_camera_height", default_value="720"),
-        DeclareLaunchArgument("rear_camera_fps", default_value="8.0"),
+        DeclareLaunchArgument(
+            "rear_camera_fps", default_value="4.0",
+            description="OV2710 processing rate; the device still reports 30 fps"),
         DeclareLaunchArgument(
             "camera_calib",
             default_value=str(
@@ -230,6 +232,9 @@ def generate_launch_description():
             description="Robot HOME heading in the map frame [deg]"),
         DeclareLaunchArgument("wheel_radius", default_value="0.05"),
         DeclareLaunchArgument("encoder_ppr", default_value="5182.0"),
+        DeclareLaunchArgument(
+            "odom_publish_hz", default_value="20.0",
+            description="Keep 50 Hz integration but cap ROS odom DDS rate"),
         DeclareLaunchArgument("lx", default_value="0.10"),
         DeclareLaunchArgument("ly", default_value="0.10"),
 
@@ -318,6 +323,7 @@ def generate_launch_description():
                 "require_serial": require_serial,
                 "wheel_radius": wheel_radius,
                 "encoder_ppr": encoder_ppr,
+                "odom_publish_hz": _float("odom_publish_hz"),
                 "lx": lx,
                 "ly": ly,
                 "ultrasonic_frame_timeout_s": ultrasonic_timeout,

@@ -218,6 +218,7 @@ def bridge_for_unit_test(profile='robot-2'):
     node.hardware_ready = False
     node.motion_armed = False
     node.motion_arm_source = None
+    node.motion_rearm_required = False
     node.robot_state = 'IDLE'
     node.command_arbiter = FakeArbiter()
     node.command_sign = (1.0, 1.0, 1.0)
@@ -493,6 +494,7 @@ def test_timeout_recovers_communication_but_never_rearms_motion(monkeypatch):
     assert node.communication_recovered is True
     assert node.communication_recovering is False
     assert node.motion_armed is False
+    assert node.motion_rearm_required is True
     assert node.active_fault is None
     assert node.zero_command_acknowledged is False
     assert node.servo_attached is False
@@ -505,6 +507,11 @@ def test_timeout_recovers_communication_but_never_rearms_motion(monkeypatch):
     assert node.zero_command_acknowledged is True
     assert node.servo_attached is True
     assert all(node.hardware_ready_conditions(now[0]).values())
+    node.robot_state_cb(String(data='APPROACH'))
+    assert node.motion_armed is False
+    node.robot_state_cb(String(data='IDLE'))
+    node.robot_state_cb(String(data='APPROACH'))
+    assert node.motion_armed is True
     assert len(node.command_arbiter.force_zero_calls) >= 2
     node.send_velocity_loop()
     assert node.ser.writes[-1].startswith(b'@V,0.000,0.000,0.000')

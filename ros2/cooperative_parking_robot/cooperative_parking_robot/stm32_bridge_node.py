@@ -358,6 +358,7 @@ class Stm32BridgeNode(Node):
         # enable) arms this gate after all readiness checks pass.
         self.motion_armed = False
         self.motion_arm_source = None
+        self.motion_rearm_required = False
         self.robot_state = 'IDLE'
         # non-blocking serial.readline()은 newline 도착 전 부분 프레임을
         # 반환할 수 있으므로 직접 byte buffer를 유지한다.
@@ -605,14 +606,24 @@ class Stm32BridgeNode(Node):
                 self._arm_motion(f'robot_state:{state}')
         elif state == 'FAULT':
             self._disarm_motion('robot_state:FAULT')
-        elif self.motion_arm_source and self.motion_arm_source.startswith(
-                'robot_state:'):
-            self._disarm_motion('robot_state:IDLE')
+        else:
+            if self.motion_arm_source and self.motion_arm_source.startswith(
+                    'robot_state:'):
+                self._disarm_motion('robot_state:IDLE')
+            if self.motion_rearm_required:
+                self.motion_rearm_required = False
+                self.publish_status(
+                    'INFO,MOTION_REARM_BOUNDARY_ACCEPTED:IDLE')
 
     def _arm_motion(self, source):
         """Arm only from a current, complete communication handshake."""
         if self.motion_armed:
             return True
+        if (self.motion_rearm_required and
+                str(source) != 'manual'):
+            self.command_arbiter.force_zero(time.monotonic())
+            self.publish_status('WARN,MOTION_ARM_REJECTED:REARM_REQUIRED')
+            return False
         now = time.monotonic()
         conditions = self.hardware_ready_conditions(now)
         if not all(conditions.values()):
@@ -629,6 +640,7 @@ class Stm32BridgeNode(Node):
         self.command_arbiter.force_zero(now)
         self.motion_armed = True
         self.motion_arm_source = str(source)
+        self.motion_rearm_required = False
         self.pub_motion_armed.publish(Bool(data=True))
         self.publish_status(f'INFO,MOTION_ARMED:{self.motion_arm_source}')
         self.get_logger().warn(
@@ -996,6 +1008,8 @@ class Stm32BridgeNode(Node):
     def _latch_fault(self, status, *, transport=False):
         if not status.startswith(('ERR,', 'ESTOP')):
             raise ValueError('latched hardware status must be ERR or ESTOP')
+        if self.motion_armed:
+            self.motion_rearm_required = True
         self._disarm_motion(status)
         if transport:
             self.transport_fault = status
@@ -1090,6 +1104,7 @@ class Stm32BridgeNode(Node):
                 'communication_recovered': self.communication_recovered,
                 'motion_fault_latched': self.active_fault is not None,
                 'motion_armed': self.motion_armed,
+                'motion_rearm_required': self.motion_rearm_required,
                 'outstanding_count': len(self.outstanding_heartbeats),
                 'intended_period_ms': self.heartbeat_period * 1000.0,
             })

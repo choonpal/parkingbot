@@ -129,7 +129,9 @@ read/write timeout은 retained `ERR` 대신 통신 session 재연결로 처리�
 watchdog 자체는 끄거나 늘리지 않는다. 현재 handshake가 모두 정상일 때
 `/{role}/robot_state`가 `IDLE`/`FAULT` 이외의 mission 상태가 되거나 수동 enable이
 들어와야만 arm된다. 현재 권한은 `/{role}/motion_armed`에서 확인한다. arm 뒤의
-동일 timeout은 즉시 disarm 및 기존 `FAULT` 경로로 처리한다.
+동일 timeout은 즉시 disarm 및 기존 `FAULT` 경로로 처리한다. 이 경우 통신만
+회복돼도 자동 재-arm하지 않으며 상태기가 다시 `IDLE` 경계를 지나거나 새 수동
+enable 요청을 받아야 한다.
 
 ## 3. 장치 경로와 runtime asset
 

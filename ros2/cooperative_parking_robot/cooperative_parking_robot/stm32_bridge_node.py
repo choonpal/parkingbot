@@ -310,6 +310,7 @@ class Stm32BridgeNode(Node):
         self.last_heartbeat_tx_time = 0.0
         self.communication_recovering = False
         self.communication_recovered = False
+        self.recovery_fault_latched = False
         self.recovery_ack_count = 0
         # Heartbeat production no longer depends on a ROS executor callback.
         # ACK handling can enter recovery while the producer owns this lock,
@@ -351,6 +352,13 @@ class Stm32BridgeNode(Node):
         self.servo_attach_requested = False
         self.last_servo_attach_request_time = None
         self.hardware_ready = False
+        # Bridge startup is deliberately motion-disarmed. Heavy ROS/Python
+        # cold-start work may interrupt heartbeat/ACK traffic, but no command
+        # may reach the motors until a live mission state (or explicit manual
+        # enable) arms this gate after all readiness checks pass.
+        self.motion_armed = False
+        self.motion_arm_source = None
+        self.robot_state = 'IDLE'
         # non-blocking serial.readline()은 newline 도착 전 부분 프레임을
         # 반환할 수 있으므로 직접 byte buffer를 유지한다.
         self.rx_buffer = bytearray()
@@ -412,6 +420,9 @@ class Stm32BridgeNode(Node):
         self.create_subscription(
             Bool, f'/{self.role}/manual_enable',
             self.manual_enable_cb, 10)
+        self.create_subscription(
+            String, f'/{self.role}/robot_state',
+            self.robot_state_cb, STATE_LATEST_QOS)
         self.create_subscription(Bool, '/emergency_stop',
                                  self.estop_cb, STATE_LATEST_QOS)
         self.create_subscription(
@@ -427,6 +438,8 @@ class Stm32BridgeNode(Node):
             String, f'/{self.role}/hardware_status', SAFETY_STATE_QOS)
         self.pub_ready = self.create_publisher(
             Bool, f'/{self.role}/hardware_ready', SAFETY_STATE_QOS)
+        self.pub_motion_armed = self.create_publisher(
+            Bool, f'/{self.role}/motion_armed', SAFETY_STATE_QOS)
         # 수동 제어 요청이 실제로 이 bridge까지 도착했는지 시험 제어기가
         # 확인할 수 있는 명시적 ACK.  주기 발행하므로 늦게 연결된 peer도 받는다.
         self.pub_manual_active = self.create_publisher(
@@ -499,6 +512,8 @@ class Stm32BridgeNode(Node):
         if not all(math.isfinite(value) for value in values):
             self.get_logger().error('NaN/Inf cmd_vel 거부')
             return
+        if not self.motion_armed:
+            return
         vx = max(-self.max_linear, min(self.max_linear, values[0]))
         vy = max(-self.max_linear, min(self.max_linear, values[1]))
         w = max(-self.max_angular, min(self.max_angular, values[2]))
@@ -525,6 +540,8 @@ class Stm32BridgeNode(Node):
                   float(msg.twist.angular.z))
         if not all(math.isfinite(value) for value in values):
             self.get_logger().error('NaN/Inf manual cmd_vel 거부')
+            return
+        if not self.motion_armed:
             return
         command = (
             max(-self.max_linear, min(self.max_linear, values[0])),
@@ -558,6 +575,12 @@ class Stm32BridgeNode(Node):
         return True
 
     def manual_enable_cb(self, msg):
+        if msg.data and not self.motion_armed:
+            if not self._arm_motion('manual'):
+                self.command_arbiter.set_manual_enabled(
+                    False, time.monotonic())
+                self.pub_manual_active.publish(Bool(data=False))
+                return
         was_enabled = self.command_arbiter.manual_enabled
         self.command_arbiter.set_manual_enabled(msg.data, time.monotonic())
         if msg.data and not was_enabled:
@@ -566,8 +589,68 @@ class Stm32BridgeNode(Node):
         elif not msg.data and was_enabled:
             self.publish_status('INFO,MANUAL_MODE_OFF')
             self.get_logger().info(f'[{self.role}] manual override OFF')
+            if self.motion_arm_source == 'manual':
+                self._disarm_motion('manual_disabled')
         self.pub_manual_active.publish(Bool(
             data=self.command_arbiter.manual_enabled))
+
+    def robot_state_cb(self, msg):
+        """Use the mission lifecycle as the automatic motion-arm request."""
+        state = str(msg.data).strip().upper()
+        if not state:
+            return
+        self.robot_state = state
+        if state not in ('IDLE', 'FAULT'):
+            if not self.command_arbiter.manual_enabled:
+                self._arm_motion(f'robot_state:{state}')
+        elif state == 'FAULT':
+            self._disarm_motion('robot_state:FAULT')
+        elif self.motion_arm_source and self.motion_arm_source.startswith(
+                'robot_state:'):
+            self._disarm_motion('robot_state:IDLE')
+
+    def _arm_motion(self, source):
+        """Arm only from a current, complete communication handshake."""
+        if self.motion_armed:
+            return True
+        now = time.monotonic()
+        conditions = self.hardware_ready_conditions(now)
+        if not all(conditions.values()):
+            self.command_arbiter.force_zero(now)
+            failed = ','.join(
+                name for name, value in conditions.items() if not value)
+            self.publish_status(f'WARN,MOTION_ARM_REJECTED:{failed}')
+            self.get_logger().warn(
+                f'[{self.role}] motion arm rejected: {failed}',
+                throttle_duration_sec=1.0)
+            return False
+        # Clear every command received before the arm boundary. A controller
+        # must publish a fresh frame after the bridge reports armed.
+        self.command_arbiter.force_zero(now)
+        self.motion_armed = True
+        self.motion_arm_source = str(source)
+        self.pub_motion_armed.publish(Bool(data=True))
+        self.publish_status(f'INFO,MOTION_ARMED:{self.motion_arm_source}')
+        self.get_logger().warn(
+            f'[{self.role}] motion armed by {self.motion_arm_source}')
+        return True
+
+    def _disarm_motion(self, reason):
+        """Drop motion authority immediately without disabling MCU watchdogs."""
+        was_armed = self.motion_armed
+        self.motion_armed = False
+        self.motion_arm_source = None
+        self.command_arbiter.force_zero(time.monotonic())
+        self.pub_motion_armed.publish(Bool(data=False))
+        if was_armed:
+            self.tx_scheduler.discard_non_emergency()
+            if self.ser and self.zero_command_acknowledged:
+                self._write(
+                    self.protocol.encode_velocity(0.0, 0.0, 0.0),
+                    kind='safety_stop', priority=P0_EMERGENCY)
+            self.publish_status(f'INFO,MOTION_DISARMED:{reason}')
+            self.get_logger().warn(
+                f'[{self.role}] motion disarmed: {reason}')
 
     def send_velocity_loop(self):
         """50Hz로 STM32에 속도 송신. cmd가 오래되면 감쇠."""
@@ -577,7 +660,10 @@ class Stm32BridgeNode(Node):
             # STM32는 ESTOP을 전원 재인가까지 latch한다. 이후 V 프레임을
             # 계속 보내면 ESTOP_LATCHED 오류만 반복되므로 송신을 멈춘다.
             return
-        vx, vy, w = self.command_arbiter.output(time.monotonic())
+        if self.motion_armed:
+            vx, vy, w = self.command_arbiter.output(time.monotonic())
+        else:
+            vx, vy, w = 0.0, 0.0, 0.0
         sx, sy, sw = self.command_sign
         cmd = self.protocol.encode_velocity(vx * sx, vy * sy, w * sw)
         now = time.monotonic()
@@ -595,8 +681,9 @@ class Stm32BridgeNode(Node):
         self._send_grip(msg.data)
 
     def _send_grip(self, action):
-        if self.estop_latched or self.active_fault or self.transport_fault:
-            self.get_logger().warn('ESTOP latch 상태에서 그리퍼 명령 거부')
+        if (not self.motion_armed or self.estop_latched or
+                self.active_fault or self.transport_fault):
+            self.get_logger().warn('motion disarmed/fault 상태에서 그리퍼 명령 거부')
             return
         if not self.servo_attached:
             self.get_logger().warn(
@@ -667,6 +754,7 @@ class Stm32BridgeNode(Node):
 
     def estop_cb(self, msg):
         if msg.data and not self.estop_latched:
+            self._disarm_motion('estop')
             self.estop_latched = True
             self.servo_attached = False
             self.servo_attach_blocked = True
@@ -774,7 +862,8 @@ class Stm32BridgeNode(Node):
         now = time.monotonic()
         if not self.hello_acknowledged:
             if now - self.hello_started_at > self.hello_handshake_timeout:
-                self._latch_fault('ERR,PROTOCOL_HANDSHAKE_TIMEOUT')
+                self._begin_communication_recovery(
+                    'PROTOCOL_HANDSHAKE_TIMEOUT')
                 return
             self.send_hello()
             return
@@ -907,6 +996,7 @@ class Stm32BridgeNode(Node):
     def _latch_fault(self, status, *, transport=False):
         if not status.startswith(('ERR,', 'ESTOP')):
             raise ValueError('latched hardware status must be ERR or ESTOP')
+        self._disarm_motion(status)
         if transport:
             self.transport_fault = status
         if self.active_fault is None:
@@ -914,7 +1004,6 @@ class Stm32BridgeNode(Node):
         self.hardware_ready = False
         self.servo_attached = False
         self.servo_attach_blocked = True
-        self.command_arbiter.force_zero(time.monotonic())
         self.publish_status(status)
 
     def _clear_recoverable_fault(self):
@@ -927,19 +1016,44 @@ class Stm32BridgeNode(Node):
         self.command_arbiter.force_zero(time.monotonic())
 
     def _begin_communication_recovery(self, code):
-        """Open a new communication session but keep motion fault-latched."""
+        """Open a new session; startup load is non-latching while disarmed."""
         with self.heartbeat_lock:
-            if self.communication_recovering or self.estop_latched:
+            if self.estop_latched:
                 return
+            if self.communication_recovering:
+                # A disarmed bridge may stay under cold-start pressure for
+                # longer than one HELLO window. Start another bounded session
+                # instead of getting stuck in the first recovery forever.
+                if (code == 'PROTOCOL_HANDSHAKE_TIMEOUT' and
+                        not self.motion_armed and self.active_fault is None):
+                    self.communication_recovering = False
+                else:
+                    return
+            tolerate_disarmed = (
+                not self.motion_armed and self.active_fault is None and
+                code in {
+                    'HEARTBEAT_TIMEOUT', 'COMMAND_TIMEOUT',
+                    'HEARTBEAT_ACK_TIMEOUT',
+                    'PROTOCOL_HANDSHAKE_TIMEOUT', 'UART_RECONNECTED',
+                })
             self.heartbeat_stats['timeout_count'] += 1
             self.heartbeat_stats['lost_count'] += len(
                 self.outstanding_heartbeats)
             self.communication_recovering = True
             self.communication_recovered = False
+            self.recovery_fault_latched = not tolerate_disarmed
             self.recovery_ack_count = 0
-            self._latch_fault(f'ERR,{code}')
-            self.publish_status(
-                f'INFO,RECOVERY_STATE:FAULTED_RECOVERABLE:{code}')
+            if tolerate_disarmed:
+                self.hardware_ready = False
+                self.servo_attached = False
+                self.servo_attach_blocked = False
+                self.command_arbiter.force_zero(time.monotonic())
+                self.publish_status(
+                    f'WARN,DISARMED_COMMUNICATION_RECOVERY:{code}')
+            else:
+                self._latch_fault(f'ERR,{code}')
+                self.publish_status(
+                    f'INFO,RECOVERY_STATE:FAULTED_RECOVERABLE:{code}')
             self.tx_scheduler.discard_non_emergency()
             self.session_id = secrets.token_hex(8)
             self.hello_started_at = time.monotonic()
@@ -957,9 +1071,13 @@ class Stm32BridgeNode(Node):
             self.outstanding_heartbeats.clear()
             self.last_heartbeat_ack_time = 0.0
             self.next_heartbeat_due = time.monotonic()
-        self.get_logger().warn(
-            f'[{self.role}] communication recovery session started; '
-            'motion remains fault-latched')
+        if tolerate_disarmed:
+            self.get_logger().warn(
+                f'[{self.role}] disarmed communication recovery: {code}')
+        else:
+            self.get_logger().warn(
+                f'[{self.role}] communication recovery session started; '
+                'motion remains fault-latched')
         self.send_hello()
 
     def publish_heartbeat_diagnostics(self):
@@ -971,6 +1089,7 @@ class Stm32BridgeNode(Node):
                 'recovering': self.communication_recovering,
                 'communication_recovered': self.communication_recovered,
                 'motion_fault_latched': self.active_fault is not None,
+                'motion_armed': self.motion_armed,
                 'outstanding_count': len(self.outstanding_heartbeats),
                 'intended_period_ms': self.heartbeat_period * 1000.0,
             })
@@ -979,7 +1098,19 @@ class Stm32BridgeNode(Node):
 
     def _latch_transport_fault(self, status, detail):
         self.get_logger().error(f'{status}: {detail}')
-        self._latch_fault(status, transport=True)
+        if (not self.motion_armed and self.active_fault is None and
+                status in {'ERR,UART_WRITE', 'ERR,UART_READ'}):
+            # A blocked USB write during cold-start cannot move a disarmed
+            # robot. Close and reconnect without poisoning the mission FSM.
+            self.transport_fault = status
+            self.hardware_ready = False
+            self.servo_attached = False
+            self.command_arbiter.force_zero(time.monotonic())
+            code = status.removeprefix('ERR,')
+            self.publish_status(
+                f'WARN,DISARMED_TRANSPORT_RECOVERY:{code}')
+        else:
+            self._latch_fault(status, transport=True)
         # If RX detected the failure, wait for the sole writer before close.
         # If the writer detected it, stop() recognizes its own thread and only
         # prevents subsequent dequeues, so there is no self-join deadlock.
@@ -1239,12 +1370,22 @@ class Stm32BridgeNode(Node):
                     self.communication_recovering = False
                     self.communication_recovered = True
                     self._clear_recoverable_fault()
-                    self.publish_status(
-                        'INFO,COMMUNICATION_RECOVERED:MOTION_REARM_REQUIRED')
+                    if self.recovery_fault_latched:
+                        self.publish_status(
+                            'INFO,COMMUNICATION_RECOVERED:'
+                            'MOTION_REARM_REQUIRED')
+                    else:
+                        self.publish_status(
+                            'INFO,DISARMED_COMMUNICATION_RECOVERED:'
+                            'READY_TO_ARM')
                     self.publish_status('INFO,RECOVERY_STATE:WAIT_ZERO_ACK')
-                    self.get_logger().warn(
-                        f'[{self.role}] communication recovered; '
-                        'motion remains fault-latched')
+                    if self.recovery_fault_latched:
+                        self.get_logger().warn(
+                            f'[{self.role}] communication recovered; '
+                            'explicit mission/manual arm is required')
+                    else:
+                        self.get_logger().info(
+                            f'[{self.role}] disarmed communication recovered')
                     self.send_zero_velocity_probe()
             else:
                 self.send_zero_velocity_probe()
@@ -1445,12 +1586,13 @@ class Stm32BridgeNode(Node):
         ready = all(conditions.values())
         if ready and not self.hardware_ready:
             self.get_logger().info(f'[{self.role}] hardware_ready=true')
-            self.publish_status(
-                'INFO,RECOVERY_STATE:READY:MOTION_REARM_REQUIRED')
+            arm_state = 'ARMED' if self.motion_armed else 'DISARMED'
+            self.publish_status(f'INFO,RECOVERY_STATE:READY:{arm_state}')
         elif not ready and self.hardware_ready:
             self.get_logger().warn(f'[{self.role}] hardware_ready=false')
         self.hardware_ready = ready
         self.pub_ready.publish(Bool(data=ready))
+        self.pub_motion_armed.publish(Bool(data=self.motion_armed))
         self.pub_manual_active.publish(Bool(
             data=self.command_arbiter.manual_enabled))
 

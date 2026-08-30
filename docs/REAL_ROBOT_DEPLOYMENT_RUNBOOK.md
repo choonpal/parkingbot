@@ -123,6 +123,14 @@ heartbeat/ACK, encoder와 ultrasonic frame을 먼저 확인한다.
 STM32 watchdog은 command 무갱신 **250 ms**, heartbeat 단절 **300 ms**에 정지해야
 한다. 두 조건을 모터를 든 상태에서 각각 시험한다.
 
+ROS bridge는 기동 시 기본 `DISARMED`다. 이때는 0속도만 보내고 속도·그리퍼
+명령을 거부하며, 노드 cold-start 중 heartbeat/command timeout 또는 일반 UART
+read/write timeout은 retained `ERR` 대신 통신 session 재연결로 처리한다. STM32
+watchdog 자체는 끄거나 늘리지 않는다. 현재 handshake가 모두 정상일 때
+`/{role}/robot_state`가 `IDLE`/`FAULT` 이외의 mission 상태가 되거나 수동 enable이
+들어와야만 arm된다. 현재 권한은 `/{role}/motion_armed`에서 확인한다. arm 뒤의
+동일 timeout은 즉시 disarm 및 기존 `FAULT` 경로로 처리한다.
+
 ## 3. 장치 경로와 runtime asset
 
 STM32 serial은 재부팅에도 안정적인 `/dev/serial/by-id/...`를 사용한다.

@@ -8,6 +8,7 @@ import threading
 import pytest
 import rclpy
 from rclpy.parameter import Parameter
+from std_msgs.msg import String
 
 from cooperative_parking_robot import stm32_bridge_node as bridge_module
 from cooperative_parking_robot.hardware_profile import servo_attach_pulses_for
@@ -182,6 +183,7 @@ def bridge_for_unit_test(profile='robot-2'):
     node.last_heartbeat_tx_time = 0.0
     node.communication_recovering = False
     node.communication_recovered = False
+    node.recovery_fault_latched = False
     node.recovery_ack_count = 0
     node.heartbeat_lock = threading.RLock()
     node.heartbeat_stats = {
@@ -214,9 +216,13 @@ def bridge_for_unit_test(profile='robot-2'):
     node.ultrasonic_activation_timeout_reported = False
     node.ultrasonic_stale_reported = False
     node.hardware_ready = False
+    node.motion_armed = False
+    node.motion_arm_source = None
+    node.robot_state = 'IDLE'
     node.command_arbiter = FakeArbiter()
     node.command_sign = (1.0, 1.0, 1.0)
     node.pub_ready = FakePublisher()
+    node.pub_motion_armed = FakePublisher()
     node.pub_manual_active = FakePublisher()
     node.pub_ultrasonic_ready = FakePublisher()
     node.statuses = []
@@ -382,6 +388,9 @@ def test_previous_session_timeout_is_information_current_timeout_is_fatal(
     assert 'INFO,PREVIOUS_SESSION_FAULT:HEARTBEAT_TIMEOUT' in node.statuses
     node.publish_hardware_state()
     assert node.hardware_ready is True
+    assert node.motion_armed is False
+    assert node._arm_motion('test') is True
+    assert node.motion_armed is True
 
     node._handle_serial_line('ERR,HEARTBEAT_TIMEOUT')
     assert node.active_fault == 'ERR,HEARTBEAT_TIMEOUT'
@@ -463,6 +472,7 @@ def test_timeout_recovers_communication_but_never_rearms_motion(monkeypatch):
     monkeypatch.setattr(bridge_module.secrets, 'token_hex',
                         lambda _length: '1111111111111111')
     complete_startup(node, now[0])
+    assert node._arm_motion('test') is True
     old_session = node.session_id
 
     node._handle_serial_line('ERR,HEARTBEAT_TIMEOUT')
@@ -482,6 +492,7 @@ def test_timeout_recovers_communication_but_never_rearms_motion(monkeypatch):
 
     assert node.communication_recovered is True
     assert node.communication_recovering is False
+    assert node.motion_armed is False
     assert node.active_fault is None
     assert node.zero_command_acknowledged is False
     assert node.servo_attached is False
@@ -498,6 +509,45 @@ def test_timeout_recovers_communication_but_never_rearms_motion(monkeypatch):
     node.send_velocity_loop()
     assert node.ser.writes[-1].startswith(b'@V,0.000,0.000,0.000')
     assert 'INFO,COMMUNICATION_RECOVERED:MOTION_REARM_REQUIRED' in node.statuses
+
+
+def test_disarmed_startup_timeout_recovers_without_latching_fault(monkeypatch):
+    node = bridge_for_unit_test()
+    now = [100.0]
+    node.hello_started_at = now[0]
+    monkeypatch.setattr(bridge_module.time, 'monotonic', lambda: now[0])
+    monkeypatch.setattr(bridge_module.secrets, 'token_hex',
+                        lambda _length: '2222222222222222')
+    complete_startup(node, now[0])
+
+    node._handle_serial_line('ERR,HEARTBEAT_TIMEOUT')
+
+    assert node.motion_armed is False
+    assert node.active_fault is None
+    assert node.communication_recovering is True
+    assert 'ERR,HEARTBEAT_TIMEOUT' not in node.statuses
+    assert ('WARN,DISARMED_COMMUNICATION_RECOVERY:HEARTBEAT_TIMEOUT'
+            in node.statuses)
+
+
+def test_disarmed_host_ack_timeout_is_also_non_latching(monkeypatch):
+    node = bridge_for_unit_test()
+    now = [100.0]
+    node.hello_started_at = now[0]
+    monkeypatch.setattr(bridge_module.time, 'monotonic', lambda: now[0])
+    monkeypatch.setattr(bridge_module.secrets, 'token_hex',
+                        lambda _length: '3333333333333333')
+    complete_startup(node, now[0])
+    node.send_heartbeat(force=True)
+    now[0] += node.heartbeat_ack_timeout + 0.001
+
+    node.send_heartbeat(force=True)
+
+    assert node.active_fault is None
+    assert node.motion_armed is False
+    assert node.communication_recovering is True
+    assert ('WARN,DISARMED_COMMUNICATION_RECOVERY:HEARTBEAT_ACK_TIMEOUT'
+            in node.statuses)
 
 
 def test_estop_latch_stops_handshake_and_is_not_cleared_by_hello(monkeypatch):
@@ -617,7 +667,26 @@ def test_grip_is_blocked_until_full_attach_ack(monkeypatch):
     assert node.ser.writes == []
     complete_startup(node, now[0])
     node._send_grip('grip')
+    assert node.ser.writes[-1].startswith(b'@S,attach,')
+    assert node._arm_motion('test') is True
+    node._send_grip('grip')
     assert node.ser.writes[-1] == b'@S,grip\n'
+
+
+def test_live_robot_state_arms_and_idle_disarms(monkeypatch):
+    node = bridge_for_unit_test()
+    now = [100.0]
+    node.hello_started_at = now[0]
+    monkeypatch.setattr(bridge_module.time, 'monotonic', lambda: now[0])
+    complete_startup(node, now[0])
+
+    node.robot_state_cb(String(data='APPROACH'))
+    assert node.motion_armed is True
+    assert node.motion_arm_source == 'robot_state:APPROACH'
+
+    node.robot_state_cb(String(data='IDLE'))
+    assert node.motion_armed is False
+    assert node.ser.writes[-1] == b'@V,0.000,0.000,0.000\n'
 
 
 def test_physical_profiles_select_opposite_attach_pulses():

@@ -32,8 +32,11 @@ setup(
             ('cctv_robot_marker_baseline = '
              'cooperative_parking_robot.cctv_robot_marker_node:main'),
             'cctv_merge = cooperative_parking_robot.mvp_integration_nodes:cctv_merge_main',
-            # Production entry point plus the minimal MVP command-owner layer.
+            # Production keeps the existing command-owner/completion-first
+            # stack, and replaces only ALIGN_SLOT_YAW with Q/E phase control.
             ('rigid_body_sync = '
+             'cooperative_parking_robot.rigid_body_sync_phase_node:main'),
+            ('rigid_body_sync_mvp_baseline = '
              'cooperative_parking_robot.mvp_runtime_nodes:'
              'rigid_body_sync_main'),
             ('rigid_body_sync_p0_baseline = '

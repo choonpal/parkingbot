@@ -109,6 +109,15 @@ rigid_body_sync_node:
     sync_lateral_kd: 0.0
     sync_lateral_max_correction_mps: 0.015
 
+    # 슬롯 앞 제자리 회전은 키보드 Q/E와 같은 동기 원리를 사용한다.
+    # 회전 중 lateral PID가 +/-omega*L/2 궤도와 싸우지 않게 억제하고,
+    # innovation gate를 통과한 ID0 lateral을 common-yaw 위상 보정에 사용한다.
+    rotation_phase_kp: 1.8
+    rotation_phase_deadband_deg: 0.5
+    rotation_phase_correction_limit_rps: 0.06
+    rotation_phase_correction_rate_limit_rps2: 0.30
+    rotation_phase_lateral_lpf_alpha: 0.65
+
     # 차량 중심과 로봇 두 대 중점의 고정 장착 오프셋 초기화/보정
     initialize_offset_from_target_pose: true
     initial_target_offset_gate_m: 0.50
@@ -116,8 +125,8 @@ rigid_body_sync_node:
     cctv_offset_alpha: 0.30
     cctv_feedback_timeout_s: 0.50
 
-    # A* 마지막 점은 슬롯 밖 staging point다. 2cm 안에 도착한 뒤
-    # 선속도 0으로 슬롯 Yaw 정렬 -> 저속 직선 삽입 순으로 진행한다.
+    # 기존 main 동작 유지: A* 마지막 staging에 도착한 뒤 슬롯 yaw로 회전하고,
+    # 회전 완료 후 슬롯 중심선 정렬 및 저속 직선 삽입을 수행한다.
     final_approach_dist: 0.02
     final_pos_tol: 0.02
     final_yaw_tol: 0.052

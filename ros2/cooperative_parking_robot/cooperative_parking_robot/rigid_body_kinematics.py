@@ -23,13 +23,47 @@ class RigidBodyKinematics:
         self.half_L = wheelbase / 2.0
 
     def virtual_pose(self, front, rear):
-        """두 로봇 위치 → 가상 중심점 (cx, cy, theta)"""
+        """Return midpoint and Front-Rear position-line geometry.
+
+        ``theta`` is the angle of the line joining the two robot positions.
+        It is useful for formation diagnostics, but it is not necessarily the
+        transported vehicle heading: a relative lateral displacement rotates
+        this line even if both robot headings remain unchanged. Global path and
+        yaw control should use :meth:`transport_pose`.
+        """
         cx = (front['x'] + rear['x']) / 2
         cy = (front['y'] + rear['y']) / 2
         dx = front['x'] - rear['x']
         dy = front['y'] - rear['y']
         theta = math.atan2(dy, dx)
         return cx, cy, theta
+
+    @staticmethod
+    def circular_mean_yaw(first_yaw, second_yaw):
+        """Return the wrap-safe mean of two finite robot headings.
+
+        The rigid pair should never have antipodal headings. If such invalid
+        geometry is presented, return the first normalized heading
+        deterministically; the independent relative-yaw guard remains the
+        authority for stopping unsafe formation states.
+        """
+        first_yaw = float(first_yaw)
+        second_yaw = float(second_yaw)
+        if not all(math.isfinite(value) for value in
+                   (first_yaw, second_yaw)):
+            raise ValueError('robot headings must be finite')
+        sin_sum = math.sin(first_yaw) + math.sin(second_yaw)
+        cos_sum = math.cos(first_yaw) + math.cos(second_yaw)
+        if math.hypot(sin_sum, cos_sum) < 1.0e-9:
+            return math.atan2(math.sin(first_yaw), math.cos(first_yaw))
+        return math.atan2(sin_sum, cos_sum)
+
+    def transport_pose(self, front, rear):
+        """Return pair midpoint with heading from the two robot odom yaws."""
+        cx = (front['x'] + rear['x']) / 2
+        cy = (front['y'] + rear['y']) / 2
+        yaw = self.circular_mean_yaw(front['theta'], rear['theta'])
+        return cx, cy, yaw
 
     def encoder_distance(self, front, rear):
         """엔코더 기반 두 로봇 거리"""

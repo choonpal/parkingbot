@@ -25,7 +25,8 @@ rigid_body_sync_node:
     continuous_drive_visual_full_degrade_s: 10.0
 
     # 상대 lateral은 인양 기구의 실제 횡하중과 직결되므로 x/yaw와 다르게
-    # 기존 물리 한계를 유지한다.
+    # 기존 물리 한계를 유지한다. 판정값은 innovation gate를 통과한 ID0 기반
+    # fused lateral만 사용하며 raw wheel lateral은 직접 stop 근거가 아니다.
     sync_lateral_error_limit_m: 0.020
     sync_lateral_stop_limit_m: 0.040
     sync_lateral_error_timeout_s: 1.0
@@ -45,6 +46,10 @@ rigid_body_sync_node:
     use_raw_wheel_relative_predictor: true
     wheel_relative_timeout_s: 0.50
     wheel_pair_sync_slop_s: 0.05
+    # 실측 메카넘 횡오차가 실제 formation lateral보다 크게 누적됐으므로
+    # wheel은 상대 x/yaw prediction에만 쓰고 relative-y delta는 고정한다.
+    # ID0가 보일 때만 lateral measurement를 갱신한다.
+    sync_use_wheel_lateral_predictor: false
 
     # 아래 CCTV pair 설정은 baseline 클래스 호환을 위해 남겨 두지만 production
     # rigid_body_sync는 해당 topic을 구독하지 않고 relative fusion에 사용하지 않는다.
@@ -118,12 +123,22 @@ rigid_body_sync_node:
     rotation_phase_correction_rate_limit_rps2: 0.30
     rotation_phase_lateral_lpf_alpha: 0.65
 
-    # 차량 중심과 로봇 두 대 중점의 고정 장착 오프셋 초기화/보정
+    # 차량 중심과 로봇 두 대 중점의 물리 장착 오프셋은 Lift 세션 동안 고정한다.
+    # YOLO vehicle_pose_feedback은 이 값을 바꾸지 않고 global map x/y bias를
+    # 보정한다. transport yaw는 Front/Rear odom heading의 circular mean이다.
     initialize_offset_from_target_pose: true
     initial_target_offset_gate_m: 0.50
     cctv_feedback_gate_m: 0.25
     cctv_offset_alpha: 0.30
     cctv_feedback_timeout_s: 0.50
+    vehicle_global_pose_enabled: true
+    vehicle_global_pose_timeout_s: 0.75
+    # ID0가 차량에 가려져도 fresh YOLO global pose가 있으면 저속으로 계속한다.
+    # 두 visual source가 모두 사라진 상태만 2초 뒤 recoverable HOLD한다.
+    vehicle_global_blind_hold_s: 2.0
+    vehicle_global_fallback_speed_scale: 0.35
+    # 차량 yaw는 mask 장축이 아니라 Front/Rear odom heading의 circular mean을
+    # 사용한다. YOLO는 현재 x/y global correction에만 권위를 갖는다.
 
     # 기존 main 동작 유지: A* 마지막 staging에 도착한 뒤 슬롯 yaw로 회전하고,
     # 회전 완료 후 슬롯 중심선 정렬 및 저속 직선 삽입을 수행한다.

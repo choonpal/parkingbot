@@ -1,6 +1,12 @@
 /ros2/build/
 /ros2/install/
 /ros2/log/
+/build/
+/install/
+/log/
+/ros2/build_runtime/
+/ros2/install_runtime/
+/ros2/log_runtime/
 
 **/__pycache__/
 **/.pytest_cache/
@@ -9,6 +15,18 @@
 
 # Homography GUI creates recoverable local backups before overwriting a camera H.
 /dual_tile_homography_tool/output/backups/
+/dual_tile_homography_tool/output/
+/dual_tile_homography_tool.zip
+/parking_map_live.jpg
+
+# Platform-specific model exports are rebuilt on the target Jetson.
+/ros2/cooperative_parking_robot/models/*.engine
+/ros2/cooperative_parking_robot/models/*.onnx
+
+# Field recordings and diagnostic exports stay outside the source repository.
+**/*.db3
+**/rosbags/
+**/.deploy_revision_*
 
 # STM32CubeIDE local build/index files
 /stm32/parking_robot/Debug/

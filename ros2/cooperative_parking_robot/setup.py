@@ -10,6 +10,7 @@ setup(
     packages=[package_name],
     package_data={package_name: ['web/*.html', 'web/*.css', 'web/*.js']},
     install_requires=['setuptools'],
+    extras_require={'test': ['pytest']},
     zip_safe=True,
     entry_points={
         'console_scripts': [
@@ -57,14 +58,9 @@ setup(
             ('pose_fusion_baseline = '
              'cooperative_parking_robot.pose_fusion_node:main'),
             'hardware_preflight = cooperative_parking_robot.hardware_preflight:main',
-            'keyboard_teleop = cooperative_parking_robot.keyboard_teleop_node:main',
             ('drive_pulse = '
              'cooperative_parking_robot.drive_pulse_node:main'),
             'cooperative_drive_test = cooperative_parking_robot.cooperative_drive_test_node:main',
-            ('rigid_pair_teleop = '
-             'cooperative_parking_robot.rigid_pair_teleop_production_node:main'),
-            # Compatibility name; new launch files use rigid_pair_teleop.
-            'keyboard_follow = cooperative_parking_robot.keyboard_follow_node:main',
             'calibrate_camera = cooperative_parking_robot.calibrate_camera_node:main',
             'camera_preview = cooperative_parking_robot.camera_preview_node:main',
             'show_map_ascii = cooperative_parking_robot.show_map_ascii:main',
@@ -79,7 +75,7 @@ setup(
         (os.path.join('share', package_name, 'config'),
          glob('config/*.yaml') + glob('config/*.npz')),
         (os.path.join('share', package_name, 'models'),
-         glob('models/*.pt') + glob('models/*.engine')),
+         glob('models/*.pt')),
         (os.path.join('share', package_name, 'docs'), glob('docs/*.md')),
         (os.path.join('share', package_name, 'scripts'), glob('scripts/*.sh')),
     ],

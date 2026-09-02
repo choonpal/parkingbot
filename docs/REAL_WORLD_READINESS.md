@@ -16,10 +16,10 @@ localization, 초음파 정렬, 결합 footprint A*, UI 승인과 SQLite Registr
 - 보호 지그 저하중 park/retrieve: 모든 interlock과 단계 gate 통과 후 조건부
 - 사람 없는 무인 차량 인양·운반: **현재 NO-GO**
 
-2026-08-29 통합 후보는 소프트웨어 감사와 clean build를 통과했다. Front와 Rear를
-각각 격리 배포해 수동 왕복 bag으로 좌·우 `sensor_to_gripper_x=0.0m`, 총 네 값을
-확인했다. 세 장비 동일 SHA 배포와 단계별 실기 gate는 아직 미완료다. 따라서 차량
-하부 자동 진입은 계속 **NO-GO**다.
+현재 통합 후보는 software regression과 clean build를 통과했다. 좌·우
+`sensor_to_gripper_x` 네 값은 현재 `0.0m`이며 장비 재조립이나 센서 위치 변경
+뒤에는 역할별 저속 보정 절차로 다시 확인해야 한다. 세 장비 동일 SHA 배포와
+단계별 실기 gate는 아직 미완료다. 따라서 차량 하부 자동 진입은 계속 **NO-GO**다.
 상세 기준은 [현재 통합 상태](CURRENT_INTEGRATION_STATUS.md)에 있다.
 
 현재 로봇은 메인 전원이 RPi/카메라와 모터 계통에 함께 인가되며 motor rail만

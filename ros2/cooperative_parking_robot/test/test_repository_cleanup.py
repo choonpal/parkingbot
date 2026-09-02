@@ -31,8 +31,13 @@ def test_main_tree_has_no_nav2_residue():
 
 def test_colcon_generated_directories_are_ignored_at_repository_root():
     ignore = (REPOSITORY_ROOT / '.gitignore').read_text(encoding='utf-8')
-    for entry in ('/ros2/build/', '/ros2/install/', '/ros2/log/'):
+    for entry in (
+            '/ros2/build/', '/ros2/install/', '/ros2/log/',
+            '/ros2/build_runtime/', '/ros2/install_runtime/',
+            '/ros2/log_runtime/'):
         assert entry in ignore
+    for directory in ('build_runtime', 'install_runtime', 'log_runtime'):
+        assert not (REPOSITORY_ROOT / 'ros2' / directory).exists()
 
 
 def test_only_authoritative_stm32_project_remains():
@@ -41,6 +46,7 @@ def test_only_authoritative_stm32_project_remains():
     assert (authoritative / 'Core/Src/parking_robot_firmware.c').is_file()
     assert not (authoritative / 'backup.ioc').exists()
     assert not (PACKAGE_ROOT / 'stm32_firmware').exists()
+    assert not (REPOSITORY_ROOT / 'real_robot_code').exists()
     setup_source = (PACKAGE_ROOT / 'setup.py').read_text(encoding='utf-8')
     assert 'stm32_firmware' not in setup_source
 
@@ -108,3 +114,17 @@ def test_trained_vehicle_seg_model_is_packaged_and_is_camera_default():
         assert '\'models\', \'parking_vehicle_yolo11n_seg.pt\'' in launch_source
         assert 'model_mode\', default_value=\'vehicle_seg\'' in launch_source
         assert 'inference_imgsz\', default_value=\'640\'' in launch_source
+
+
+def test_platform_specific_model_exports_are_not_tracked():
+    models = PACKAGE_ROOT / 'models'
+    assert list(models.glob('*.engine')) == []
+    assert list(models.glob('*.onnx')) == []
+    ignore = (REPOSITORY_ROOT / '.gitignore').read_text(encoding='utf-8')
+    assert '/ros2/cooperative_parking_robot/models/*.engine' in ignore
+    assert '/ros2/cooperative_parking_robot/models/*.onnx' in ignore
+
+
+def test_repository_has_root_mit_license():
+    license_text = (REPOSITORY_ROOT / 'LICENSE').read_text(encoding='utf-8')
+    assert license_text.startswith('MIT License\n')

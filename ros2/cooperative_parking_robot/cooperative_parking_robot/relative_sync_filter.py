@@ -18,6 +18,24 @@ def normalize_angle(angle: float) -> float:
     return math.atan2(math.sin(float(angle)), math.cos(float(angle)))
 
 
+def relative_pose_step_is_plausible(
+        previous, candidate, *, forward_step_m=0.020,
+        lateral_step_m=0.020, yaw_step_rad=math.radians(3.0)):
+    """Reject relative-pose jumps faster than the bounded pair can produce."""
+    old = tuple(float(value) for value in previous)
+    new = tuple(float(value) for value in candidate)
+    limits = (float(forward_step_m), float(lateral_step_m),
+              float(yaw_step_rad))
+    if (len(old) != 3 or len(new) != 3 or
+            not all(math.isfinite(value) for value in old + new + limits) or
+            not all(value > 0.0 for value in limits)):
+        raise ValueError('relative pose values/step limits must be finite')
+    return (
+        abs(new[0] - old[0]) <= limits[0] and
+        abs(new[1] - old[1]) <= limits[1] and
+        abs(normalize_angle(new[2] - old[2])) <= limits[2])
+
+
 def stream_is_healthy(age_s: Optional[float], timeout_s: float) -> bool:
     """Return whether a locally timed sensor stream is currently healthy."""
     return (age_s is not None and math.isfinite(age_s) and

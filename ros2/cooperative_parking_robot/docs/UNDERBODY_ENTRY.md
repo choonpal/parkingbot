@@ -127,30 +127,28 @@ heartbeat thread와 bounded UART scheduler는 유지하되 Linux가 네 코어�
 
 기본값은 코드 검증용이며 실차 치수를 대신하지 않는다.
 
-## rosbag 검증
+## 텔레메트리 검증
 
-다음 토픽을 한 bag에 기록한다.
+다음 토픽의 timestamp, phase 전이, fault와 명령 소유권을 함께 관측한다.
 
-```bash
-ros2 bag record \
-  /parking/target_pose /parking/slot_pose \
-  /front/active_target_pose /rear/active_target_pose \
-  /front/robot_state /rear/robot_state \
-  /front/motion_phase /rear/motion_phase \
-  /front/motion_fault /rear/motion_fault \
-  /rear/relative_vision_enable /rear/marker_camera_ready \
-  /rear/relative_vision_ready /sync/marker_visible /sync/relative_pose \
-  /front/heartbeat_diagnostics /rear/heartbeat_diagnostics \
-  /front/odom /rear/odom \
-  /front/cmd_vel /rear/cmd_vel \
-  /front/ultrasonic_left /front/ultrasonic_right \
-  /rear/ultrasonic_left /rear/ultrasonic_right \
-  /front/wheel_center_s /rear/wheel_center_s \
-  /front/wheel_detected /rear/wheel_detected \
-  /front/wheel_aligned /rear/wheel_aligned \
-  /front/aligned_hold /rear/aligned_hold \
-  /mission/commit \
-  /emergency_stop
+```text
+/parking/target_pose, /parking/slot_pose
+/front/active_target_pose, /rear/active_target_pose
+/front/robot_state, /rear/robot_state
+/front/motion_phase, /rear/motion_phase
+/front/motion_fault, /rear/motion_fault
+/rear/relative_vision_enable, /rear/marker_camera_ready
+/rear/relative_vision_ready, /sync/marker_visible, /sync/relative_pose
+/front/heartbeat_diagnostics, /rear/heartbeat_diagnostics
+/front/odom, /rear/odom
+/front/cmd_vel, /rear/cmd_vel
+/front/ultrasonic_left, /front/ultrasonic_right
+/rear/ultrasonic_left, /rear/ultrasonic_right
+/front/wheel_center_s, /rear/wheel_center_s
+/front/wheel_detected, /rear/wheel_detected
+/front/wheel_aligned, /rear/wheel_aligned
+/front/aligned_hold, /rear/aligned_hold
+/mission/commit, /emergency_stop
 ```
 
 합격 기준은 다음과 같다.

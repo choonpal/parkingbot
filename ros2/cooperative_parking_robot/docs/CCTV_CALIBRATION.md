@@ -4,9 +4,8 @@
 > rectified Homography를 사용하며 모두 640x360 기준이다. 직접 dual launch도
 > camera와 calibration 기본 frame이 640x360이다. 아래 “전달받은 파일”과
 > “임시 640x480” 수치는 과거 asset 기록이며 현재 장비에 사용하지 않는다.
-> 생성·검증 절차는 [calibration pipeline](../../../docs/pipeline.md), 현재 asset
-> 감사값은 [통합 감사](../../../docs/change_logs/2026-08-29_unified-pregrip-update-audit.md)를
-> 따른다.
+> 생성·검증 절차는 [calibration pipeline](../../../docs/pipeline.md)을 따르며,
+> 현재 asset 값은 배포 전 해당 절차로 다시 검증한다.
 
 ## 과거 전달받은 파일
 

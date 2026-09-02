@@ -1,4 +1,4 @@
-"""ROS-independent fast relative-pose predictor for the rigid-pair teleop.
+"""ROS-independent fast relative-pose predictor for cooperative control.
 
 The two wheel-odometry streams are local dead-reckoning frames and therefore
 cannot be subtracted directly.  A fresh visual Front-in-Rear pose anchors the

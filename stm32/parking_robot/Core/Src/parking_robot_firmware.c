@@ -19,8 +19,8 @@
  *         "@S,grip\n" / "@S,release\n"  (arm 제어)
  *         "@HB,session_id:sequence\n" / "@ESTOP\n"
  *         "@M,FL|FR|RL|RR,pwm\n" (정비용 단일 바퀴, |pwm|<=120)
- *   기존 실차 시험기의 W/S/A/D/Q/E, U/J/I/K/T/G/O/X 단일문자 명령도
- *   그대로 지원한다. '@' prefix가 두 프로토콜의 S/E 충돌을 막는다.
+ *   저수준 정비용 W/S/A/D/Q/E, U/J/I/K/T/G/O/X 단일문자 명령도
+ *   지원한다. '@' prefix가 두 프로토콜의 S/E 충돌을 막는다.
  *   송신: "E,fl,fr,rl,rr\n"  (엔코더 카운트)
  *         "U,L,83\n" / "U,R,86\n"  (초음파 거리 mm)
  *         "U,L,TIMEOUT\n"              (Echo timeout)

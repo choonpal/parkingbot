@@ -17,9 +17,26 @@ from cooperative_parking_robot.relative_sync_filter import (
     cctv_fallback_allowed,
     normalize_angle,
     reference_blocks_drive,
+    relative_pose_step_is_plausible,
     stream_is_healthy,
     visual_safety_state,
 )
+
+
+def test_impossible_relative_pose_jump_is_rejected():
+    baseline = (0.376, 0.015, math.radians(1.0))
+    assert relative_pose_step_is_plausible(
+        baseline, (0.379, 0.014, math.radians(2.0)))
+    assert not relative_pose_step_is_plausible(
+        baseline, (0.376, 0.015, math.radians(7.3)))
+    assert not relative_pose_step_is_plausible(
+        baseline, (0.401, 0.015, math.radians(1.0)))
+
+
+def test_relative_pose_step_handles_yaw_wraparound():
+    assert relative_pose_step_is_plausible(
+        (0.30, 0.0, math.radians(179.0)),
+        (0.30, 0.0, math.radians(-179.0)))
 
 
 def test_once_per_stamp_consumes_one_measurement_once():

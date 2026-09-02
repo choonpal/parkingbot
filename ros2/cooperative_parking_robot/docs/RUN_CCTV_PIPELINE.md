@@ -175,7 +175,7 @@ ros2 launch cooperative_parking_robot cctv_server_dual.launch.py \
 TensorRT engine을 만들었다면:
 
 ```bash
-  model_path:=$HOME/ros2_ws/src/cooperative_parking_robot/models/parking_vehicle_yolo11n_seg.engine
+  model_path:=$HOME/models/parking_vehicle_yolo11n_seg.engine
 ```
 
 **이 터미널은 닫지 않는다.** 닫으면 노드가 전부 죽는다.

@@ -2,9 +2,9 @@
 
 ## 적용 기준
 
-- 하드웨어 기준: `real_robot_code/stm32/parking_robot_f401`
+- 하드웨어 기준: `stm32/parking_robot`
 - 통합 대상: `stm32/parking_robot`
-- `real_robot_code`는 당시 실차에서 동작한 원본 기록이므로 수정하지 않는다.
+- 과거 복구 스냅샷은 제출 저장소 밖의 보관본에서만 유지한다.
 - CubeMX의 TIM9/EXTI 초음파 상태머신은 유지하되, 모터·엔코더·서보 값은
   실차 코드 기준으로 교체했다.
 
@@ -50,7 +50,7 @@ target은 제공하지 않는다. CubeIDE를 사용할 때도 각 build configur
 
 ## UART 호환 방식
 
-- 기존 실차 시험 명령 `W/S/A/D/Q/E`, 소문자 open-loop 명령,
+- 저수준 정비 명령 `W/S/A/D/Q/E`, 소문자 open-loop 명령,
   `U/J/I/K/T/G/O/X`는 그대로 유지한다.
 - ROS 프레임은 단일문자 `S`, `E`와 충돌하지 않도록 `@`로 시작한다.
   - `@V,vx,vy,w`

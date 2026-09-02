@@ -23,5 +23,5 @@
 1. `humble_build_check.sh` 전체 통과
 2. Lift 후 `/sync/error_state`에서 `REFERENCE_CAPTURE → REFERENCE_READY` 확인
 3. 그 뒤 waypoint가 들어와도 `relative_*_ref` 값이 유지되는지 확인
-4. `wheel_pair_skew_s`가 일반 주행에서 50 ms 이하인지 rosbag으로 확인
+4. `wheel_pair_skew_s`가 일반 주행에서 50 ms 이하인지 telemetry로 확인
 5. lateral PID는 바퀴 공중시험, 무부하 바닥시험 후 하중시험 순으로 진행

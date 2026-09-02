@@ -139,9 +139,9 @@ ls -l /dev/v4l/by-path/
 marker 역할을 다시 확인한다. Rear 카메라는 가능하면 by-path를 지원하는 외부 ROS
 camera driver로 열고 `enable_rear_camera:=false`로 연결한다.
 
-현장 로봇 카메라 기준은 다음과 같다. 개발 PC에 보관한 원본은
-`${HOME}/ov2710_calib_23mm_*.npz`이고, 로봇에서 실행할 때는 각 로봇
-사용자의 `$HOME`에 필요한 파일을 복사한다.
+현장 로봇 카메라 기준은 다음과 같다. 원본 calibration asset은 프로젝트 외부의
+승인된 보관소에 두고, 로봇에서 실행할 때는 각 로봇 사용자의 `$HOME`에 필요한
+파일을 복사한다.
 
 - Rear `robot-1`: 흰색 OV2710, 제어용 1280x720 @ 8 fps,
   `$HOME/ov2710_calib_23mm_white.npz` 배포·존재 확인 완료
@@ -214,12 +214,6 @@ STM32 bridge만, robot-1 Rear에서는 흰색 카메라·ArUco·Rear bridge·시
 4초 timeout을 넘으면 0속도를 유지한다. 구체적인 양쪽 명령과 공중→바닥 순서는
 [두 로봇 10 cm 협동 직진 시험](../ros2/cooperative_parking_robot/docs/COOPERATIVE_DRIVE_TEST.md)을
 따른다.
-
-직진 시험을 통과한 뒤에는 별도
-[키보드 ArUco 추종 시험](../ros2/cooperative_parking_robot/docs/KEYBOARD_FOLLOW_TEST.md)을
-사용할 수 있다. 이 모드는 준비 순간의 ArUco forward 값을 차량 축간 거리의 정확한
-목표로 저장하며, 로봇 길이나 명목 wheelbase를 더하지 않는다. 5006 직진 제어기와
-5007 키보드 추종 제어기를 동시에 실행하지 않는다.
 
 Jetson runtime asset은 `~/.ros/adaptive_valet_bot/`에 둔다.
 

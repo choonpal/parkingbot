@@ -185,7 +185,7 @@ transient-local을 쓰지 않는다: 나중에 기동한 노드가 과거 완료
 6. **주행 중 web_node kill → 로봇 거동 무영향**
 7. kiosk 비상정지 → 양측 STM32 ESTOP latch → 상태기계 FAULT 전파
 8. RPi 1대 네트워크 차단 → 해당 카드 stale 표시 + park 비활성
-9. **입차 2연속** (P3) — transient-local 잔존값 미혼입 rosbag 확인
+9. **입차 2연속** (P3) — transient-local 잔존값 미혼입 텔레메트리 확인
 10. `tegrastats`로 kiosk 추가 부하 확인 (P0-4 torch CUDA 확보 후)
 
 ---

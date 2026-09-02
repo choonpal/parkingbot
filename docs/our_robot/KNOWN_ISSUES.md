@@ -75,7 +75,7 @@
 
 - 최초 원인: Humble 기본 SIGINT가 context를 먼저 종료한 뒤 bridge·ArUco·camera
   main이 `rclpy.shutdown()`을 다시 호출했다.
-- 조치: 현장에 사용한 bridge, ArUco tracker, camera와 keyboard-follow 종료 경로에
+- 조치: bridge, ArUco tracker, camera 등 운용 노드의 종료 경로에
   `rclpy.ok()` 보호를 통합했다.
 - 검증: 종료 보호 회귀와 통합 package 전체 테스트를 통과했다. 최신 통합본의 현장
   재배포 뒤에도 process exit code와 tmux 잔존 여부를 다시 확인한다.

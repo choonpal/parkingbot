@@ -170,7 +170,7 @@ class UartProtocol:
                 'type': 'error',
                 'code': parts[1],
             }
-        # 실차 수동 시험기와 공유하는 14-field 진단 telemetry.
+        # 저수준 정비 도구와 공유하는 14-field 진단 telemetry.
         if tag == 'T' and len(parts) == 14 and len(parts[1]) == 1:
             try:
                 return {

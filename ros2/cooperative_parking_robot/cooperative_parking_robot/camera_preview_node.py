@@ -52,7 +52,7 @@ r"""천장 카메라 여러 대를 브라우저에서 나란히 보는 경량 �
     # BEV까지 보기 (homography 경로를 직접 줄 때)
     ros2 run cooperative_parking_robot camera_preview --ros-args \\
       -p homography_files_csv:='/path/cam0.npy,/path/cam2.npy' \\
-      -p layout_yaml:='/home/me/.ros/adaptive_valet_bot/parking_layout.yaml'
+      -p layout_yaml:="${HOME}/.ros/adaptive_valet_bot/parking_layout.yaml"
 
     # 사람을 검출해 보기 (차가 없을 때 파이프라인 확인용)
     ros2 run cooperative_parking_robot camera_preview --ros-args \\

@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+repo_dir="$(cd -- "$script_dir/.." && pwd)"
+package_dir="$repo_dir/ros2/cooperative_parking_robot"
+ros_setup="/opt/ros/humble/setup.bash"
+
+if [[ ! -f "$ros_setup" ]]; then
+  echo "ERROR: ROS Humble setup not found: $ros_setup" >&2
+  exit 2
+fi
+
+# shellcheck disable=SC1091
+source "$ros_setup"
+set -u
+
+if [[ "${1:-}" == "--repo" ]]; then
+  shift
+  cd "$repo_dir"
+else
+  cd "$package_dir"
+fi
+
+exec /usr/bin/python3 -m pytest "$@"

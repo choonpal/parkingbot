@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""키보드 없이 '이 속도로 이만큼' 한 번 주행하고 스스로 멈춘다.
+"""'이 속도로 이만큼' 한 번 주행하고 스스로 멈추는 점검 노드.
 
-``keyboard_teleop`` 은 사람이 키를 누르고 있어야 해서 같은 조건을 다시
-만들기 어렵다. 이 노드는 속도와 시간을 인자로 받아 그대로 실행하고 끝나면
-정지한다. 거리 반복성이 필요한 시험(엔코더 보정, 방향 확인, 직진 편차)에
-쓴다.
+속도와 시간을 인자로 받아 제한된 명령을 실행하고 끝나면 정지한다. 거리
+반복성이 필요한 시험(엔코더 보정, 방향 확인, 직진 편차)에 쓴다.
 
 안전 설계
 --------
@@ -31,6 +29,8 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import TwistStamped
 from std_msgs.msg import Bool
+
+from cooperative_parking_robot.command_qos import CMD_VEL_QOS
 
 
 # 오타로 로봇을 날려먹지 않기 위한 상한. 현장에서 넘겨야 하면 파라미터로
@@ -131,7 +131,7 @@ class DrivePulseNode(Node):
         self.confirmed = bool(self.get_parameter('confirm_clear').value)
 
         self.pub_cmd = self.create_publisher(
-            TwistStamped, f'/{self.role}/manual_cmd_vel', 10)
+            TwistStamped, f'/{self.role}/manual_cmd_vel', CMD_VEL_QOS)
         self.pub_enable = self.create_publisher(
             Bool, f'/{self.role}/manual_enable', 10)
 

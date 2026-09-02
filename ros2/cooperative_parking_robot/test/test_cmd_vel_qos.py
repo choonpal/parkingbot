@@ -71,9 +71,9 @@ def test_all_automatic_cmd_vel_endpoints_share_the_qos_contract():
         "stm32_bridge_node.py") == ["CMD_VEL_QOS"]
 
 
-def test_rigid_pair_manual_commands_use_latest_only_qos_end_to_end():
+def test_commissioning_manual_commands_use_latest_only_qos_end_to_end():
     assert _manual_cmd_vel_qos_arguments(
-        'keyboard_follow_node.py') == ['CMD_VEL_QOS']
+        'drive_pulse_node.py') == ['CMD_VEL_QOS']
     assert _manual_cmd_vel_qos_arguments(
         'stm32_bridge_node.py') == ['CMD_VEL_QOS']
 

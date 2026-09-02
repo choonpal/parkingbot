@@ -8,7 +8,7 @@
 share/cooperative_parking_robot/models/parking_vehicle_yolo11n_seg.pt
 ```
 
-- 원본 아카이브: 개발 장비의 `${HOME}/cam_seg.zip`
+- 원본 아카이브: 프로젝트 외부의 승인된 학습 asset 보관소
 - 선택한 원본: `cam_seg/runs/segment/train/weights/best.pt`
 - SHA-256: `e60179f0ad4a1b346b1b464dbc0cf93075f1c91385820683b384e238e8c7d896`
 - 파일 크기: 6,031,189 bytes

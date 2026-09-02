@@ -18,7 +18,7 @@ from cooperative_parking_robot.mvp_recovery_policy import final_slot_command
 from cooperative_parking_robot.rigid_body_sync_vision_node import (
     RigidBodySyncNode as BaseRigidBodySyncNode,
 )
-from cooperative_parking_robot.rigid_pair_teleop_core import (
+from cooperative_parking_robot.relative_sync_filter import (
     relative_pose_step_is_plausible,
 )
 from cooperative_parking_robot.vehicle_entry import marker_loss_speed_scale

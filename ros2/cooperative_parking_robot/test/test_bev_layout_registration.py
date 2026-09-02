@@ -161,20 +161,14 @@ def test_generated_waiting_yaw_is_explicit_and_finite():
             waiting_yaw_deg=float('nan'))
 
 
-def test_homography_output_matches_canonical_negative_map_geometry():
+def test_canonical_layout_uses_negative_map_geometry_and_generated_output_is_ignored():
     canonical = yaml.safe_load(
         (ROOT / 'config' / 'parking_layout.yaml').read_text())
-    generated = yaml.safe_load(
-        (ROOT.parent.parent / 'dual_tile_homography_tool' / 'output' /
-         'parking_layout.yaml').read_text())
-    keys = ('map_origin_x_m', 'map_origin_y_m',
-            'map_width_m', 'map_height_m', 'waiting_yaw_deg')
     canonical_params = canonical['/**']['ros__parameters']
-    generated_params = generated['/**']['ros__parameters']
-    assert {key: generated_params[key] for key in keys} == pytest.approx(
-        {key: canonical_params[key] for key in keys})
-    assert generated_params['map_origin_x_m'] < 0.0
-    assert generated_params['map_origin_y_m'] < 0.0
+    assert canonical_params['map_origin_x_m'] < 0.0
+    assert canonical_params['map_origin_y_m'] < 0.0
+    ignore = (ROOT.parent.parent / '.gitignore').read_text()
+    assert '/dual_tile_homography_tool/output/' in ignore
 
 
 def test_calibration_copy_preserves_runtime_layout_by_default():

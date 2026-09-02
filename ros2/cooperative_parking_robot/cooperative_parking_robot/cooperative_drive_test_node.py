@@ -645,7 +645,7 @@ def main(args=None):
     # The default rclpy SIGINT handler invalidates the context before
     # destroy_node(), which prevents the final zero/manual-off messages from
     # being published.  Let Python raise KeyboardInterrupt first, matching the
-    # proven keyboard teleop shutdown sequence.
+    # validated command-owner shutdown sequence.
     rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
     node = CooperativeDriveTestNode()
     try:

@@ -385,8 +385,10 @@ ros2 launch cooperative_parking_robot bev_layout_calibration.launch.py \
 # 각 등록 세션의 .json 메타데이터에서 그 점의 world 좌표를 비교한다.
 python3 - <<'EOF'
 import json, numpy as np
+from pathlib import Path
 for cam in ('cam0', 'cam2'):
-    meta = json.load(open(f'${HOME}/.ros/adaptive_valet_bot/homography_{cam}_rectified.json'))
+    path = Path.home() / '.ros/adaptive_valet_bot' / f'homography_{cam}_rectified.json'
+    meta = json.load(open(path))
     print(cam, 'RMS =', round(meta['reprojection_rms_m'], 4), 'm',
           '| max =', round(meta['reprojection_max_m'], 4), 'm',
           '| refs =', len(meta['references']))

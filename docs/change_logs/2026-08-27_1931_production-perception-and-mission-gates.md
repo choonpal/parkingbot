@@ -67,7 +67,7 @@
 1. Jetson에서 runtime YAML 로드 후 YOLO cam0/cam2, merge, Fleet parameter가 모두
    `waiting_yaw_deg=180`인지 `ros2 param get`으로 확인한다.
 2. 실제 차량을 waiting zone에 두고 target yaw 및 approach 시작 geometry를
-   rosbag/overlay로 확인한다.
+   telemetry/overlay로 확인한다.
 3. segmentation dimension stability/freshness 경계에서 PARK button과 direct
    mission request가 동일하게 차단되는지 확인한다.
 4. RPi에서 `use_aruco_distance=false`로 absurd/missing X와 정상 Y/yaw를 주입해

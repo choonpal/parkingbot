@@ -59,7 +59,7 @@ from cooperative_parking_robot.hardware_profile import (
     resolve_hardware_profile,
     servo_attach_pulses_for,
 )
-from cooperative_parking_robot.manual_control import VelocityCommandArbiter
+from cooperative_parking_robot.command_arbiter import VelocityCommandArbiter
 from cooperative_parking_robot.ultrasonic_phase_health import (
     UltrasonicPhaseHealth,
 )
@@ -1103,7 +1103,7 @@ class Stm32BridgeNode(Node):
         elif parsed['type'] == 'error':
             self._handle_error(parsed['code'])
         elif parsed['type'] == 'telemetry':
-            # E/U frame가 ROS 데이터의 기준이며 T는 수동 시험기용 진단값이다.
+            # E/U frame가 ROS 데이터의 기준이며 T는 정비 도구용 진단값이다.
             # 바퀴별로 목표를 못 따라가는 모터를 찾을 수 있도록 그대로 발행한다.
             self.publish_motor_diagnostics(parsed)
 

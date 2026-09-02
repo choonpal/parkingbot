@@ -199,7 +199,7 @@ OccupancyGrid에 채운다. 슬롯은 0.75초 점유 유지와 5프레임 연속
 - `slot_staging_gap_m`: 슬롯 입구와 회전 중심 사이 추가 간격
 - `final_pos_tol`, `final_yaw_tol`
 
-예시 YAML의 슬롯 좌표와 크기는 시연용 placeholder다. 브라우저로 생성한 현장
+예시 YAML의 슬롯 좌표와 크기는 설명용 placeholder다. 브라우저로 생성한 현장
 파일을 사용하기 전에는 실제 주차 정밀도를 보장하지 않는다.
 벽·기둥 등 고정 장애물은 차량 Seg 모델이 보지 못하므로, 현장에 있다면
 별도 OccupancyGrid/no-go 영역에 반드시 등록해야 한다.

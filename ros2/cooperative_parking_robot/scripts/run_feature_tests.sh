@@ -86,12 +86,6 @@ case "$feature" in
       test/test_integration_scenarios.py::test_mvp_rigid_sync_dds_publishes_only_remapped_paired_commands
     )
     ;;
-  rigid-pair)
-    tests=(
-      test/test_rigid_pair_teleop.py
-      test/test_keyboard_follow.py
-    )
-    ;;
   integration)
     tests=(test/test_integration_scenarios.py)
     ;;
@@ -99,7 +93,7 @@ case "$feature" in
     tests=(test)
     ;;
   *)
-    echo "usage: $0 {perception|localization|fleet|entry|mission|rigid-sync|rigid-pair|integration|all}" >&2
+    echo "usage: $0 {perception|localization|fleet|entry|mission|rigid-sync|integration|all}" >&2
     exit 2
     ;;
 esac

@@ -48,5 +48,5 @@ values. Before increasing speed, record at least:
   hunting without hiding a mechanically meaningful error.
 
 The status JSON now includes `relative_predictor`, `visual_decision`,
-`visual_reason`, `visual_age_s`, `dist_std_mm`, and `yaw_std_deg` for rosbag
+`visual_reason`, `visual_age_s`, `dist_std_mm`, and `yaw_std_deg` for telemetry
 verification.

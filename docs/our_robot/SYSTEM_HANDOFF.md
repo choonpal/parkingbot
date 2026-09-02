@@ -18,8 +18,8 @@
 시험이 완료되지 않았으므로 사람 없는 무인 차량 인양은 **NO-GO**다.
 
 현재 통합 감사 범위는 `stop_after_align=true`인 차량 하부 진입·차축 정렬·정지까지다.
-Front와 Rear의 초음파-그리퍼 X offset 네 값 `0.0m`는 역할별 수동 왕복으로
-확인했다. 그러나 세 장비 동일 SHA 배포와 단계별 자동 진입 실기 gate가
+Front와 Rear의 초음파-그리퍼 X offset 네 값은 현재 `0.0m`로 설정돼 있다.
+그러나 세 장비 동일 SHA 배포와 단계별 자동 진입 실기 gate가
 미완료이므로 자동 진입은 현재 **NO-GO**다. 최신 판정은
 [현재 통합 상태](../CURRENT_INTEGRATION_STATUS.md)를 따른다.
 
@@ -139,11 +139,10 @@ watchdog은 250 ms, heartbeat timeout은 300 ms다. ROS와 firmware에는 실제
 
 - 메인 스위치/비상정지가 전체 전원을 함께 제어하며 별도 motor-power enable은
   없다. 따라서 `motor OFF + camera/UART ON` 절차는 현재 하드웨어에서 불가능하다.
-- Front(`robot-2`): ROS bridge, 잭업 폐루프 3축 주행과 무하중 저속 바닥
-  주행까지 확인했다.
-- Rear(`robot-1`): 교체 STM32 배포 뒤 2026-08-25 정상 단독 주행을 사용자가
-  확인했다. 기존 강체 쌍 시험에서 `W/S`와 정지를 확인했으나 최신 통합본 재배포,
-  잭업 재확인과 `A/D/Q/E` 수정 뒤 재시험은 남아 있다.
+- Front(`robot-2`): 현재 통합 SHA 재배포 뒤 ROS bridge와 잭업 폐루프 3축을
+  다시 확인해야 한다.
+- Rear(`robot-1`): 교체 STM32와 encoder 방향을 확인한 뒤 현재 통합 SHA로
+  잭업 폐루프 검증을 다시 수행해야 한다.
 - 두 로봇의 최신본 빈손 동기주행, 초음파 차축 반복정밀도, 보호 지그 저하중,
   park→retrieve 전체 실차 cycle은 순서대로 검증해야 한다.
 

@@ -11,7 +11,7 @@ Top-level state ownership is unchanged:
 * ``RETURN``: after release, explicitly leave the underbody longitudinally,
   move to the side lane, then return home.
 
-The internal phase is published on ``/{role}/motion_phase`` for rosbag
+The internal phase is published on ``/{role}/motion_phase`` for diagnostic
 verification. A bounded phase or scan failure is published on
 ``/{role}/motion_fault`` and is converted to FAULT by the robot state machine.
 """

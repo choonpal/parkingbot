@@ -14,14 +14,10 @@ from launch.conditions import IfCondition
 from launch.substitutions import (
     LaunchConfiguration,
     PathJoinSubstitution,
-    PythonExpression,
 )
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
-
-from cooperative_parking_robot.vehicle_entry import DEFAULT_WHEELBASE_M
-
 
 def _float(name):
     return ParameterValue(LaunchConfiguration(name), value_type=float)
@@ -89,52 +85,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'enable_drive_test_dashboard', default_value='true'),
         DeclareLaunchArgument(
-            'enable_rigid_pair_teleop', default_value='false'),
-        DeclareLaunchArgument('rigid_pair_dashboard_port', default_value='5007'),
-        DeclareLaunchArgument('rigid_pair_linear_speed_mps', default_value='0.0628'),
-        DeclareLaunchArgument('rigid_pair_angular_speed_rps', default_value='0.12'),
-        DeclareLaunchArgument('rigid_pair_gap_kp', default_value='1.8'),
-        DeclareLaunchArgument(
-            'rigid_pair_gap_deadband_m', default_value='0.004'),
-        DeclareLaunchArgument(
-            'rigid_pair_gap_correction_limit_mps', default_value='0.025'),
-        DeclareLaunchArgument('rigid_pair_yaw_kp', default_value='1.5'),
-        DeclareLaunchArgument(
-            'rigid_pair_yaw_deadband_deg', default_value='0.8'),
-        DeclareLaunchArgument('rigid_pair_heading_kp', default_value='1.2'),
-        DeclareLaunchArgument(
-            'rigid_pair_heading_deadband_deg', default_value='0.5'),
-        DeclareLaunchArgument(
-            'rigid_pair_heading_correction_limit_rps', default_value='0.04'),
-        DeclareLaunchArgument(
-            'rigid_pair_marker_loss_grace_s', default_value='0.60'),
-        DeclareLaunchArgument(
-            'rigid_pair_marker_recovery_samples', default_value='3'),
-        DeclareLaunchArgument(
-            'rigid_pair_separation_m',
-            default_value=str(DEFAULT_WHEELBASE_M)),
-        DeclareLaunchArgument(
             'id0_calibration', default_value=PathJoinSubstitution([
                 FindPackageShare('cooperative_parking_robot'), 'config',
                 'id0_calibration.yaml']),
             description='shared raw ID0 forward-offset calibration YAML'),
-        DeclareLaunchArgument(
-            'rigid_pair_max_session_distance_m', default_value='0.30'),
-        DeclareLaunchArgument(
-            'require_fused_odom', default_value='false',
-            description='also require /front|rear/odom freshness'),
-        DeclareLaunchArgument(
-            'require_cctv_marker', default_value='false',
-            description='also require /front|rear/cctv_marker_visible'),
-        # Legacy keyboard_follow launch arguments.  They start the compatible
-        # executable only when the canonical option is not enabled.
-        DeclareLaunchArgument(
-            'enable_keyboard_follow', default_value='false'),
-        DeclareLaunchArgument('follow_dashboard_port', default_value='5007'),
-        DeclareLaunchArgument('follow_linear_speed_mps', default_value='0.0628'),
-        DeclareLaunchArgument('follow_angular_speed_rps', default_value='0.12'),
-        DeclareLaunchArgument(
-            'follow_max_session_distance_m', default_value='0.30'),
 
         Node(
             package='cooperative_parking_robot',
@@ -256,91 +210,4 @@ def generate_launch_description():
             }],
             output='screen'),
 
-        Node(
-            package='cooperative_parking_robot',
-            executable='rigid_pair_teleop',
-            name='rigid_pair_teleop',
-            # A manual test dashboard is another manual command owner.  Do
-            # not start both even if a user accidentally enables both flags.
-            condition=IfCondition(PythonExpression([
-                "'", LaunchConfiguration('enable_rigid_pair_teleop'),
-                "' == 'true' and '",
-                LaunchConfiguration('enable_drive_test_dashboard'),
-                "' != 'true'",
-            ])),
-            parameters=[LaunchConfiguration('id0_calibration'), {
-                'linear_speed_mps': _float('rigid_pair_linear_speed_mps'),
-                'angular_speed_rps': _float('rigid_pair_angular_speed_rps'),
-                'gap_kp': _float('rigid_pair_gap_kp'),
-                'gap_deadband_m': _float('rigid_pair_gap_deadband_m'),
-                'gap_correction_limit_mps': _float(
-                    'rigid_pair_gap_correction_limit_mps'),
-                'yaw_kp': _float('rigid_pair_yaw_kp'),
-                'yaw_deadband_deg': _float(
-                    'rigid_pair_yaw_deadband_deg'),
-                'heading_kp': _float('rigid_pair_heading_kp'),
-                'heading_deadband_deg': _float(
-                    'rigid_pair_heading_deadband_deg'),
-                'heading_correction_limit_rps': _float(
-                    'rigid_pair_heading_correction_limit_rps'),
-                'initial_lateral_limit_m': 0.02,
-                'initial_yaw_limit_deg': 3.0,
-                'marker_loss_grace_s': _float(
-                    'rigid_pair_marker_loss_grace_s'),
-                'marker_recovery_samples': _int(
-                    'rigid_pair_marker_recovery_samples'),
-                'pair_separation_m': _float('rigid_pair_separation_m'),
-                'max_session_distance_m': _float(
-                    'rigid_pair_max_session_distance_m'),
-                'require_fused_odom': _bool('require_fused_odom'),
-                'require_cctv_marker': _bool('require_cctv_marker'),
-                'web_host': '0.0.0.0',
-                'web_port': _int('rigid_pair_dashboard_port'),
-                'preview_port': _int('preview_port'),
-                'preview_path': '/video/0',
-            }],
-            output='screen'),
-
-        Node(
-            package='cooperative_parking_robot',
-            executable='keyboard_follow',
-            name='keyboard_follow_legacy',
-            condition=IfCondition(PythonExpression([
-                "'", LaunchConfiguration('enable_keyboard_follow'),
-                "' == 'true' and '",
-                LaunchConfiguration('enable_rigid_pair_teleop'),
-                "' != 'true' and '",
-                LaunchConfiguration('enable_drive_test_dashboard'),
-                "' != 'true'",
-            ])),
-            parameters=[LaunchConfiguration('id0_calibration'), {
-                'linear_speed_mps': _float('follow_linear_speed_mps'),
-                'angular_speed_rps': _float('follow_angular_speed_rps'),
-                'gap_kp': _float('rigid_pair_gap_kp'),
-                'gap_deadband_m': _float('rigid_pair_gap_deadband_m'),
-                'gap_correction_limit_mps': _float(
-                    'rigid_pair_gap_correction_limit_mps'),
-                'yaw_kp': _float('rigid_pair_yaw_kp'),
-                'yaw_deadband_deg': _float(
-                    'rigid_pair_yaw_deadband_deg'),
-                'heading_kp': _float('rigid_pair_heading_kp'),
-                'heading_deadband_deg': _float(
-                    'rigid_pair_heading_deadband_deg'),
-                'heading_correction_limit_rps': _float(
-                    'rigid_pair_heading_correction_limit_rps'),
-                'initial_lateral_limit_m': 0.02,
-                'initial_yaw_limit_deg': 3.0,
-                'marker_loss_grace_s': _float(
-                    'rigid_pair_marker_loss_grace_s'),
-                'marker_recovery_samples': _int(
-                    'rigid_pair_marker_recovery_samples'),
-                'max_session_distance_m': _float(
-                    'follow_max_session_distance_m'),
-                'pair_separation_m': _float('rigid_pair_separation_m'),
-                'web_host': '0.0.0.0',
-                'web_port': _int('follow_dashboard_port'),
-                'preview_port': _int('preview_port'),
-                'preview_path': '/video/0',
-            }],
-            output='screen'),
     ])

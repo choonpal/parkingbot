@@ -133,12 +133,20 @@ def test_main_configuration_retains_rotate_then_insert_and_phase_parameters():
     assert params['rotation_phase_correction_limit_rps'] > 0.0
 
 
-def test_production_entrypoint_selects_phase_rotation_node():
+def test_production_entrypoint_retains_phase_rotation_wrapper():
     root = Path(__file__).resolve().parents[3]
     setup_text = (
         root / 'ros2/cooperative_parking_robot/setup.py'
     ).read_text(encoding='utf-8')
+    wrapper_text = (
+        root / 'ros2/cooperative_parking_robot/cooperative_parking_robot/'
+        'rigid_body_sync_vehicle_global_node.py'
+    ).read_text(encoding='utf-8')
 
     assert (
-        'cooperative_parking_robot.rigid_body_sync_phase_node:main'
+        'cooperative_parking_robot.rigid_body_sync_vehicle_global_node:main'
         in setup_text)
+    assert (
+        'from cooperative_parking_robot.rigid_body_sync_phase_node import ('
+        in wrapper_text)
+    assert 'PhaseRigidBodySyncNode' in wrapper_text

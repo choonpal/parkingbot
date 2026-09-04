@@ -6,6 +6,10 @@ Homography, layout 등록과 preflight만 다룬다. 배포·launch·UI·복구�
 [실차 준비도](REAL_WORLD_READINESS.md)를 따른다. 전체 현재 문서는
 [문서 안내](README.md)에서 찾는다.
 
+현재 카메라 모델·역할과 보정 자산의 기준 위치는
+[카메라·실측 기준](our_robot/CAMERA_CALIBRATION_BASELINE.md)을 따른다.
+카메라별 등록 절차는 이 문서에서 관리한다.
+
 ## 1. 입력과 산출물
 
 최종 asset은 Jetson의 `~/.ros/adaptive_valet_bot/`에 둔다.

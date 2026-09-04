@@ -1,4 +1,4 @@
-# 실차 적용 준비도 — 1.11.0
+# 실차 적용 준비도 — 1.11.3
 
 이 문서는 현재 운용 범위와 GO/NO-GO만 정의한다. 배포·launch·UI·복구는
 [실차 Runbook](REAL_ROBOT_DEPLOYMENT_RUNBOOK.md), calibration·Homography·preflight는
@@ -11,16 +11,21 @@
 localization, 초음파 정렬, 결합 footprint A*, UI 승인과 SQLite Registry가
 구현돼 있다. 이는 실차 하중 검증 완료를 의미하지 않는다.
 
+2026-09-02 제공 영상에서는 축소형 차량모형의 진입·동반 이동·이탈·복귀를
+확인했다. [시연·검증 기록](FINAL_VALIDATION_2026-09-04.md)의 외관 동작 증거와,
+아래의 새 배포본 운행·하중 gate를 구분한다. 이전 pregrip 시험 범위를 전체
+소프트웨어의 구현 한계로 해석하지 않는다.
+
 - 정적 인지와 바퀴 공중시험: 현장 calibration과 실측값 적용 후 진행 가능
 - 빈 차체 저속 단독/협동 시험: 앞 단계 통과 후 진행 가능
 - 보호 지그 저하중 park/retrieve: 모든 interlock과 단계 gate 통과 후 조건부
 - 사람 없는 무인 차량 인양·운반: **현재 NO-GO**
 
-현재 통합 후보는 software regression과 clean build를 통과했다. 좌·우
-`sensor_to_gripper_x` 네 값은 현재 `0.0m`이며 장비 재조립이나 센서 위치 변경
-뒤에는 역할별 저속 보정 절차로 다시 확인해야 한다. 세 장비 동일 SHA 배포와
-단계별 실기 gate는 아직 미완료다. 따라서 차량 하부 자동 진입은 계속 **NO-GO**다.
-상세 기준은 [현재 통합 상태](CURRENT_INTEGRATION_STATUS.md)에 있다.
+과거 software regression과 clean build 기록은 보존한다. 최신 Python CI는
+workflow에 정의된 소프트웨어 검사만 증명하며, 전체 Humble·하드웨어 시험을
+대체하지 않는다. 센서 재장착 뒤에는 [측정 기준](our_robot/CAMERA_CALIBRATION_BASELINE.md)에
+따라 offset을 다시 확인한다. 새 배포본의 차량 하부 자동 진입은 아래 단계 gate
+통과 전까지 **NO-GO**다. 상세 기준은 [현재 통합 상태](CURRENT_INTEGRATION_STATUS.md)에 있다.
 
 현재 로봇은 메인 전원이 RPi/카메라와 모터 계통에 함께 인가되며 motor rail만
 독립적으로 켜고 끌 수 없다. 그러므로 정적 인지/UART 시험도 바닥에서 수행하지

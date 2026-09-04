@@ -1,6 +1,6 @@
 # 주차로봇 시스템 인수인계
 
-최종 갱신: 2026-08-29
+최종 갱신: 2026-09-04
 범위: 모형차를 Front/Rear 로봇이 함께 운반하는 production 협동 미션
 
 부품과 입고 상태는 [BOM](BOM.md), 전압·배선·핀은
@@ -17,18 +17,21 @@
 운반·복귀 흐름이 구현돼 있다. 그러나 실제 파지·하중 확인 센서와 전체 하중
 시험이 완료되지 않았으므로 사람 없는 무인 차량 인양은 **NO-GO**다.
 
-현재 통합 감사 범위는 `stop_after_align=true`인 차량 하부 진입·차축 정렬·정지까지다.
-Front와 Rear의 초음파-그리퍼 X offset 네 값은 현재 `0.0m`로 설정돼 있다.
-그러나 세 장비 동일 SHA 배포와 단계별 자동 진입 실기 gate가
-미완료이므로 자동 진입은 현재 **NO-GO**다. 최신 판정은
-[현재 통합 상태](../CURRENT_INTEGRATION_STATUS.md)를 따른다.
+2026-09-02 제공 영상에서 축소형 차량모형의 하부 진입, 차량 동반 이동,
+로봇 이탈·복귀 장면을 확인했다.
+현재 launch는 `stop_after_align=false`가 기본이며, 정렬까지만 시험할 때는
+양쪽에 `true`를 명시한다. 최신 판정과 증거는
+[현재 통합 상태](../CURRENT_INTEGRATION_STATUS.md)와
+[검증 기록](../FINAL_VALIDATION_2026-09-04.md)을 따른다.
 
 ## 2. 시스템 구성
 
 | 구성 | 수량 | 역할 |
 |---|---:|---|
 | Jetson Orin Nano | 1 | 듀얼 CCTV, 차량·슬롯 인식, Fleet, 경로계획, UI, Registry |
-| 천장 OV2710 | 운용 2 | 겹치는 시야를 공통 `map` 좌표로 변환 |
+| 천장 Logitech C920 / C922 | 각 1 | 겹치는 시야를 공통 `map` 좌표로 변환 |
+| Rear OV2710 | 1 | Front 후면 ID0 상대측위 |
+| Front OV2710 | 1 | 보조 영상·확장용; 현재 Front production launch의 필수 인식경로 아님 |
 | Raspberry Pi 4 | 2 | 로봇별 ROS 2 상태기계, pose fusion, STM32 bridge |
 | Nucleo F401RE | 2 | 메카넘 휠 PID, encoder, servo, ultrasonic, ESTOP latch |
 | Front / `robot-2` | 1 | 차량 앞축, 강체 운반 master |
@@ -59,10 +62,35 @@ Production 협동 미션의 마커는 다음과 같다.
 |---|---|---|
 | Front 상판 ID 2 | 천장 CCTV | Front 절대 pose |
 | Rear 상판 ID 1 | 천장 CCTV | Rear 절대 pose |
-| Front 후면 ID 0 | Rear 전방 카메라 | 로봇 간 상대 yaw·거리 |
+| Front 후면 ID 0 | Rear 전방 카메라 | 로봇 간 상대 x/y/yaw; 특히 횡방향·yaw 보정 |
 
-엔코더 예측을 CCTV 절대 pose와 ID 0 상대 pose로 보정한다. ID 0의 거리
-offset을 실측하기 전에는 `use_aruco_distance=false`로 두고 상대 yaw만 사용한다.
+접근 단계의 로봇 전역 위치 추정과 인양 후 운반 제어의 관측 경로를 구분한다.
+
+| 정보 | 운반 중 사용 | 소스 기준 |
+|---|---|---|
+| YOLO 차량 중심 + Homography | gate를 통과한 map `x/y` 편차만 저주기로 보정 | `vehicle_global_pose.py`, `rigid_body_sync_vehicle_global_node.py` |
+| Front/Rear encoder odometry | 운반체 중심 이동량 전파, 두 heading의 원형 평균으로 진행방향 산출 | `VehicleGlobalPoseTracker.raw_transport_pose()` |
+| Rear 카메라의 Front ID0 | 상대 x/y/yaw 관측, 횡방향·상대 yaw 관계 보정 | `rigid_body_sync_safe_node.py`, `rigid_body_sync_phase_node.py` |
+| Front/Rear 상판 ID2/ID1 | 접근·개별 로봇 전역 위치 추정 | 천장 마커·pose fusion 경로; 운반 상대 formation에 직접 주입하지 않음 |
+
+생산용 `rigid_body_sync`는 `setup.py`에서 `rigid_body_sync_vehicle_global_node:main`에
+연결된다. YOLO 관측은 별도 map translation bias를 갱신하며, 인양 때 확정한
+`vehicle_offset_body`나 두 로봇의 상대 formation을 다시 쓰지 않는다.
+기본 `sync_use_wheel_lateral_predictor=false`에서는 wheel relative-y 예측을 hold하고
+ID0를 상대 횡방향 관측의 기준으로 사용한다.
+
+인양 후 기준 자세는 안정화 시간과 여러 ID0 프레임으로 수집한다.
+표본 수·대기시간은 [sync_params.yaml](../../ros2/cooperative_parking_robot/config/sync_params.yaml)이
+기준이다. 회전 구간에서는 ID0 횡방향 오차를 회전 phase 오차로 해석해 공통 각속도를,
+상대 yaw 오차는 차동 각속도를 보정한다.
+
+ID0가 오래되면 마지막 횡오차를 계속 보정하지 않는다. 유효한 YOLO 전역 x/y가 있으면
+설정된 감속 범위에서 전역 경로를 보정하고, 두 시각정보가 모두 오래되면 유예시간 뒤
+경로를 보존하는 recoverable HOLD로 전환한다. 기존 ready·odom·ESTOP 조건도 함께 적용된다.
+
+거리 offset은 [ID0 보정 설정](../../ros2/cooperative_parking_robot/config/id0_calibration.yaml)을
+사용하고 장착 변경 시 재측정한다. 카메라 역할과 모든 보정 자산 위치는
+[카메라·실측 기준](CAMERA_CALIBRATION_BASELINE.md)에 모았다.
 
 Rear 단독 실험 branch에서 사용하는 Rear ID 2와 차량 ID 3은 이 production
 구성에 적용하지 않는다.
@@ -139,12 +167,10 @@ watchdog은 250 ms, heartbeat timeout은 300 ms다. ROS와 firmware에는 실제
 
 - 메인 스위치/비상정지가 전체 전원을 함께 제어하며 별도 motor-power enable은
   없다. 따라서 `motor OFF + camera/UART ON` 절차는 현재 하드웨어에서 불가능하다.
-- Front(`robot-2`): 현재 통합 SHA 재배포 뒤 ROS bridge와 잭업 폐루프 3축을
-  다시 확인해야 한다.
-- Rear(`robot-1`): 교체 STM32와 encoder 방향을 확인한 뒤 현재 통합 SHA로
-  잭업 폐루프 검증을 다시 수행해야 한다.
-- 두 로봇의 최신본 빈손 동기주행, 초음파 차축 반복정밀도, 보호 지그 저하중,
-  park→retrieve 전체 실차 cycle은 순서대로 검증해야 한다.
+- Front(`robot-2`)와 Rear(`robot-1`)는 역할별 STM32 profile과 ROS 2 launch를 사용한다.
+- 두 로봇과 차량모형의 하부 진입·동반 이동·이탈·복귀 시연을 영상으로 기록했다.
+- 재배포 후 통전·잭업·저하중 시험은 [Runbook](../REAL_ROBOT_DEPLOYMENT_RUNBOOK.md)의
+  단계별 절차를 적용한다.
 
 최신 상태는 [하드웨어 README](README.md)와 [TEST_LOG](TEST_LOG.md)에
 추가하고, 절차나 안전 기준을 날짜별 로그에 중복 작성하지 않는다.

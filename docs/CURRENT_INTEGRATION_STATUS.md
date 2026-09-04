@@ -1,48 +1,48 @@
-# 현재 통합 상태 — 2026-09-02
+# 현재 통합 상태 — 2026-09-04
 
-이 문서는 지금 배포·시험할 통합 후보와 실기 허용 범위를 한 곳에서 요약한다.
-세부 실행 절차는 [실차 Runbook](REAL_ROBOT_DEPLOYMENT_RUNBOOK.md), 최종 안전
-판정은 [실차 준비도](REAL_WORLD_READINESS.md)를 따른다.
+이 문서는 현재 코드 구성과 축소형 로봇 시연을 정리한다.
+시연 원본과 확인 범위는 [검증 기록](FINAL_VALIDATION_2026-09-04.md),
+실제 기동 절차는 [Runbook](REAL_ROBOT_DEPLOYMENT_RUNBOOK.md), 현장 gate는
+[실차 준비도](REAL_WORLD_READINESS.md)를 따른다.
 
 ## 기준
 
-- 통합 기준: `main`
-- 운용 경계: `stop_after_align=true`; grip, lift, 운반은 별도 현장 승인 전 비활성
-- 검증 기준: clean ROS 2 Humble build와 package 전체 자동 회귀
+- 검토한 GitHub `main`: `6327c92e95fb3c960e42b05d44ea27e01d523077`
+- ROS 패키지: `1.11.3` (`setup.py`, `package.xml` 일치)
+- 생산용 제어 진입점: `rigid_body_sync_vehicle_global_node:main`
+- 제공 시연: 2026-09-02 파일명 기준 영상 2건, 2026-09-04 검토
 
-실제 배포 SHA는 `git rev-parse HEAD`로 기록한다. 양쪽 로봇과 Jetson은 반드시
-같은 SHA에서 빌드한 설치본을 사용한다.
+문서와 시연 자료는 [검증 기록](FINAL_VALIDATION_2026-09-04.md)의 제출 검토 태그로 관리한다.
 
 ## 현재 판정
 
-| 구분 | 판정 | 근거 |
+| 구분 | 상태 | 근거·범위 |
 |---|---|---|
-| pregrip 소프트웨어 통합 | PASS | UART/heartbeat, ArUco, 진입·정렬, 정렬 후 정지, CCTV/UI 및 운용 회귀 통과 |
-| clean ROS 2 Humble build/import | PASS | 격리 workspace에서 package build와 install-only import 확인 |
-| Jetson CCTV 운용값 | PASS(정적) | 640x360 intrinsic/Homography, 현장 광축 지상점 우선, 5008 관제탑 기본 기동 확인 |
-| 제출 후보 자동 검증 | PASS | 전체 pytest와 격리 feature suite 통과; 환경 의존 skip 검토 완료 |
-| 현재 통합본 원격 배포 | 미실행 | 동일 SHA 배포와 장비별 preflight 필요 |
-| 차량 하부 실기 모션 | **NO-GO** | 동일 SHA 배포와 단계별 현장 gate 미완료 |
-| grip/lift/운반 | **범위 밖·NO-GO** | `stop_after_align` 뒤 기능이며 별도 현장 검증 필요 |
+| 접근·정렬·인양 명령·운반·복귀 | 소프트웨어 구현 | 생산용 launch, state machine, individual/rigid controller |
+| 차량 전역 x/y 보정 | 소프트웨어 구현 | YOLO map bias, odom heading, ID0 formation의 분리 |
+| 축소형 차량모형 시연 | 영상 확인 | 하부 진입, 차량 동반 이동, 이탈·복귀 장면 |
+| Python CI | 기준 소스 SHA 통과 | [실행 결과](https://github.com/choonpal/parkingbot/actions/runs/33648148956); ROS 비의존 회귀와 compile, rclpy 미설치 시 ROS-node 검사는 skip |
+| clean Humble build | 기존 통합 시험 통과 | 날짜별 결과는 [시험 기록](our_robot/TEST_LOG.md) 참조 |
+| 현장 운용 | 단계별 안전 절차 적용 | 배포·통전·저하중 시험은 Runbook과 실차 준비도 기준 |
+| 실차급·사람 없는 무인 인양·운반 | **NO-GO** | 현재 운용 범위는 축소형 시험기체이며 하중·안전 제한 적용 |
 
-기존 장비 설치본은 경로 이름만으로 최신이라고 판정하지 않는다. 재배포 후
-source/installed SHA와 launch 인자를 대조해야 한다.
+이전 문서의 “grip/lift/운반 범위 밖”은 당시 `stop_after_align=true`로 제한한
+pregrip 시험 범위였다. 현재 소프트웨어는 전체 미션 흐름을 포함하며,
+축소형 시연 기록은 위 표와 연결 문서에 정리했다.
 
-## 초음파-그리퍼 X offset 상태
+## 정렬 시험 모드와 전체 미션
 
-현재 현장 설정의 네 값은 모두 `0.0`이다. 장비 재조립이나 센서 위치 변경 후에는
-역할별 저속 보정 절차로 다시 확인해야 한다.
+`front_robot.launch.py`, `rear_robot.launch.py`, `full_system.launch.py`의
+`stop_after_align` 기본값은 `false`다. 정렬 단계만 확인할 때 양쪽 로봇에
+`stop_after_align:=true`를 명시하면 정렬 후 hold하고 LIFT 진행을 차단한다.
+`false`는 다른 ready/interlock 조건이 충족될 때 전체 미션을 진행하는 설정이다.
+이 문서 갱신은 launch 값, safety limit 또는 로봇 실행 상태를 변경하지 않는다.
 
-```text
-FRONT_LEFT_SENSOR_X
-FRONT_RIGHT_SENSOR_X
-REAR_LEFT_SENSOR_X
-REAR_RIGHT_SENSOR_X
-```
+## 측정 기준
 
-각 값은 `gripper_x - ultrasonic_sensor_x`다. 이 설정은 자동 진입 통과 판정이나
-wheel odometry 보정을 대신하지 않는다. Runbook의 동일 SHA 배포, 정적 통신 →
-바퀴 공중 → 빈 차체 저속 gate를 순서대로 통과해야 한다.
+카메라 역할, 현장 calibration, 초음파-그리퍼 X offset과 마커 크기의 기준 위치는
+[카메라·실측 기준](our_robot/CAMERA_CALIBRATION_BASELINE.md)에 모았다.
+센서 재장착 뒤에는 과거 `0.0m` offset 확인을 그대로 재사용하지 않는다.
 
 ## 현재 UI와 영상 역할
 
